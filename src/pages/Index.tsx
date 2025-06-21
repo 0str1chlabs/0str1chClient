@@ -67,16 +67,27 @@ const Index = () => {
   const handleGenerateChart = (type: 'bar' | 'line' | 'pie' | 'area') => {
     if (!activeSheet) return;
 
-    // Extract data from the active sheet for charting
-    const chartData = [];
-    for (let i = 1; i <= 6; i++) {
-      const month = activeSheet.cells[`A${i + 1}`]?.value;
-      const sales = activeSheet.cells[`B${i + 1}`]?.value;
-      if (month && sales) {
-        chartData.push({
-          name: month.toString(),
-          value: Number(sales) || 0,
-        });
+    let chartData = [];
+    if (selectedCells.length > 0) {
+      // Use selected cells: assume two columns (A and B) for name and value
+      // Group by row, get A as name, B as value
+      const rows = Array.from(new Set(selectedCells.map(cellId => parseInt(cellId.slice(1)))));
+      chartData = rows.map(rowNum => {
+        const name = activeSheet.cells[`A${rowNum}`]?.value;
+        const value = Number(activeSheet.cells[`B${rowNum}`]?.value) || 0;
+        return name && !isNaN(value) ? { name: name.toString(), value } : null;
+      }).filter(Boolean);
+    } else {
+      // Use the entire first row of data (A2:B7)
+      for (let i = 1; i <= 6; i++) {
+        const name = activeSheet.cells[`A${i + 1}`]?.value;
+        const value = activeSheet.cells[`B${i + 1}`]?.value;
+        if (name && value) {
+          chartData.push({
+            name: name.toString(),
+            value: Number(value) || 0,
+          });
+        }
       }
     }
 
@@ -94,7 +105,7 @@ const Index = () => {
       type,
       title: `${type.charAt(0).toUpperCase() + type.slice(1)} Chart - Sales Data`,
       data: chartData,
-      range: 'A2:B7',
+      range: selectedCells.length > 0 ? `${selectedCells[0]}:${selectedCells[selectedCells.length-1]}` : 'A2:B7',
       minimized: false,
     });
 

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { X, Minus, Maximize2, Minimize2, Move } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -21,12 +20,16 @@ export const ChartBlock = ({ chart, onUpdate, onRemove, position, onPositionChan
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleCardMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
     setIsDragging(true);
     setDragStart({
       x: e.clientX - (position?.x || 0),
       y: e.clientY - (position?.y || 0)
     });
+    document.body.style.userSelect = 'none';
   };
 
   const handleMouseMove = (e: MouseEvent) => {
@@ -41,6 +44,7 @@ export const ChartBlock = ({ chart, onUpdate, onRemove, position, onPositionChan
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    document.body.style.userSelect = '';
   };
 
   React.useEffect(() => {
@@ -129,22 +133,23 @@ export const ChartBlock = ({ chart, onUpdate, onRemove, position, onPositionChan
     <Card 
       className={`mb-4 transition-all duration-200 shadow-lg rounded-xl border-2 ${
         chart.minimized ? 'h-auto' : ''
-      } ${isDragging ? 'shadow-2xl scale-105' : ''}`}
+      } ${isDragging ? 'shadow-2xl scale-105 opacity-80' : ''}`}
       style={{
         position: 'absolute',
         left: position?.x || 0,
         top: position?.y || 0,
         width: isExpanded ? '600px' : '400px',
-        cursor: isDragging ? 'grabbing' : 'grab'
+        cursor: isDragging ? 'grabbing' : 'grab',
+        zIndex: isDragging ? 100 : 10,
       }}
+      onMouseDown={handleCardMouseDown}
     >
-      <CardHeader className="pb-2 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-t-xl">
+      <CardHeader className="cursor-grab select-none">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <Move 
               size={16} 
               className="cursor-grab" 
-              onMouseDown={handleMouseDown}
             />
             {chart.title}
           </CardTitle>

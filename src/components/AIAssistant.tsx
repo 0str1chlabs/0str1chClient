@@ -39,6 +39,7 @@ export const AIAssistant = ({
       content: "✨ Welcome to your AI-powered infinite canvas! I can help you analyze data, create stunning visualizations, and perform complex calculations. What would you like to create today?"
     }
   ]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const mainPrompts = [
     {
@@ -85,9 +86,39 @@ export const AIAssistant = ({
   ];
 
   const handleCalculationSuggestion = (operation: string) => {
+    if (operation === 'sum-selected' && selectedCells.length > 0 && activeSheet) {
+      setIsLoading(true);
+      addMessage('user', 'Sum Selected');
+      // Show loader message
+      addMessage('ai', '⏳ Calculating sum of selected cells...');
+      setTimeout(() => {
+        // Get numeric values from selected cells
+        const values = selectedCells.map(cellId => activeSheet.cells[cellId]?.value).filter(v => typeof v === 'number');
+        const sum = values.reduce((a, b) => a + b, 0);
+        // Get cell range (first and last in selection)
+        const firstCell = selectedCells[0];
+        const lastCell = selectedCells[selectedCells.length - 1];
+        addMessage('ai', `Sum of cell number ${firstCell} to ${lastCell} is ${sum}`);
+        setIsLoading(false);
+      }, 1200); // Simulate loading
+      return;
+    }
+    if (operation === 'average-selected' && selectedCells.length > 0 && activeSheet) {
+      setIsLoading(true);
+      addMessage('user', 'Average Selected');
+      addMessage('ai', '⏳ Calculating average of selected cells...');
+      setTimeout(() => {
+        const values = selectedCells.map(cellId => activeSheet.cells[cellId]?.value).filter(v => typeof v === 'number');
+        const avg = values.length > 0 ? (values.reduce((a, b) => a + b, 0) / values.length) : 0;
+        const firstCell = selectedCells[0];
+        const lastCell = selectedCells[selectedCells.length - 1];
+        addMessage('ai', `Average of cell number ${firstCell} to ${lastCell} is ${avg.toFixed(2)}`);
+        setIsLoading(false);
+      }, 1200);
+      return;
+    }
     onCalculate(operation);
     addMessage('user', `Calculate ${operation}`);
-    addMessage('ai', 'Calculation completed! Check the notification for results.');
   };
 
   const addMessage = (type: 'ai' | 'user', content: string) => {
@@ -243,6 +274,16 @@ export const AIAssistant = ({
             </div>
           </div>
         ))}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] p-4 rounded-2xl text-sm shadow-lg bg-gradient-to-r from-yellow-50 to-yellow-100 dark:from-neutral-800 dark:to-neutral-700 border-2 border-yellow-200 dark:border-neutral-600 rounded-bl-md text-neutral-900 dark:text-yellow-100 animate-pulse">
+              <span className="inline-flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4 text-yellow-500" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" /></svg>
+                Calculating sum of selected cells...
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Input */}
