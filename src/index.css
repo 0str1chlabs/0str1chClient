@@ -1,0 +1,110 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ostrich-inspired color system */
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+
+    --primary: 0 0% 0%;
+    --primary-foreground: 48 100% 88%;
+
+    --secondary: 48 100% 88%;
+    --secondary-foreground: 0 0% 0%;
+
+    --muted: 48 96% 85%;
+    --muted-foreground: 0 0% 45%;
+
+    --accent: 48 100% 80%;
+    --accent-foreground: 0 0% 0%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 48 82% 75%;
+    --input: 48 82% 75%;
+    --ring: 0 0% 0%;
+
+    --radius: 0.75rem;
+
+    /* Ostrich-inspired colors */
+    --ostrich-sand: 48 96% 85%;
+    --ostrich-brown: 0 0% 0%;
+    --ostrich-cream: 48 100% 95%;
+    --ostrich-tan: 48 100% 80%;
+  }
+
+  .dark {
+    --background: 0 0% 3%;
+    --foreground: 48 100% 88%;
+
+    --card: 0 0% 3%;
+    --card-foreground: 48 100% 88%;
+
+    --popover: 0 0% 3%;
+    --popover-foreground: 48 100% 88%;
+
+    --primary: 48 100% 88%;
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 48 100% 88%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 48 40% 70%;
+
+    --accent: 0 0% 15%;
+    --accent-foreground: 48 100% 88%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 48 100% 88%;
+
+    /* Dark ostrich colors */
+    --ostrich-sand: 0 0% 20%;
+    --ostrich-brown: 48 100% 88%;
+    --ostrich-cream: 0 0% 3%;
+    --ostrich-tan: 0 0% 25%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-yellow-100 dark:bg-neutral-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-yellow-400 dark:bg-yellow-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-yellow-500 dark:bg-yellow-500;
+}
