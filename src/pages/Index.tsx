@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
 import { ThemeProvider } from '@/components/ThemeProvider';
-import { InfiniteCanvas } from '@/components/InfiniteCanvas';
+import { InfiniteCanvas, InfiniteCanvasHandle } from '@/components/InfiniteCanvas';
 import { ModernSpreadsheet } from '@/components/ModernSpreadsheet';
 import { Toolbar } from '@/components/Toolbar';
 import { AIAssistant } from '@/components/AIAssistant';
@@ -37,6 +37,8 @@ const Index = () => {
     canRedo,
   } = useSpreadsheet();
 
+  const canvasRef = useRef<InfiniteCanvasHandle>(null);
+
   const handleWelcomeAction = (action: 'upload' | 'sheet' | 'ai') => {
     setShowWelcome(false);
     if (action === 'sheet') {
@@ -51,8 +53,11 @@ const Index = () => {
   };
 
   const handleAddSheet = () => {
-    console.log('Adding new sheet...');
     addSheet();
+    setTimeout(() => {
+      // @ts-expect-error: centerCanvas might not be defined on InfiniteCanvasHandle
+      canvasRef.current?.centerCanvas?.();
+    }, 100);
     toast({
       title: "New Sheet Added",
       description: "A new spreadsheet has been created!",
@@ -243,6 +248,15 @@ const Index = () => {
     }));
   };
 
+  // CSS grid background (40px squares, light gray)
+  const gridBackground = {
+    backgroundColor: '#fff',
+    backgroundImage:
+      'linear-gradient(to right, #ececec 1px, transparent 1px), ' +
+      'linear-gradient(to bottom, #ececec 1px, transparent 1px)',
+    backgroundSize: '40px 40px',
+  };
+
   if (showWelcome) {
     return (
       <ThemeProvider isDarkMode={state.isDarkMode} toggleTheme={toggleTheme}>
@@ -258,8 +272,8 @@ const Index = () => {
 
   return (
     <ThemeProvider isDarkMode={state.isDarkMode} toggleTheme={toggleTheme}>
-      <div className="h-screen overflow-hidden bg-gradient-to-br from-yellow-50 to-yellow-100 dark:from-black dark:to-neutral-900">
-        <InfiniteCanvas onAddSheet={handleAddSheet}>
+      <div className="h-screen overflow-hidden" style={gridBackground}>
+        <InfiniteCanvas ref={canvasRef} onAddSheet={handleAddSheet}>
           <div className="relative w-full h-full">
             {/* Sheet Tabs */}
             {state.sheets.length > 0 && (
@@ -282,8 +296,6 @@ const Index = () => {
                   onSelectionChange={setSelectedCells}
                   selectedCells={selectedCells}
                   className="max-w-6xl"
-                  undo={undo}
-                  redo={redo}
                 />
               </div>
             )}

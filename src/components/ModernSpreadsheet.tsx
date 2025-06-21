@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { SheetData, Cell } from '@/types/spreadsheet';
@@ -226,11 +225,13 @@ export const ModernSpreadsheet = ({
       {/* Spreadsheet Grid */}
       <div 
         ref={scrollAreaRef}
-        className="overflow-auto max-h-[600px] select-none cursor-crosshair" 
+        className="overflow-auto max-h-[600px] select-none cursor-crosshair relative" 
         data-scrollable="true"
         style={{ cursor: isDragging ? 'crosshair' : 'default' }}
+        onMouseDown={e => e.stopPropagation()}
+        onMouseMove={e => isDragging && e.stopPropagation()}
       >
-        <div className="min-w-fit">
+        <div className="min-w-fit relative">
           {/* Column Headers */}
           <div className="sticky top-0 z-20 flex bg-gradient-to-b from-green-100 to-green-50 dark:from-green-700 dark:to-green-800">
             <div className="w-16 h-12 bg-green-200 dark:bg-green-600 border-r border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-medium text-green-600 dark:text-green-300">
@@ -244,6 +245,37 @@ export const ModernSpreadsheet = ({
               </div>
             ))}
           </div>
+
+          {/* Dotted border overlay for selected range */}
+          {selectedRange.length > 1 && (() => {
+            // Calculate min/max row/col from selectedRange
+            const positions = selectedRange.map(parseCellId);
+            const minRow = Math.min(...positions.map(p => p.row));
+            const maxRow = Math.max(...positions.map(p => p.row));
+            const minCol = Math.min(...positions.map(p => p.col));
+            const maxCol = Math.max(...positions.map(p => p.col));
+            // Cell size constants (must match cell classes)
+            const cellWidth = 128; // w-32 = 8*16px
+            const cellHeight = 48; // h-12 = 4*12px
+            const rowHeaderWidth = 64; // w-16 = 4*16px
+            const colHeaderHeight = 48; // h-12 = 4*12px
+            return (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: rowHeaderWidth + minCol * cellWidth - 2, // -2 for border width
+                  top: colHeaderHeight + minRow * cellHeight - 2,
+                  width: (maxCol - minCol + 1) * cellWidth + 3, // +3 for border width
+                  height: (maxRow - minRow + 1) * cellHeight + 3,
+                  pointerEvents: 'none',
+                  zIndex: 30,
+                  border: '2px dotted #059669', // green-600
+                  borderRadius: 4,
+                  boxSizing: 'border-box',
+                }}
+              />
+            );
+          })()}
 
           {/* Rows */}
           {rowData.map(({ row, cells }) => (
@@ -276,7 +308,11 @@ export const ModernSpreadsheet = ({
                     onDoubleClick={(e) => handleCellDoubleClick(cellId, e)}
                     onMouseDown={(e) => handleCellMouseDown(cellId, e)}
                     onMouseEnter={() => handleCellMouseEnter(cellId)}
-                    style={{ userSelect: 'none' }}
+                    style={{ 
+                      userSelect: 'none',
+                      border: isInRange ? '2px dotted #059669' : undefined,
+                      boxSizing: 'border-box',
+                    }}
                   >
                     {isEditing ? (
                       <Input
