@@ -30,7 +30,7 @@ const Index = () => {
     addChart,
     updateChart,
     removeChart,
-    loadCSVData,
+    addSheetFromCSV,
     undo,
     redo,
     canUndo,
@@ -79,14 +79,14 @@ const Index = () => {
       }).filter(Boolean);
     } else {
       // Use the entire first row of data (A2:B7)
-      for (let i = 1; i <= 6; i++) {
+    for (let i = 1; i <= 6; i++) {
         const name = activeSheet.cells[`A${i + 1}`]?.value;
         const value = activeSheet.cells[`B${i + 1}`]?.value;
         if (name && value) {
-          chartData.push({
+        chartData.push({
             name: name.toString(),
             value: Number(value) || 0,
-          });
+        });
         }
       }
     }
@@ -276,13 +276,31 @@ const Index = () => {
           onCreateSheet={() => handleWelcomeAction('sheet')}
           onStartAI={() => handleWelcomeAction('ai')}
         />
-        <CSVUploader onUpload={loadCSVData} />
+        <CSVUploader onUpload={(csv) => addSheetFromCSV(csv, 'Uploaded Sheet')} />
       </ThemeProvider>
     );
   }
 
   return (
     <ThemeProvider isDarkMode={state.isDarkMode} toggleTheme={toggleTheme}>
+      {/* Persistent Upload CSV button at the top */}
+      <div className="w-full flex justify-end p-4 bg-white/80 z-50 sticky top-0 shadow-sm">
+        <div className="max-w-xs w-full">
+          <CSVUploader onUpload={(csv) => addSheetFromCSV(csv, 'Uploaded Sheet')} />
+        </div>
+      </div>
+      {/* TEST BUTTON: Remove after debugging */}
+      <div className="w-full flex justify-center p-2">
+        <button
+          onClick={() => {
+            console.log('Test button clicked. updateCell:', updateCell);
+            updateCell('E2', 999);
+          }}
+          style={{ padding: '8px 16px', background: '#059669', color: 'white', borderRadius: 8, fontWeight: 'bold', boxShadow: '0 2px 8px #0001' }}
+        >
+          Test updateCell('E2', 999)
+        </button>
+      </div>
       <div className="h-screen overflow-hidden" style={gridBackground}>
         <InfiniteCanvas ref={canvasRef} onAddSheet={handleAddSheet}>
           <div className="relative w-full h-full">
@@ -351,10 +369,8 @@ const Index = () => {
             title: "Custom Creation Mode",
             description: "Tell me what you'd like to create and I'll help you build it!",
           })}
+          updateCell={updateCell}
         />
-
-        {/* Hidden CSV Uploader */}
-        <CSVUploader onUpload={loadCSVData} />
       </div>
     </ThemeProvider>
   );

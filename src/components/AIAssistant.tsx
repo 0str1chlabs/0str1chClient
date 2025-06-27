@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 
 interface Message {
   type: 'ai' | 'user';
@@ -19,6 +20,7 @@ interface AIAssistantProps {
   onToggleMinimize: () => void;
   onUploadCSV: () => void;
   onCreateCustom: () => void;
+  updateCell: (cellId: string, value: string | number) => void;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -30,7 +32,8 @@ export const AIAssistant = ({
   isMinimized, 
   onToggleMinimize,
   onUploadCSV,
-  onCreateCustom
+  onCreateCustom,
+  updateCell
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -40,6 +43,7 @@ export const AIAssistant = ({
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const mainPrompts = [
     {
@@ -85,36 +89,48 @@ export const AIAssistant = ({
     },
   ];
 
-  const handleCalculationSuggestion = (operation: string) => {
-    if (operation === 'sum-selected' && selectedCells.length > 0 && activeSheet) {
+  const handleCalculationSuggestion = async (operation: string) => {
+    if (selectedCells.length > 0 && activeSheet) {
       setIsLoading(true);
-      addMessage('user', 'Sum Selected');
-      // Show loader message
-      addMessage('ai', '⏳ Calculating sum of selected cells...');
-      setTimeout(() => {
-        // Get numeric values from selected cells
-        const values = selectedCells.map(cellId => activeSheet.cells[cellId]?.value).filter(v => typeof v === 'number');
-        const sum = values.reduce((a, b) => a + b, 0);
-        // Get cell range (first and last in selection)
-        const firstCell = selectedCells[0];
-        const lastCell = selectedCells[selectedCells.length - 1];
-        addMessage('ai', `Sum of cell number ${firstCell} to ${lastCell} is ${sum}`);
-        setIsLoading(false);
-      }, 1200); // Simulate loading
-      return;
-    }
-    if (operation === 'average-selected' && selectedCells.length > 0 && activeSheet) {
-      setIsLoading(true);
-      addMessage('user', 'Average Selected');
-      addMessage('ai', '⏳ Calculating average of selected cells...');
-      setTimeout(() => {
-        const values = selectedCells.map(cellId => activeSheet.cells[cellId]?.value).filter(v => typeof v === 'number');
-        const avg = values.length > 0 ? (values.reduce((a, b) => a + b, 0) / values.length) : 0;
-        const firstCell = selectedCells[0];
-        const lastCell = selectedCells[selectedCells.length - 1];
-        addMessage('ai', `Average of cell number ${firstCell} to ${lastCell} is ${avg.toFixed(2)}`);
-        setIsLoading(false);
-      }, 1200);
+      addMessage('user', `${operation === 'sum-selected' ? 'Sum' : 'Average'} Selected`);
+      addMessage('ai', `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`);
+      
+      try {
+        // Get selected cell data
+        const cellData: Record<string, any> = {};
+        selectedCells.forEach(cellId => {
+          const cell = activeSheet.cells[cellId];
+          if (cell) {
+            cellData[cellId] = cell.value;
+          }
+        });
+        
+        const { columns, sampleRows } = extractColumnsAndRows();
+        const response = await fetch('http://localhost:8090/api/ai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            message: operation === 'sum-selected' ? 'Calculate the sum of the selected cells' : 'Calculate the average of the selected cells',
+            columns, 
+            sampleRows, 
+            selectedCells,
+            cellData
+          }),
+        });
+        const data = await response.json();
+        console.log('V AI backend response:', data); // Debug log for full AI backend response
+        
+        if (data && data.result !== null && data.result !== undefined) {
+          const operationText = operation === 'sum-selected' ? 'Sum' : 'Average';
+          addMessage('ai', `${operationText} of selected cells: ${data.result}`);
+        } else {
+          addMessage('ai', `❌ Could not calculate ${operation === 'sum-selected' ? 'sum' : 'average'}`);
+        }
+      } catch (err) {
+        addMessage('ai', `❌ Error calculating ${operation === 'sum-selected' ? 'sum' : 'average'}`);
+        console.error(err);
+      }
+      setIsLoading(false);
       return;
     }
     onCalculate(operation);
@@ -125,62 +141,138 @@ export const AIAssistant = ({
     setMessages(prev => [...prev, { type, content }]);
   };
 
-  const handleSendMessage = () => {
-    if (!message.trim()) return;
-
-    addMessage('user', message);
-    
-    // Handle different types of AI requests
-    if (message.toLowerCase().includes('sum') || message.toLowerCase().includes('average')) {
-      if (!activeSheet) {
-        addMessage('ai', 'No active sheet found. Please create or select a sheet first.');
-        setMessage('');
-        return;
-      }
-
-      let values: number[] = [];
-      let result = '';
-      
-      const columnMatch = message.match(/\b([A-Z])\b/i);
-      const column = columnMatch ? columnMatch[1].toUpperCase() : 'B';
-      
-      for (let i = 2; i <= 7; i++) {
-        const cellValue = activeSheet.cells[`${column}${i}`]?.value;
-        if (typeof cellValue === 'number') {
-          values.push(cellValue);
-        }
-      }
-
-      if (message.toLowerCase().includes('sum')) {
-        if (values.length > 0) {
-          const sum = values.reduce((a, b) => a + b, 0);
-          result = `✅ Sum of column ${column}: ${sum.toLocaleString()}`;
-        } else {
-          result = `❌ No numeric values found in column ${column}`;
-        }
-      } else if (message.toLowerCase().includes('average')) {
-        if (values.length > 0) {
-          const avg = values.reduce((a, b) => a + b, 0) / values.length;
-          result = `✅ Average of column ${column}: ${avg.toFixed(2)}`;
-        } else {
-          result = `❌ No numeric values found in column ${column}`;
-        }
-      }
-      
-      addMessage('ai', result);
-    } else if (message.toLowerCase().includes('chart')) {
-      addMessage('ai', '📊 I can create beautiful charts! Choose from bar, line, pie, or area charts. Which style fits your data best?');
-    } else {
-      addMessage('ai', `🎯 I understand you want to: "${message}". Let me help you achieve that with your data!`);
+  const extractColumnsAndRows = () => {
+    if (!activeSheet) return { columns: [], sampleRows: [] };
+    const { cells, colCount, rowCount } = activeSheet;
+    // Get column headers from first row (row 1)
+    const columns: string[] = [];
+    for (let col = 0; col < colCount; col++) {
+      const colLetter = String.fromCharCode(65 + col);
+      const cellId = `${colLetter}1`;
+      const cell = cells[cellId];
+      columns.push(cell && cell.value ? String(cell.value) : colLetter);
     }
-    
-    setMessage('');
+    // Get up to 5 sample rows (excluding header)
+    const sampleRows: any[][] = [];
+    for (let row = 2; row <= Math.min(rowCount, 6); row++) {
+      const rowArr: any[] = [];
+      for (let col = 0; col < colCount; col++) {
+        const colLetter = String.fromCharCode(65 + col);
+        const cellId = `${colLetter}${row}`;
+        const cell = cells[cellId];
+        rowArr.push(cell && cell.value !== undefined ? cell.value : '');
+      }
+      sampleRows.push(rowArr);
+    }
+    return { columns, sampleRows };
+  };
+
+  const handleSendMessage = async () => {
+    if (!message.trim()) return;
+    setMessage(''); // Clear input immediately
+    addMessage('user', message);
+    setIsLoading(true);
+    try {
+      // Extract columns and sampleRows for the AI API
+      const { columns, sampleRows } = extractColumnsAndRows();
+      
+      // Get selected cell data
+      const cellData: Record<string, any> = {};
+      if (selectedCells.length > 0 && activeSheet) {
+        selectedCells.forEach(cellId => {
+          const cell = activeSheet.cells[cellId];
+          if (cell) {
+            cellData[cellId] = cell.value;
+          }
+        });
+      }
+      
+      const response = await fetch('http://localhost:8090/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message, 
+          columns, 
+          sheetData: {
+            cells: activeSheet.cells,
+            rowCount: activeSheet.rowCount,
+            colCount: activeSheet.colCount
+          }
+        }),
+      });
+      const data = await response.json();
+      console.log('V AI backend response:', data); // Debug log for full AI backend response
+      
+      let aiText = '';
+      let updatesSummary = '';
+      // Debug: check updates array type and content
+      let updates = data.updates;
+      if (typeof updates === 'string') {
+        try {
+          updates = JSON.parse(updates);
+        } catch (e) {
+          console.error('Failed to parse updates string:', updates);
+          updates = [];
+        }
+      }
+      if (updates && Array.isArray(updates)) {
+        console.log('AI updates array:', updates); // Debug: log updates array
+      }
+      if (data && data.explanation) {
+        aiText = data.explanation;
+        if (data.formula) {
+          aiText += `\n\nFormula: ${data.formula}`;
+        }
+        if (data.result !== null && data.result !== undefined) {
+          aiText += `\n\nResult: ${data.result}`;
+        }
+      } else if (data && data.raw) {
+        aiText = data.raw;
+      } else {
+        aiText = JSON.stringify(data);
+      }
+
+      // Always process updates if present
+      if (updates && Array.isArray(updates)) {
+        let applied = 0;
+        updates.forEach((update: { cellId: string, value: string | number }) => {
+          console.log('Update candidate:', update);
+          if (update.cellId && update.value !== undefined) {
+            console.log('Applying update from AI:', update.cellId, update.value);
+            updateCell(update.cellId, update.value);
+            applied++;
+          } else {
+            console.warn('Skipped update (missing cellId or value):', update);
+          }
+        });
+        if (applied > 0) {
+          updatesSummary = `\n\nApplied ${applied} cell update${applied > 1 ? 's' : ''} to the spreadsheet.`;
+        }
+      } else {
+        console.warn('No valid updates array found in AI response.');
+      }
+
+      addMessage('ai', aiText + updatesSummary);
+    } catch (err) {
+      addMessage('ai', '❌ Error getting AI response.');
+      console.error(err);
+    }
+    setIsLoading(false);
   };
 
   const handleSuggestion = (suggestion: string) => {
     addMessage('user', suggestion);
     addMessage('ai', `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`);
   };
+
+  // Auto-expand textarea height
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+    }
+  }, [message]);
 
   if (isMinimized) {
     return (
@@ -279,7 +371,7 @@ export const AIAssistant = ({
             <div className="max-w-[85%] p-4 rounded-2xl text-sm shadow-lg bg-gradient-to-r from-yellow-50 to-yellow-100 dark:from-neutral-800 dark:to-neutral-700 border-2 border-yellow-200 dark:border-neutral-600 rounded-bl-md text-neutral-900 dark:text-yellow-100 animate-pulse">
               <span className="inline-flex items-center gap-2">
                 <svg className="animate-spin h-4 w-4 text-yellow-500" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" /></svg>
-                Calculating sum of selected cells...
+                processing your request
               </span>
             </div>
           </div>
@@ -289,12 +381,18 @@ export const AIAssistant = ({
       {/* Input */}
       <div className="p-6 border-t bg-gradient-to-r from-yellow-50 to-yellow-100 dark:from-neutral-800 dark:to-neutral-700 border-yellow-200 dark:border-neutral-700 sticky bottom-0">
         <div className="flex gap-3">
-          <Input
+          <Textarea
+            ref={textareaRef}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Ask me anything about your data..."
-            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-            className="flex-1 bg-white/80 dark:bg-neutral-900/80 backdrop-blur text-neutral-900 dark:text-yellow-100 border-2 border-yellow-200 dark:border-neutral-600 rounded-xl focus:border-yellow-400 dark:focus:border-yellow-500 transition-all duration-200"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            className="flex-1 resize-none bg-white/80 dark:bg-neutral-900/80 backdrop-blur text-neutral-900 dark:text-yellow-100 border-2 border-yellow-200 dark:border-neutral-600 rounded-xl focus:border-yellow-400 dark:focus:border-yellow-500 transition-all duration-200 min-h-[40px] max-h-[200px]"
           />
           <Button 
             size="icon" 

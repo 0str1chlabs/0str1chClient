@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useImperativeHandle, forwardRef, useEffect } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
-import { Plus } from 'lucide-react';
+import { Plus, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface CanvasBlock {
@@ -25,6 +25,7 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
     const transformRef = useRef<any>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const spreadsheetRef = useRef<HTMLDivElement>(null);
+    const [zoom, setZoom] = useState(1);
 
     const handleWheel = useCallback((ref: any, event: WheelEvent) => {
       // Check if we're hovering over a spreadsheet or scrollable content
@@ -68,6 +69,12 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
         ref={wrapperRef}
         style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       >
+        {/* Zoom Indicator */}
+        <div className="fixed top-6 right-8 z-50">
+          <div className="bg-black/80 text-yellow-200 px-4 py-2 rounded-full shadow-lg text-sm font-semibold select-none pointer-events-none">
+            Zoom: {(zoom * 100).toFixed(0)}%
+          </div>
+        </div>
         {/* Header with Platform Name */}
         <div className="absolute top-0 left-0 right-0 z-50 bg-gradient-to-r from-yellow-100 to-yellow-200 dark:from-neutral-800 dark:to-black border-b border-yellow-200 dark:border-neutral-700 px-6 py-3">
           <div className="flex items-center justify-between">
@@ -106,12 +113,23 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
             doubleClick={{ disabled: true }}
             pinch={{ step: 0.1 }}
             onWheel={handleWheel}
+            onZoom={ref => setZoom(ref.state.scale)}
           >
             <TransformComponent
               wrapperClass="!w-full !h-full"
               contentClass="!w-full !h-full"
             >
-              <div className="relative" style={{ width: '8000px', height: '6000px' }}>
+              <div
+                className={`relative transition-shadow duration-200 ${isPanning ? 'shadow-[0_0_0_6px_rgba(234,179,8,0.3),0_8px_32px_0_rgba(0,0,0,0.25)]' : ''}`}
+                style={{
+                  width: '8000px',
+                  height: '6000px',
+                  backgroundImage:
+                    'repeating-linear-gradient(0deg, #f3f4f6 0px, #f3f4f6 1px, transparent 1px, transparent 40px), ' +
+                    'repeating-linear-gradient(90deg, #f3f4f6 0px, #f3f4f6 1px, transparent 1px, transparent 40px)',
+                  backgroundColor: '#fafaf9',
+                }}
+              >
                 {/* Main content positioned in the center of the large canvas */}
                 <div 
                   className="absolute modern-spreadsheet"
@@ -124,6 +142,13 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 >
                   {children}
                 </div>
+                {/* Placeholder if no children */}
+                {(!children || (Array.isArray(children) && children.length === 0)) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+                    <FileSpreadsheet size={64} className="text-yellow-300 mb-4 opacity-60" />
+                    <div className="text-lg font-semibold text-yellow-400 opacity-70">Drag sheets or charts here</div>
+                  </div>
+                )}
               </div>
             </TransformComponent>
           </TransformWrapper>

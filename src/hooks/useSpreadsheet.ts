@@ -87,13 +87,17 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         break;
       }
       case 'UPDATE_CELL': {
-        const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
-        if (sheet) {
+        const sheetIndex = draft.sheets.findIndex(s => s.id === draft.activeSheetId);
+        if (sheetIndex !== -1) {
+          const sheet = draft.sheets[sheetIndex];
+          sheet.cells = { ...sheet.cells }; // force new reference for React
           if (!sheet.cells[action.cellId]) {
             sheet.cells[action.cellId] = { value: action.value };
           } else {
             sheet.cells[action.cellId].value = action.value;
           }
+          // Force a new reference for the sheet object in the array
+          draft.sheets[sheetIndex] = { ...sheet };
         }
         break;
       }
@@ -146,6 +150,27 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           });
           sheet.cells = cells;
         }
+        break;
+      }
+      case 'ADD_SHEET_FROM_CSV': {
+        const newId = `sheet-${state.sheets.length + 1}`;
+        const cells: Record<string, Cell> = {};
+        action.csvData.forEach((row: string[], rowIndex: number) => {
+          row.forEach((cellValue: string, colIndex: number) => {
+            const colLetter = String.fromCharCode(65 + colIndex);
+            const cellId = `${colLetter}${rowIndex + 1}`;
+            cells[cellId] = { value: cellValue };
+          });
+        });
+        const newSheet: SheetData = {
+          id: newId,
+          name: action.name || `Sheet ${state.sheets.length + 1}`,
+          cells,
+          rowCount: Math.max(100, action.csvData.length),
+          colCount: Math.max(26, action.csvData[0]?.length || 0),
+        };
+        draft.sheets.push(newSheet);
+        draft.activeSheetId = newId;
         break;
       }
       default:
@@ -222,7 +247,11 @@ export const useSpreadsheet = () => {
   }, [dispatchWithHistory]);
 
   const updateCell = useCallback((cellId: string, value: string | number) => {
+    console.log('[updateCell] called with:', cellId, value);
     dispatchWithHistory({ type: 'UPDATE_CELL', cellId, value });
+    setTimeout(() => {
+      console.log('[updateCell] dispatched for:', cellId, value);
+    }, 0);
   }, [dispatchWithHistory]);
 
   const formatCells = useCallback((cellIds: string[], style: Partial<CellStyle>) => {
@@ -253,6 +282,10 @@ export const useSpreadsheet = () => {
     dispatchWithHistory({ type: 'LOAD_CSV_DATA', csvData });
   }, [dispatchWithHistory]);
 
+  const addSheetFromCSV = useCallback((csvData: string[][], name?: string) => {
+    dispatchWithHistory({ type: 'ADD_SHEET_FROM_CSV', csvData, name });
+  }, [dispatchWithHistory]);
+
   const activeSheet = useMemo(() => 
     state.sheets.find(s => s.id === state.activeSheetId),
     [state.sheets, state.activeSheetId]
@@ -272,6 +305,7 @@ export const useSpreadsheet = () => {
     updateChart,
     removeChart,
     loadCSVData,
+    addSheetFromCSV,
     undo,
     redo,
     canUndo: historyIndex > 0,

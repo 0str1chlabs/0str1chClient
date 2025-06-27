@@ -17,6 +17,8 @@ export const ModernSpreadsheet = ({
   selectedCells = [],
   className = ''
 }: ModernSpreadsheetProps) => {
+  console.log('[ModernSpreadsheet render] sheet:', sheet);
+  console.log('[ModernSpreadsheet render] sheet.cells:', sheet.cells);
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [selectedRange, setSelectedRange] = useState<string[]>([]);
   const [editingCell, setEditingCell] = useState<string | null>(null);
@@ -24,6 +26,7 @@ export const ModernSpreadsheet = ({
   const [dragStart, setDragStart] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isShiftPressed, setIsShiftPressed] = useState(false);
+  const [anchorCell, setAnchorCell] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -99,6 +102,84 @@ export const ModernSpreadsheet = ({
       scrollArea.removeEventListener('wheel', handleWheel);
     };
   }, []);
+
+  // Arrow key navigation for cell selection
+  useEffect(() => {
+    const handleArrowKey = (event: KeyboardEvent) => {
+      if (!selectedCell || editingCell) return;
+      const { row, col } = parseCellId(selectedCell);
+      let nextRow = row;
+      let nextCol = col;
+      let handled = false;
+      if (event.key === 'ArrowUp') {
+        nextRow = Math.max(0, row - 1);
+        handled = true;
+      } else if (event.key === 'ArrowDown') {
+        nextRow = Math.min(sheet.rowCount - 1, row + 1);
+        handled = true;
+      } else if (event.key === 'ArrowLeft') {
+        nextCol = Math.max(0, col - 1);
+        handled = true;
+      } else if (event.key === 'ArrowRight') {
+        nextCol = Math.min(sheet.colCount - 1, col + 1);
+        handled = true;
+      } else if (event.key === 'Escape' && !editingCell) {
+        // Unselect all cells on Escape if not editing
+        setSelectedCell(null);
+        setSelectedRange([]);
+        setAnchorCell(null);
+        onSelectionChange?.([]);
+        return;
+      }
+      if (handled) {
+        event.preventDefault();
+        const nextCellId = getCellId(nextRow, nextCol);
+        if (event.shiftKey && selectedCell) {
+          // Use anchorCell as the start of the selection
+          const anchor = anchorCell || selectedCell;
+          const range = getCellsInRange(anchor, nextCellId);
+          setSelectedCell(nextCellId);
+          setSelectedRange(range);
+          onSelectionChange?.(range);
+          if (!anchorCell) setAnchorCell(selectedCell);
+        } else {
+          setSelectedCell(nextCellId);
+          setSelectedRange([nextCellId]);
+          setAnchorCell(null);
+          onSelectionChange?.([nextCellId]);
+        }
+        // Scroll selected cell into view
+        setTimeout(() => {
+          const cellElem = document.querySelector(`[data-cell-id="${nextCellId}"]`);
+          if (cellElem && cellElem.scrollIntoView) {
+            cellElem.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          }
+        }, 0);
+      }
+    };
+    document.addEventListener('keydown', handleArrowKey);
+    return () => document.removeEventListener('keydown', handleArrowKey);
+  }, [selectedCell, editingCell, sheet.rowCount, sheet.colCount, getCellId, getCellsInRange, onSelectionChange, parseCellId, anchorCell]);
+
+  // Unselect cells when clicking outside the spreadsheet
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      const spreadsheet = scrollAreaRef.current;
+      if (spreadsheet && !spreadsheet.contains(event.target as Node)) {
+        setSelectedCell(null);
+        setSelectedRange([]);
+        setAnchorCell(null);
+        onSelectionChange?.([]);
+      }
+    };
+    document.addEventListener('mousedown', handleDocumentClick);
+    return () => document.removeEventListener('mousedown', handleDocumentClick);
+  }, [onSelectionChange]);
+
+  // Reset anchorCell when selection changes not via shift
+  useEffect(() => {
+    setAnchorCell(null);
+  }, [editingCell]);
 
   // Optimized event handlers
   const handleCellClick = useCallback((cellId: string, event: React.MouseEvent) => {
@@ -313,6 +394,7 @@ export const ModernSpreadsheet = ({
                       border: isInRange ? '2px dotted #059669' : undefined,
                       boxSizing: 'border-box',
                     }}
+                    data-cell-id={cellId}
                   >
                     {isEditing ? (
                       <Input
