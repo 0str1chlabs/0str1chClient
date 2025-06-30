@@ -231,7 +231,13 @@ export const ModernSpreadsheet = ({
     event.preventDefault();
     const cell = sheet.cells[cellId];
     setEditingCell(cellId);
-    setEditValue(cell?.value?.toString() || '');
+    setEditValue(
+      typeof cell?.value === 'object' && cell?.value !== null
+        ? ((cell?.value && typeof cell.value === 'object' && cell.value !== null && 'message' in cell.value && (cell.value as any).message)
+          || (cell?.value && typeof cell.value === 'object' && cell.value !== null && 'value' in cell.value && (cell.value as any).value)
+          || '')
+        : cell?.value?.toString() || ''
+    );
     setTimeout(() => {
       if (inputRef.current) {
         inputRef.current.focus();
@@ -424,7 +430,9 @@ export const ModernSpreadsheet = ({
                           textAlign: cell?.style?.textAlign || 'left',
                         }}
                       >
-                        {cell?.value || ''}
+                        {typeof cell?.value === 'object' && cell?.value !== null
+                          ? cell?.value.message || cell?.value.value || JSON.stringify(cell.value)
+                          : cell?.value || ''}
                       </div>
                     )}
                     

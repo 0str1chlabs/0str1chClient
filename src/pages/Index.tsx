@@ -293,12 +293,40 @@ const Index = () => {
       <div className="w-full flex justify-center p-2">
         <button
           onClick={() => {
-            console.log('Test button clicked. updateCell:', updateCell);
-            updateCell('E2', 999);
+            // Get existing values in E2-E32, excluding formulas (values starting with '=')
+            const values = [];
+            for (let i = 2; i <= 32; i++) {
+              const cellId = `E${i}`;
+              const cell = activeSheet?.cells[cellId];
+              if (
+                cell &&
+                cell.value !== undefined &&
+                cell.value !== null &&
+                cell.value !== "" &&
+                !(typeof cell.value === 'string' && cell.value.trim().startsWith('='))
+              ) {
+                values.push({ cellId, value: cell.value });
+              }
+            }
+            // Sort values ascending (numeric if possible, else string)
+            values.sort((a, b) => {
+              const aNum = parseFloat(a.value);
+              const bNum = parseFloat(b.value);
+              if (!isNaN(aNum) && !isNaN(bNum)) {
+                return aNum - bNum;
+              } else {
+                return String(a.value).localeCompare(String(b.value));
+              }
+            });
+            // Update E2-E32 with sorted values
+            for (let i = 0; i < values.length; i++) {
+              const cellId = `E${i + 2}`;
+              updateCell(cellId, values[i].value);
+            }
           }}
           style={{ padding: '8px 16px', background: '#059669', color: 'white', borderRadius: 8, fontWeight: 'bold', boxShadow: '0 2px 8px #0001' }}
         >
-          Test updateCell('E2', 999)
+          Test Sort Existing E2-E32 Ascending
         </button>
       </div>
       <div className="h-screen overflow-hidden" style={gridBackground}>

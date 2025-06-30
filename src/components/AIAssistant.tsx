@@ -197,7 +197,9 @@ export const AIAssistant = ({
             cells: activeSheet.cells,
             rowCount: activeSheet.rowCount,
             colCount: activeSheet.colCount
-          }
+          },
+          selectedCells,
+          cellData
         }),
       });
       const data = await response.json();
@@ -218,6 +220,9 @@ export const AIAssistant = ({
       if (updates && Array.isArray(updates)) {
         console.log('AI updates array:', updates); // Debug: log updates array
       }
+      const displayFormulaResult = typeof data.formulaResult === 'object' && data.formulaResult !== null
+        ? data.formulaResult.message || data.formulaResult.value || JSON.stringify(data.formulaResult)
+        : data.formulaResult;
       if (data && data.explanation) {
         aiText = data.explanation;
         if (data.formula) {
@@ -228,6 +233,9 @@ export const AIAssistant = ({
         }
       } else if (data && data.raw) {
         aiText = data.raw;
+        if (displayFormulaResult) {
+          aiText += `\n\nResult: ${displayFormulaResult}`;
+        }
       } else {
         aiText = JSON.stringify(data);
       }
@@ -248,6 +256,7 @@ export const AIAssistant = ({
         if (applied > 0) {
           updatesSummary = `\n\nApplied ${applied} cell update${applied > 1 ? 's' : ''} to the spreadsheet.`;
         }
+        console.log('Total updates applied:', applied);
       } else {
         console.warn('No valid updates array found in AI response.');
       }
