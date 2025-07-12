@@ -1,4 +1,3 @@
-
 import { useCallback } from 'react';
 import { Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,7 +25,7 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
   return (
     <div className="p-4 border-b">
       <label htmlFor="csv-upload">
-        <Button variant="outline" className="w-full" asChild>
+        <Button variant="outline" className="w-full border-[1.5px] border-[hsl(205.91,68.04%,61.96%)]" asChild>
           <div className="cursor-pointer">
             <Upload size={16} className="mr-2" />
             Upload CSV

@@ -14,18 +14,24 @@ interface CanvasBlock {
 interface InfiniteCanvasProps {
   children: React.ReactNode;
   onAddSheet: () => void;
+  uploadButton?: React.ReactNode;
+  zoom?: number;
+  onZoomChange?: (zoom: number) => void;
 }
 
-export interface InfiniteCanvasHandle {}
+export interface InfiniteCanvasHandle {
+  zoomIn: (step?: number) => void;
+  zoomOut: (step?: number) => void;
+  zoomTo: (scale: number, duration?: number) => void;
+}
 
 export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
-  ({ children, onAddSheet }, ref) => {
+  ({ children, onAddSheet, uploadButton, zoom, onZoomChange }, ref) => {
     const [blocks, setBlocks] = useState<CanvasBlock[]>([]);
     const [isPanning, setIsPanning] = useState(false);
     const transformRef = useRef<any>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const spreadsheetRef = useRef<HTMLDivElement>(null);
-    const [zoom, setZoom] = useState(1);
 
     const handleWheel = useCallback((ref: any, event: WheelEvent) => {
       // Check if we're hovering over a spreadsheet or scrollable content
@@ -33,15 +39,19 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
       const isOverSpreadsheet = target.closest('.spreadsheet-container') || 
                                 target.closest('.overflow-auto') ||
                                 target.closest('[data-scrollable="true"]') ||
-                                target.closest('.modern-spreadsheet');
+                                target.closest('.modern-spreadsheet') ||
+                                target.closest('.ai-assistant') ||
+                                target.closest('.toolbar') ||
+                                target.closest('.chart-block');
       
       if (isOverSpreadsheet) {
         // Allow normal scrolling, prevent zoom
         event.stopPropagation();
-        return;
+        return false; // Prevent zoom
       }
       
       // Default zoom behavior for canvas - let the library handle it
+      return true;
     }, []);
 
     const handleAddSheet = () => {
@@ -63,38 +73,52 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
       };
     }, []);
 
+    // Effect to handle zoom changes from parent
+    useEffect(() => {
+      if (transformRef.current && typeof zoom === 'number') {
+        try {
+          // Use zoomTo method to set the exact zoom level
+          transformRef.current.zoomTo(zoom, 300);
+        } catch (error) {
+          console.warn('Error setting zoom:', error);
+        }
+      }
+    }, [zoom]);
+
+    // Expose transform methods to parent via ref
+    useImperativeHandle(ref, () => ({
+      zoomIn: (step = 0.1) => {
+        if (transformRef.current) {
+          transformRef.current.zoomIn(step);
+        }
+      },
+      zoomOut: (step = 0.1) => {
+        if (transformRef.current) {
+          transformRef.current.zoomOut(step);
+        }
+      },
+      zoomTo: (scale: number, duration = 300) => {
+        if (transformRef.current) {
+          transformRef.current.zoomTo(scale, duration);
+        }
+      }
+    }), []);
+
     return (
       <div
         className="w-full h-screen relative overflow-hidden"
         ref={wrapperRef}
         style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       >
-        {/* Zoom Indicator */}
-        <div className="fixed top-6 right-8 z-50">
-          <div className="bg-black/80 text-yellow-200 px-4 py-2 rounded-full shadow-lg text-sm font-semibold select-none pointer-events-none">
-            Zoom: {(zoom * 100).toFixed(0)}%
-          </div>
-        </div>
-        {/* Header with Platform Name */}
-        <div className="absolute top-0 left-0 right-0 z-50 bg-gradient-to-r from-yellow-100 to-yellow-200 dark:from-neutral-800 dark:to-black border-b border-yellow-200 dark:border-neutral-700 px-6 py-3">
-          <div className="flex items-center justify-between">
-            <Button
-              onClick={handleAddSheet}
-              className="bg-black hover:bg-neutral-700 text-yellow-100 shadow-lg rounded-full w-10 h-10 p-0 transition-all duration-200 hover:scale-105 dark:bg-yellow-400 dark:text-black dark:hover:bg-yellow-300"
-            >
-              <Plus size={20} className="text-yellow-100 dark:text-black" />
-            </Button>
-            
-            <h1 className="text-2xl font-bold text-black dark:text-yellow-400 tracking-wide">
-              0str1ch
-            </h1>
-            
-            <div className="w-10 h-10"></div> {/* Spacer for center alignment */}
-          </div>
-        </div>
-
         {/* Infinite Canvas Container */}
-        <div className="pt-16">
+        <div className=""
+        style={{
+          width: '8000px',
+          height: '6000px',
+          backgroundColor: '#f7f8fa',
+          backgroundImage: 'radial-gradient(rgba(180,180,180,0.18) 2px, transparent 2px)',
+          backgroundSize: '24px 24px',
+        }}>
           <TransformWrapper
             ref={transformRef}
             initialScale={1}
@@ -113,21 +137,24 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
             doubleClick={{ disabled: true }}
             pinch={{ step: 0.1 }}
             onWheel={handleWheel}
-            onZoom={ref => setZoom(ref.state.scale)}
+            onZoom={ref => {
+              if (typeof onZoomChange === 'function') {
+                onZoomChange(ref.state.scale);
+              }
+            }}
           >
             <TransformComponent
               wrapperClass="!w-full !h-full"
               contentClass="!w-full !h-full"
             >
               <div
-                className={`relative transition-shadow duration-200 ${isPanning ? 'shadow-[0_0_0_6px_rgba(234,179,8,0.3),0_8px_32px_0_rgba(0,0,0,0.25)]' : ''}`}
+                className={"relative transition-shadow duration-200"}
                 style={{
                   width: '8000px',
                   height: '6000px',
-                  backgroundImage:
-                    'repeating-linear-gradient(0deg, #f3f4f6 0px, #f3f4f6 1px, transparent 1px, transparent 40px), ' +
-                    'repeating-linear-gradient(90deg, #f3f4f6 0px, #f3f4f6 1px, transparent 1px, transparent 40px)',
-                  backgroundColor: '#fafaf9',
+                  backgroundColor: '#f7f8fa',
+                  backgroundImage: 'radial-gradient(rgba(180,180,180,0.18) 2px, transparent 2px)',
+                  backgroundSize: '24px 24px',
                 }}
               >
                 {/* Main content positioned in the center of the large canvas */}

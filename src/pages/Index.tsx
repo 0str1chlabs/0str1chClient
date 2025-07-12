@@ -1,21 +1,25 @@
-import { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { InfiniteCanvas, InfiniteCanvasHandle } from '@/components/InfiniteCanvas';
 import { ModernSpreadsheet } from '@/components/ModernSpreadsheet';
-import { Toolbar } from '@/components/Toolbar';
+import { MovableToolbar } from '@/components/MovableToolbar';
 import { AIAssistant } from '@/components/AIAssistant';
 import { ChartBlock } from '@/components/ChartBlock';
 import { CSVUploader } from '@/components/CSVUploader';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { SheetTabs } from '@/components/SheetTabs';
 import { toast } from '@/hooks/use-toast';
+import { ZoomIn, ZoomOut } from 'lucide-react';
+import { Resizable } from '@/components/Resizable';
 
 const Index = () => {
   const [showWelcome, setShowWelcome] = useState(false);
   const [selectedCells, setSelectedCells] = useState<string[]>([]);
   const [isAIMinimized, setIsAIMinimized] = useState(false);
   const [chartPositions, setChartPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [zoom, setZoom] = useState(1);
+  const [isSheetLoading, setSheetLoading] = useState(false);
   
   const {
     state,
@@ -31,13 +35,16 @@ const Index = () => {
     updateChart,
     removeChart,
     addSheetFromCSV,
+    addMoreRows,
     undo,
     redo,
     canUndo,
     canRedo,
+    bulkUpdateCells,
   } = useSpreadsheet();
 
   const canvasRef = useRef<InfiniteCanvasHandle>(null);
+  const boardContainerRef = useRef<HTMLDivElement>(null);
 
   const handleWelcomeAction = (action: 'upload' | 'sheet' | 'ai') => {
     setShowWelcome(false);
@@ -194,12 +201,18 @@ const Index = () => {
     toast({
       title: "Calculation Result",
       description: result,
-      duration: 5000,
     });
   };
 
   const handleFormatAction = (action: string, value?: string) => {
-    if (selectedCells.length === 0) return;
+    if (selectedCells.length === 0) {
+      toast({
+        title: "No Cells Selected",
+        description: "Please select cells to format.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     switch (action) {
       case 'bold-toggle':
@@ -259,6 +272,52 @@ const Index = () => {
     }));
   };
 
+  const handleZoomIn = () => {
+    setZoom(prev => Math.min(prev + 0.1, 3));
+  };
+
+  const handleZoomOut = () => {
+    setZoom(prev => Math.max(prev - 0.1, 0.1));
+  };
+
+  // Handle mouse wheel zoom for the entire board
+  const handleWheel = useCallback((event: WheelEvent) => {
+    // Check if we're hovering over scrollable content that should not trigger zoom
+    const target = event.target as HTMLElement;
+    const isOverScrollable = target.closest('.overflow-auto') ||
+                            target.closest('[data-scrollable="true"]') ||
+                            target.closest('.modern-spreadsheet') ||
+                            target.closest('.ai-assistant') ||
+                            target.closest('.toolbar') ||
+                            target.closest('.chart-block');
+    
+    if (isOverScrollable) {
+      // Allow normal scrolling, don't zoom
+      return;
+    }
+
+    // Prevent default scroll behavior and handle zoom
+    event.preventDefault();
+    
+    const delta = event.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(prev => {
+      const newZoom = prev + delta;
+      return Math.max(0.1, Math.min(3, newZoom));
+    });
+  }, []);
+
+  // Add wheel event listener to the board container
+  React.useEffect(() => {
+    const container = boardContainerRef.current;
+    if (!container) return;
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
+
   // CSS grid background (40px squares, light gray)
   const gridBackground = {
     backgroundColor: '#fff',
@@ -283,55 +342,46 @@ const Index = () => {
 
   return (
     <ThemeProvider isDarkMode={state.isDarkMode} toggleTheme={toggleTheme}>
-      {/* Persistent Upload CSV button at the top */}
-      <div className="w-full flex justify-end p-4 bg-white/80 z-50 sticky top-0 shadow-sm">
-        <div className="max-w-xs w-full">
-          <CSVUploader onUpload={(csv) => addSheetFromCSV(csv, 'Uploaded Sheet')} />
+      {/* Fixed Header at the top of the screen */}
+      <div className="fixed top-0 left-0 right-0 z-50 bg-white border-b shadow-sm flex items-center justify-between px-6 h-16">
+        <h1 className="text-2xl font-bold text-black dark:text-yellow-400 tracking-wide">0str1ch</h1>
+        <div className="flex items-center gap-4">
+          <div className="bg-black/80 text-yellow-200 px-4 py-2 rounded-full shadow-lg text-sm font-semibold select-none">
+            Zoom: {(zoom * 100).toFixed(0)}%
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleZoomOut}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              title="Zoom Out"
+            >
+              <ZoomOut size={16} className="text-gray-600" />
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              title="Zoom In"
+            >
+              <ZoomIn size={16} className="text-gray-600" />
+            </button>
+          </div>
+          <div className="ml-2">
+            <CSVUploader onUpload={(csv) => addSheetFromCSV(csv, 'Uploaded Sheet')} />
+          </div>
         </div>
       </div>
-      {/* TEST BUTTON: Remove after debugging */}
-      <div className="w-full flex justify-center p-2">
-        <button
-          onClick={() => {
-            // Get existing values in E2-E32, excluding formulas (values starting with '=')
-            const values = [];
-            for (let i = 2; i <= 32; i++) {
-              const cellId = `E${i}`;
-              const cell = activeSheet?.cells[cellId];
-              if (
-                cell &&
-                cell.value !== undefined &&
-                cell.value !== null &&
-                cell.value !== "" &&
-                !(typeof cell.value === 'string' && cell.value.trim().startsWith('='))
-              ) {
-                values.push({ cellId, value: cell.value });
-              }
-            }
-            // Sort values ascending (numeric if possible, else string)
-            values.sort((a, b) => {
-              const aNum = parseFloat(a.value);
-              const bNum = parseFloat(b.value);
-              if (!isNaN(aNum) && !isNaN(bNum)) {
-                return aNum - bNum;
-              } else {
-                return String(a.value).localeCompare(String(b.value));
-              }
-            });
-            // Update E2-E32 with sorted values
-            for (let i = 0; i < values.length; i++) {
-              const cellId = `E${i + 2}`;
-              updateCell(cellId, values[i].value);
-            }
-          }}
-          style={{ padding: '8px 16px', background: '#059669', color: 'white', borderRadius: 8, fontWeight: 'bold', boxShadow: '0 2px 8px #0001' }}
-        >
-          Test Sort Existing E2-E32 Ascending
-        </button>
-      </div>
-      <div className="h-screen overflow-hidden" style={gridBackground}>
-        <InfiniteCanvas ref={canvasRef} onAddSheet={handleAddSheet}>
-          <div className="relative w-full h-full">
+      
+      {/* Zoomable Board Container */}
+      <div 
+        ref={boardContainerRef}
+        className="fixed top-16 left-0 w-full h-[calc(100vh-4rem)] overflow-hidden"
+        style={{
+          transformOrigin: 'top left',
+          transform: `scale(${zoom})`,
+        }}
+      >
+        <InfiniteCanvas ref={canvasRef} onAddSheet={handleAddSheet} zoom={1} onZoomChange={() => {}}>
+          <div className="relative w-full h-full" style={{ transform: 'translate(650px, 200px)' }}  >
             {/* Sheet Tabs */}
             {state.sheets.length > 0 && (
               <div className="mb-4">
@@ -343,20 +393,31 @@ const Index = () => {
                 />
               </div>
             )}
-
             {/* Main Spreadsheet */}
             {activeSheet && (
               <div className="spreadsheet-container">
-                <ModernSpreadsheet
-                  sheet={activeSheet}
-                  updateCell={updateCell}
-                  onSelectionChange={setSelectedCells}
-                  selectedCells={selectedCells}
-                  className="max-w-6xl"
-                />
+                <Resizable
+                  initialWidth={800}
+                  initialHeight={600}
+                  minWidth={400}
+                  minHeight={300}
+                  maxWidth={1200}
+                  maxHeight={800}                
+                >
+                  <ModernSpreadsheet
+                    sheet={activeSheet}
+                    updateCell={updateCell}
+                    bulkUpdateCells={bulkUpdateCells}
+                    onSelectionChange={setSelectedCells}
+                    selectedCells={selectedCells}
+                    onAddMoreRows={addMoreRows}
+                    className="w-full h-full"
+                    isSheetLoading={isSheetLoading}
+                    setSheetLoading={setSheetLoading}
+                  />
+                </Resizable>
               </div>
             )}
-
             {/* Chart Blocks */}
             {state.charts.map((chart) => (
               <ChartBlock
@@ -372,9 +433,9 @@ const Index = () => {
             ))}
           </div>
         </InfiniteCanvas>
-
-        {/* Toolbar - Left Sidebar */}
-        <Toolbar
+        
+        {/* Movable Toolbar */}
+        <MovableToolbar
           onFormat={handleFormatAction}
           selectedCells={selectedCells}
           activeSheet={activeSheet}
@@ -382,9 +443,10 @@ const Index = () => {
           onRedo={redo}
           canUndo={canUndo}
           canRedo={canRedo}
+          onAddSheet={handleAddSheet}
         />
-
-        {/* AI Assistant - Fixed position */}
+        
+        {/* AI Assistant */}
         <AIAssistant
           onGenerateChart={handleGenerateChart}
           onCalculate={handleCalculate}

@@ -131,7 +131,7 @@ export const ChartBlock = ({ chart, onUpdate, onRemove, position, onPositionChan
 
   return (
     <Card 
-      className={`mb-4 transition-all duration-200 shadow-lg rounded-xl border-2 ${
+      className={`chart-block mb-4 transition-all duration-200 shadow-lg rounded-xl border-2 ${
         chart.minimized ? 'h-auto' : ''
       } ${isDragging ? 'shadow-2xl scale-105 opacity-80' : ''}`}
       style={{

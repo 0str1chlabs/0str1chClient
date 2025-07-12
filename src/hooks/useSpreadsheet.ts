@@ -1,12 +1,13 @@
 import { useReducer, useCallback, useMemo, useState } from 'react';
 import { SpreadsheetState, SheetData, Cell, Chart, CellStyle } from '@/types/spreadsheet';
 import { produce } from 'immer';
+import { toast } from '@/hooks/use-toast';
 
 const createEmptySheet = (id: string, name: string): SheetData => ({
   id,
   name,
   cells: {},
-  rowCount: 100,
+  rowCount: 1000,
   colCount: 26,
 });
 
@@ -60,7 +61,7 @@ const createMockSheet = (id: string, name: string): SheetData => {
     id,
     name,
     cells,
-    rowCount: 100,
+    rowCount: 1000,
     colCount: 26,
   };
 };
@@ -166,11 +167,36 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           id: newId,
           name: action.name || `Sheet ${state.sheets.length + 1}`,
           cells,
-          rowCount: Math.max(100, action.csvData.length),
+          rowCount: Math.max(1000, action.csvData.length),
           colCount: Math.max(26, action.csvData[0]?.length || 0),
         };
         draft.sheets.push(newSheet);
         draft.activeSheetId = newId;
+        break;
+      }
+      case 'ADD_MORE_ROWS': {
+        const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
+        if (sheet) {
+          const newRowCount = Math.min(sheet.rowCount + 1000, 100000);
+          sheet.rowCount = newRowCount;
+        }
+        break;
+      }
+      case '__SET_STATE__': {
+        // This is handled by the patched reducer, but we'll add it here for completeness
+        return action.payload;
+      }
+      case 'BULK_UPDATE_CELLS': {
+        const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
+        if (sheet) {
+          action.updates.forEach(({ cellId, value }) => {
+            if (!sheet.cells[cellId]) {
+              sheet.cells[cellId] = { value };
+            } else {
+              sheet.cells[cellId].value = value;
+            }
+          });
+        }
         break;
       }
       default:
@@ -180,8 +206,14 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
 };
 
 export const useSpreadsheet = () => {
+  // Patch reducer to handle __SET_STATE__
+  const patchedReducer = (state: SpreadsheetState, action: any): SpreadsheetState => {
+    if (action.type === '__SET_STATE__') return action.payload;
+    return spreadsheetReducer(state, action);
+  };
+
   const [state, dispatch] = useReducer(
-    spreadsheetReducer,
+    patchedReducer,
     undefined,
     () => ({
       sheets: [createMockSheet('sheet-1', 'Sales Data 2024')],
@@ -198,10 +230,12 @@ export const useSpreadsheet = () => {
 
   // Helper to push new state to history
   const pushHistory = useCallback((newState) => {
+    console.log('Pushing to history - current index:', historyIndex, 'history length:', history.length);
     const updatedHistory = history.slice(0, historyIndex + 1);
     updatedHistory.push(newState);
     setHistory(updatedHistory);
     setHistoryIndex(updatedHistory.length - 1);
+    console.log('History updated - new length:', updatedHistory.length, 'new index:', updatedHistory.length - 1);
   }, [history, historyIndex]);
 
   // Wrap dispatch to push to history
@@ -214,24 +248,26 @@ export const useSpreadsheet = () => {
 
   // Undo/redo handlers
   const undo = useCallback(() => {
+    console.log('Undo called - historyIndex:', historyIndex, 'history length:', history.length);
     if (historyIndex > 0) {
+      console.log('Performing undo - setting historyIndex to:', historyIndex - 1);
       setHistoryIndex(historyIndex - 1);
       dispatch({ type: '__SET_STATE__', payload: history[historyIndex - 1] });
+    } else {
+      console.log('Cannot undo - already at beginning');
     }
   }, [history, historyIndex]);
 
   const redo = useCallback(() => {
+    console.log('Redo called - historyIndex:', historyIndex, 'history length:', history.length);
     if (historyIndex < history.length - 1) {
+      console.log('Performing redo - setting historyIndex to:', historyIndex + 1);
       setHistoryIndex(historyIndex + 1);
       dispatch({ type: '__SET_STATE__', payload: history[historyIndex + 1] });
+    } else {
+      console.log('Cannot redo - already at end');
     }
   }, [history, historyIndex]);
-
-  // Patch reducer to handle __SET_STATE__
-  const patchedReducer = (state, action) => {
-    if (action.type === '__SET_STATE__') return action.payload;
-    return spreadsheetReducer(state, action);
-  };
 
   // Replace all dispatch calls with dispatchWithHistory for state-changing actions
   const addSheet = useCallback(() => {
@@ -286,6 +322,27 @@ export const useSpreadsheet = () => {
     dispatchWithHistory({ type: 'ADD_SHEET_FROM_CSV', csvData, name });
   }, [dispatchWithHistory]);
 
+  const addMoreRows = useCallback(() => {
+    const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+    const currentRowCount = currentSheet?.rowCount || 0;
+    const newRowCount = Math.min(currentRowCount + 1000, 100000);
+    
+    dispatchWithHistory({ type: 'ADD_MORE_ROWS' });
+    
+    // Show toast notification
+    setTimeout(() => {
+      toast({
+        title: "Rows Added Successfully",
+        description: `Added 1,000 more rows. Total rows: ${newRowCount.toLocaleString()}`,
+        duration: 3000,
+      });
+    }, 0);
+  }, [dispatchWithHistory, state.sheets, state.activeSheetId]);
+
+  const bulkUpdateCells = useCallback((updates: { cellId: string, value: any }[]) => {
+    dispatchWithHistory({ type: 'BULK_UPDATE_CELLS', updates });
+  }, [dispatchWithHistory]);
+
   const activeSheet = useMemo(() => 
     state.sheets.find(s => s.id === state.activeSheetId),
     [state.sheets, state.activeSheetId]
@@ -306,6 +363,8 @@ export const useSpreadsheet = () => {
     removeChart,
     loadCSVData,
     addSheetFromCSV,
+    addMoreRows,
+    bulkUpdateCells,
     undo,
     redo,
     canUndo: historyIndex > 0,
