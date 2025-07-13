@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Toolbar } from './Toolbar';
-import { RotateCw, Move } from 'lucide-react';
+import { RotateCw, Move, Pin, PinOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface MovableToolbarProps {
@@ -22,10 +22,12 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   const [isRotating, setIsRotating] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [rotationStart, setRotationStart] = useState(0);
+  const [isFixed, setIsFixed] = useState(true); // New state for fixed/movable mode
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   // Handle mouse down for dragging
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (isFixed) return; // Don't allow dragging when fixed
     if (e.target === e.currentTarget || (e.target as HTMLElement).closest('[data-toolbar-handle]')) {
       e.preventDefault();
       setIsDragging(true);
@@ -38,6 +40,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
 
   // Handle mouse down for rotation
   const handleRotationMouseDown = (e: React.MouseEvent) => {
+    if (isFixed) return; // Don't allow rotation when fixed
     e.preventDefault();
     e.stopPropagation();
     setIsRotating(true);
@@ -47,7 +50,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   // Handle mouse move for dragging and rotation
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (isDragging) {
+      if (isDragging && !isFixed) {
         const newX = e.clientX - dragStart.x;
         const newY = e.clientY - dragStart.y;
         
@@ -61,7 +64,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         });
       }
       
-      if (isRotating) {
+      if (isRotating && !isFixed) {
         const toolbar = toolbarRef.current;
         if (toolbar) {
           const rect = toolbar.getBoundingClientRect();
@@ -83,7 +86,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
       setIsRotating(false);
     };
 
-    if (isDragging || isRotating) {
+    if ((isDragging || isRotating) && !isFixed) {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
     }
@@ -92,58 +95,95 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, isRotating, dragStart, rotation]);
+  }, [isDragging, isRotating, dragStart, rotation, isFixed]);
 
   // Handle rotation button click (cycle through common angles)
   const handleRotationClick = () => {
+    if (isFixed) return; // Don't allow rotation when fixed
     const commonAngles = [0, 45, 90, 135, 180, 225, 270, 315];
     const currentIndex = commonAngles.findIndex(angle => Math.abs(angle - rotation) < 5);
     const nextIndex = (currentIndex + 1) % commonAngles.length;
     setRotation(commonAngles[nextIndex]);
   };
 
+  // Toggle fixed/movable mode
+  const toggleFixedMode = () => {
+    setIsFixed(!isFixed);
+    if (!isFixed) {
+      // When switching to fixed mode, reset position to left side
+      setPosition({ x: 24, y: 128 });
+      setRotation(0);
+    }
+  };
+
+  // Fixed position styles
+  const fixedStyles = isFixed ? {
+    position: 'fixed' as const,
+    left: 0,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    zIndex: 50,
+  } : {
+    position: 'fixed' as const,
+    left: position.x,
+    top: position.y,
+    transform: `rotate(${rotation}deg)`,
+    transformOrigin: 'center center',
+    zIndex: 50,
+  };
+
   return (
     <div
       ref={toolbarRef}
-      className="fixed z-50 select-none"
-      style={{
-        left: position.x,
-        top: position.y,
-        transform: `rotate(${rotation}deg)`,
-        transformOrigin: 'center center',
-      }}
+      className="select-none"
+      style={fixedStyles}
       onMouseDown={handleMouseDown}
       data-toolbar-handle="true"
     >
       {/* Toolbar Container with drag handle */}
       <div className="relative">
-        {/* Drag Handle */}
+        {/* Toggle Fixed/Movable Button */}
         <div 
-          className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-white rounded-t-lg px-2 py-1 shadow-md border border-gray-200 cursor-move hover:bg-gray-50 transition-colors"
-          data-toolbar-handle="true"
+          className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-white rounded-t-lg px-2 py-1 shadow-md border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
+          onClick={toggleFixedMode}
+          title={isFixed ? "Make Movable" : "Fix Position"}
         >
-          <Move size={12} className="text-gray-600" />
+          {isFixed ? <PinOff size={12} className="text-gray-600" /> : <Pin size={12} className="text-gray-600" />}
         </div>
         
-        {/* Rotation Handle */}
-        <div 
-          className="absolute -top-8 -right-8 bg-white rounded-lg p-1 shadow-md border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
-          onMouseDown={handleRotationMouseDown}
-          title="Rotate Toolbar"
-        >
-          <RotateCw size={12} className="text-gray-600" />
-        </div>
+        {/* Drag Handle - only show when not fixed */}
+        {!isFixed && (
+          <div 
+            className="absolute -top-8 -left-8 bg-white rounded-lg px-2 py-1 shadow-md border border-gray-200 cursor-move hover:bg-gray-50 transition-colors"
+            data-toolbar-handle="true"
+          >
+            <Move size={12} className="text-gray-600" />
+          </div>
+        )}
         
-        {/* Quick Rotation Button */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute -top-8 left-8 bg-white rounded-lg p-1 shadow-md border border-gray-200 hover:bg-gray-50 transition-colors"
-          onClick={handleRotationClick}
-          title="Quick Rotate (45° increments)"
-        >
-          <RotateCw size={12} className="text-gray-600" />
-        </Button>
+        {/* Rotation Handle - only show when not fixed */}
+        {!isFixed && (
+          <>
+            <div 
+              className="absolute -top-8 -right-8 bg-white rounded-lg p-1 shadow-md border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
+              onMouseDown={handleRotationMouseDown}
+              title="Rotate Toolbar"
+            >
+              <RotateCw size={12} className="text-gray-600" />
+            </div>
+            
+            {/* Quick Rotation Button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute -top-8 left-8 bg-white rounded-lg p-1 shadow-md border border-gray-200 hover:bg-gray-50 transition-colors"
+              onClick={handleRotationClick}
+              title="Quick Rotate (45° increments)"
+            >
+              <RotateCw size={12} className="text-gray-600" />
+            </Button>
+          </>
+        )}
         
         {/* Main Toolbar */}
         <div className="bg-white rounded-2xl shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-gray-200">

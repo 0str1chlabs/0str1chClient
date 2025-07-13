@@ -11,60 +11,7 @@ const createEmptySheet = (id: string, name: string): SheetData => ({
   colCount: 26,
 });
 
-const createMockSheet = (id: string, name: string): SheetData => {
-  const cells: Record<string, Cell> = {};
-  
-  // Enhanced headers with ostrich-inspired styling
-  cells['A1'] = { value: 'Product Category', style: { bold: true, backgroundColor: '#fef3c7', textColor: '#92400e' } };
-  cells['B1'] = { value: 'Sales Revenue', style: { bold: true, backgroundColor: '#fef3c7', textColor: '#92400e' } };
-  cells['C1'] = { value: 'Quarter', style: { bold: true, backgroundColor: '#fef3c7', textColor: '#92400e' } };
-  cells['D1'] = { value: 'Region', style: { bold: true, backgroundColor: '#fef3c7', textColor: '#92400e' } };
-  cells['E1'] = { value: 'Units Sold', style: { bold: true, backgroundColor: '#fef3c7', textColor: '#92400e' } };
-  cells['F1'] = { value: 'Profit Margin', style: { bold: true, backgroundColor: '#fef3c7', textColor: '#92400e' } };
-  
-  // Realistic business data
-  const products = [
-    'Electronics', 'Clothing', 'Home & Garden', 'Sports Equipment', 
-    'Books & Media', 'Automotive', 'Health & Beauty', 'Toys & Games',
-    'Food & Beverages', 'Office Supplies', 'Pet Supplies', 'Jewelry',
-    'Musical Instruments', 'Arts & Crafts', 'Travel Accessories'
-  ];
-  
-  const regions = ['North America', 'Europe', 'Asia Pacific', 'South America', 'Middle East'];
-  const quarters = ['Q1 2024', 'Q2 2024', 'Q3 2024', 'Q4 2024'];
-  
-  for (let i = 0; i < 30; i++) {
-    const row = i + 2;
-    const unitsSold = Math.floor(Math.random() * 2000) + 500;
-    const pricePerUnit = Math.floor(Math.random() * 200) + 50;
-    const salesRevenue = unitsSold * pricePerUnit;
-    const profitMargin = (15 + Math.random() * 25).toFixed(1); // 15-40% profit margin
-    
-    cells[`A${row}`] = { value: products[i % products.length] };
-    cells[`B${row}`] = { value: salesRevenue };
-    cells[`C${row}`] = { value: quarters[i % quarters.length] };
-    cells[`D${row}`] = { value: regions[i % regions.length] };
-    cells[`E${row}`] = { value: unitsSold };
-    cells[`F${row}`] = { value: `${profitMargin}%` };
-  }
-  
-  // Add some summary rows with formulas
-  cells['A32'] = { value: 'TOTAL', style: { bold: true, backgroundColor: '#fed7aa', textColor: '#9a3412' } };
-  cells['B32'] = { value: '=SUM(B2:B31)', style: { bold: true, backgroundColor: '#fed7aa', textColor: '#9a3412' } };
-  cells['E32'] = { value: '=SUM(E2:E31)', style: { bold: true, backgroundColor: '#fed7aa', textColor: '#9a3412' } };
-  
-  cells['A33'] = { value: 'AVERAGE', style: { bold: true, backgroundColor: '#fed7aa', textColor: '#9a3412' } };
-  cells['B33'] = { value: '=AVERAGE(B2:B31)', style: { bold: true, backgroundColor: '#fed7aa', textColor: '#9a3412' } };
-  cells['E33'] = { value: '=AVERAGE(E2:E31)', style: { bold: true, backgroundColor: '#fed7aa', textColor: '#9a3412' } };
-  
-  return {
-    id,
-    name,
-    cells,
-    rowCount: 1000,
-    colCount: 26,
-  };
-};
+
 
 const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetState => {
   return produce(state, draft => {
@@ -216,7 +163,7 @@ export const useSpreadsheet = () => {
     patchedReducer,
     undefined,
     () => ({
-      sheets: [createMockSheet('sheet-1', 'Sales Data 2024')],
+      sheets: [createEmptySheet('sheet-1', 'Sheet 1')],
       activeSheetId: 'sheet-1',
       charts: [],
       isAIMode: true,

@@ -421,7 +421,7 @@ const Index = () => {
         }}
       >
         <InfiniteCanvas ref={canvasRef} onAddSheet={handleAddSheet} zoom={1} onZoomChange={() => {}}>
-          <div className="relative w-full h-full" style={{ transform: 'translate(650px, 200px)' }}  >
+          <div className="relative w-full h-full">
             {/* Sheet Tabs */}
             {state.sheets.length > 0 && (
               <div className="mb-4">

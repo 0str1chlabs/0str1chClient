@@ -19,7 +19,9 @@ import {
   Type,
   Palette,
   Calculator,
-  ChevronDown
+  ChevronDown,
+  ChevronRight,
+  Settings
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -90,7 +92,9 @@ export const Toolbar = ({
 }: ToolbarProps) => {
   const [showSearch, setShowSearch] = useState(false);
   const [showColorPalette, setShowColorPalette] = useState(false);
+  const [showTextFormat, setShowTextFormat] = useState(false);
   const colorPaletteRef = useRef<HTMLDivElement>(null);
+  const textFormatRef = useRef<HTMLDivElement>(null);
   
   const fontSizes = ['8', '9', '10', '11', '12', '14', '16', '18', '20', '24', '28', '32'];
   const fonts = ['Arial', 'Roboto', 'Times New Roman', 'Helvetica', 'Georgia', 'Courier New'];
@@ -199,42 +203,43 @@ export const Toolbar = ({
     }
   };
 
-
-
-  // Close color palette when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (colorPaletteRef.current && !colorPaletteRef.current.contains(event.target as Node)) {
         setShowColorPalette(false);
       }
+      if (textFormatRef.current && !textFormatRef.current.contains(event.target as Node)) {
+        setShowTextFormat(false);
+      }
     };
 
-    if (showColorPalette) {
+    if (showColorPalette || showTextFormat) {
       document.addEventListener('mousedown', handleClickOutside);
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [showColorPalette]);
+  }, [showColorPalette, showTextFormat]);
 
   return (
     <>
-      {/* Toolbar */}
-      <div className="toolbar flex flex-col items-center gap-2 p-2" style={{ width: 56 }} data-toolbar="true">
+      {/* Compact Toolbar */}
+      <div className="toolbar flex flex-col items-center gap-1 p-2" style={{ width: 48 }} data-toolbar="true">
         {/* Add Sheet Button */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
-              className="w-10 h-10 p-0 hover:bg-gray-100"
+              className="w-8 h-8 p-0 hover:bg-gray-100"
               onClick={(e) => {
                 e.stopPropagation();
                 onAddSheet();
               }}
             >
-              <Plus size={20} className="text-neutral-800" />
+              <Plus size={16} className="text-neutral-800" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
@@ -242,273 +247,308 @@ export const Toolbar = ({
             <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.addSheet.description}</p>
           </TooltipContent>
         </Tooltip>
-        {/* File Actions */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleFormatAction('undo');
-              }}
-              disabled={!canUndo}
-            >
-              <Undo size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.undo.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.undo.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleFormatAction('redo');
-              }}
-              disabled={!canRedo}
-            >
-              <Redo size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.redo.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.redo.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Separator className="w-8 my-1 bg-gray-200" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant={appliedFormats.bold ? "default" : "ghost"}
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleFormatAction('bold');
-              }}
-            >
-              <Bold size={20} className={appliedFormats.bold ? "text-gray-500" : "text-neutral-800"} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.bold.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.bold.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant={appliedFormats.italic ? "default" : "ghost"}
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleFormatAction('italic');
-              }}
-            >
-              <Italic size={20} className={appliedFormats.italic ? "text-gray-500" : "text-neutral-800"} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.italic.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.italic.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant={appliedFormats.underline ? "default" : "ghost"}
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleFormatAction('underline');
-              }}
-            >
-              <Underline size={20} className={appliedFormats.underline ? "text-gray-500" : "text-neutral-800"} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.underline.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.underline.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Separator className="w-8 my-1 bg-gray-200" />
-        {/* Color Palette Button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100 relative"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowColorPalette(!showColorPalette);
-              }}
-            >
-              <Palette size={20} className="text-neutral-800" />
-              <ChevronDown size={12} className="absolute -bottom-1 -right-1 text-neutral-600" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">Cell Colors</p>
-            <p className="text-xs text-muted-foreground">Highlight selected cells with colors</p>
-          </TooltipContent>
-        </Tooltip>
-        {/* Color Palette Dropdown */}
-        {showColorPalette && (
-          <div ref={colorPaletteRef} className="absolute left-16 top-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50" data-color-palette="true">
-            <div className="grid grid-cols-7 gap-1 w-56">
-              {highlightColors.map((color, index) => (
-                <button
-                  key={index}
-                  className="w-6 h-6 rounded border border-gray-300 hover:scale-110 transition-transform"
-                  style={{ backgroundColor: color }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onFormat('fill-color', color);
-                    setShowColorPalette(false);
-                  }}
-                  title={`Apply ${color} background`}
-                />
-              ))}
-            </div>
-            <div className="mt-2 pt-2 border-t border-gray-200">
-              <button
-                className="w-full px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded"
+
+        {/* Undo/Redo Group */}
+        <div className="flex flex-col gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onFormat('fill-color', 'transparent');
-                  setShowColorPalette(false);
+                  handleFormatAction('undo');
+                }}
+                disabled={!canUndo}
+              >
+                <Undo size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.undo.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.undo.description}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleFormatAction('redo');
+                }}
+                disabled={!canRedo}
+              >
+                <Redo size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.redo.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.redo.description}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        <Separator className="w-6 my-1 bg-gray-200" />
+
+        {/* Text Formatting Group */}
+        <div className="relative" ref={textFormatRef}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100 relative"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowTextFormat(!showTextFormat);
                 }}
               >
-                Clear Color
-              </button>
+                <Type size={16} className="text-neutral-800" />
+                <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-neutral-600" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">Text Formatting</p>
+              <p className="text-xs text-muted-foreground">Bold, italic, underline</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          {/* Text Formatting Dropdown */}
+          {showTextFormat && (
+            <div className="absolute left-12 top-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50" data-text-format="true">
+              <div className="flex flex-col gap-1">
+                <Button 
+                  variant={appliedFormats.bold ? "default" : "ghost"}
+                  size="sm" 
+                  className="w-8 h-8 p-0 hover:bg-gray-100 justify-start gap-2"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleFormatAction('bold');
+                    setShowTextFormat(false);
+                  }}
+                >
+                  <Bold size={14} className={appliedFormats.bold ? "text-gray-500" : "text-neutral-800"} />
+                  <span className="text-xs">Bold</span>
+                </Button>
+                <Button 
+                  variant={appliedFormats.italic ? "default" : "ghost"}
+                  size="sm" 
+                  className="w-8 h-8 p-0 hover:bg-gray-100 justify-start gap-2"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleFormatAction('italic');
+                    setShowTextFormat(false);
+                  }}
+                >
+                  <Italic size={14} className={appliedFormats.italic ? "text-gray-500" : "text-neutral-800"} />
+                  <span className="text-xs">Italic</span>
+                </Button>
+                <Button 
+                  variant={appliedFormats.underline ? "default" : "ghost"}
+                  size="sm" 
+                  className="w-8 h-8 p-0 hover:bg-gray-100 justify-start gap-2"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleFormatAction('underline');
+                    setShowTextFormat(false);
+                  }}
+                >
+                  <Underline size={14} className={appliedFormats.underline ? "text-gray-500" : "text-neutral-800"} />
+                  <span className="text-xs">Underline</span>
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={() => handleFormatAction('align-left')}
-            >
-              <AlignLeft size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.alignLeft.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignLeft.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={() => handleFormatAction('align-center')}
-            >
-              <AlignCenter size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.alignCenter.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignCenter.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={() => handleFormatAction('align-right')}
-            >
-              <AlignRight size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.alignRight.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignRight.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Separator className="w-8 my-1 bg-gray-200" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={() => handleFormatAction('functions')}
-            >
-              <Calculator size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.functions.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.functions.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={() => setShowSearch(true)}
-            >
-              <Search size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.search.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.search.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={() => handleFormatAction('copy')}
-            >
-              <Copy size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.copy.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.copy.description}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-10 h-10 p-0 hover:bg-gray-100"
-              onClick={() => handleFormatAction('paste')}
-            >
-              <Clipboard size={20} className="text-neutral-800" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.paste.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.paste.description}</p>
-          </TooltipContent>
-        </Tooltip>
+          )}
+        </div>
 
+        {/* Color Palette Button */}
+        <div className="relative" ref={colorPaletteRef}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100 relative"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowColorPalette(!showColorPalette);
+                }}
+              >
+                <Palette size={16} className="text-neutral-800" />
+                <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-neutral-600" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">Cell Colors</p>
+              <p className="text-xs text-muted-foreground">Highlight selected cells with colors</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          {/* Color Palette Dropdown */}
+          {showColorPalette && (
+            <div className="absolute left-12 top-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50" data-color-palette="true">
+              <div className="grid grid-cols-7 gap-1 w-48">
+                {highlightColors.map((color, index) => (
+                  <button
+                    key={index}
+                    className="w-5 h-5 rounded border border-gray-300 hover:scale-110 transition-transform"
+                    style={{ backgroundColor: color }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFormat('fill-color', color);
+                      setShowColorPalette(false);
+                    }}
+                    title={`Apply ${color} background`}
+                  />
+                ))}
+              </div>
+              <div className="mt-2 pt-2 border-t border-gray-200">
+                <button
+                  className="w-full px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFormat('fill-color', 'transparent');
+                    setShowColorPalette(false);
+                  }}
+                >
+                  Clear Color
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Separator className="w-6 my-1 bg-gray-200" />
+
+        {/* Alignment Group */}
+        <div className="flex flex-col gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={() => handleFormatAction('align-left')}
+              >
+                <AlignLeft size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.alignLeft.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignLeft.description}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={() => handleFormatAction('align-center')}
+              >
+                <AlignCenter size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.alignCenter.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignCenter.description}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={() => handleFormatAction('align-right')}
+              >
+                <AlignRight size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.alignRight.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignRight.description}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        <Separator className="w-6 my-1 bg-gray-200" />
+
+        {/* Copy/Paste Group */}
+        <div className="flex flex-col gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={() => handleFormatAction('copy')}
+              >
+                <Copy size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.copy.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.copy.description}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={() => handleFormatAction('paste')}
+              >
+                <Clipboard size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.paste.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.paste.description}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* Search and Functions */}
+        <div className="flex flex-col gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={() => setShowSearch(true)}
+              >
+                <Search size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.search.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.search.description}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100"
+                onClick={() => handleFormatAction('functions')}
+              >
+                <Calculator size={16} className="text-neutral-800" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.functions.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.functions.description}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
       
       <SearchDialog

@@ -126,7 +126,7 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
             initialPositionY={0}
             minScale={0.3}
             maxScale={3}
-            centerOnInit={false}
+            centerOnInit={true}
             limitToBounds={false}
             panning={{ disabled: false }}
             wheel={{ 
@@ -157,12 +157,12 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                   backgroundSize: '24px 24px',
                 }}
               >
-                {/* Main content positioned in the center of the large canvas */}
+                {/* Main content positioned in the top left of the large canvas */}
                 <div 
                   className="absolute modern-spreadsheet"
                   style={{ 
-                    left: '1000px', 
-                    top: '500px',
+                    left: 0, 
+                    top: 0,
                     width: '6000px',
                     height: '4000px'
                   }}

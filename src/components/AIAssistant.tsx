@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp } from 'lucide-react';
+import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,6 +54,7 @@ export const AIAssistant = ({
   const dragOffset = useRef({ x: 0, y: 0 });
   const [selectedModel, setSelectedModel] = useState('0str1ch 1.0');
   const [minimized, setMinimized] = useState(isMinimized);
+  const [isFixed, setIsFixed] = useState(true); // New state for fixed/movable mode
 
   const mainPrompts = [
     {
@@ -198,25 +199,45 @@ export const AIAssistant = ({
   const handleSendMessage = async () => {
     if (!message.trim()) return;
     setMessage(''); // Clear input immediately
-    addMessage('user', message);
+
+    const userMessage = message;
+    addMessage('user', userMessage);
     setIsLoading(true);
+
     try {
+      const { columns, sampleRows } = extractColumnsAndRows();
       const response = await fetch('http://localhost:8090/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ 
+          message: userMessage,
+          columns,
+          sampleRows,
+          selectedCells
+        }),
       });
+
+      if (!response.ok) {
+        throw new Error('Failed to get AI response');
+      }
+
       const data = await response.json();
       const fnString = data.function;
-      let fn, updates;
+      
+      addMessage('ai', `🤖 I'll help you with that! Here's what I can do:\n\n${fnString}`);
+
+      // Execute the AI function if it returns updates
+      let updates;
       try {
         // Remove code block markers if present
         let cleanFnString = fnString.trim();
         if (cleanFnString.startsWith('```')) {
           cleanFnString = cleanFnString.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
         }
+        
         // Try to match a named function, but fallback to eval if it fails
         let match = cleanFnString.match(/^function\s+\w+\s*\(([^)]*)\)\s*{([\s\S]*)}\s*$/m);
+        let fn;
         if (match) {
           const arg = match[1].trim();
           const body = match[2].trim();
@@ -230,12 +251,15 @@ export const AIAssistant = ({
             fn = new Function('cells', cleanFnString + '; return cells;');
           }
         }
+        
         if (typeof fn !== 'function') throw new Error('AI did not return a function');
+        
         // Build input array from all cells in the sheet
         const allCells = Object.keys(activeSheet.cells).map(cellId => ({
           cellId,
           value: activeSheet.cells[cellId]?.value
         }));
+        
         updates = fn(allCells);
       } catch (e) {
         addMessage('ai', `❌ Error executing AI function: ${e}`);
@@ -278,6 +302,7 @@ export const AIAssistant = ({
 
   // Drag handlers
   const handleDragStart = (e: React.MouseEvent) => {
+    if (isFixed) return; // Don't allow dragging when fixed
     setDragging(true);
     dragOffset.current = {
       x: e.clientX - position.x,
@@ -286,7 +311,7 @@ export const AIAssistant = ({
     document.body.style.userSelect = 'none';
   };
   const handleDrag = (e: MouseEvent) => {
-    if (!dragging) return;
+    if (!dragging || isFixed) return;
     setPosition({
       x: e.clientX - dragOffset.current.x,
       y: e.clientY - dragOffset.current.y,
@@ -297,7 +322,7 @@ export const AIAssistant = ({
     document.body.style.userSelect = '';
   };
   useEffect(() => {
-    if (dragging) {
+    if (dragging && !isFixed) {
       window.addEventListener('mousemove', handleDrag);
       window.addEventListener('mouseup', handleDragEnd);
     } else {
@@ -308,9 +333,18 @@ export const AIAssistant = ({
       window.removeEventListener('mousemove', handleDrag);
       window.removeEventListener('mouseup', handleDragEnd);
     };
-  }, [dragging]);
+  }, [dragging, isFixed]);
 
   useEffect(() => { setMinimized(isMinimized); }, [isMinimized]);
+
+  // Toggle fixed/movable mode
+  const toggleFixedMode = () => {
+    setIsFixed(!isFixed);
+    if (!isFixed) {
+      // When switching to fixed mode, reset position to right side
+      setPosition({ x: window.innerWidth - 460, y: 100 });
+    }
+  };
 
   if (minimized) {
     return (
@@ -337,8 +371,22 @@ export const AIAssistant = ({
     );
   }
 
+  // Fixed position styles
+  const fixedStyles = isFixed ? {
+    position: 'fixed' as const,
+    right: 0,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    zIndex: 1000,
+  } : {
+    position: 'absolute' as const,
+    left: position.x,
+    top: position.y,
+    zIndex: 1000,
+  };
+
   return (
-    <div id="ai-chatbox" data-ai-chatbox className="ai-assistant" style={{ position: 'absolute', left: position.x, top: position.y, zIndex: 1000 }}>
+    <div id="ai-chatbox" data-ai-chatbox className="ai-assistant" style={fixedStyles}>
       <Resizable
         initialWidth={440}
         initialHeight={650}
@@ -353,9 +401,20 @@ export const AIAssistant = ({
               <Wand2 className="h-5 w-5 text-primary" />
               AI Assistant
             </div>
-            <Button variant="ghost" size="icon" className="h-8 w-8 no-drag" onClick={() => { setMinimized(true); onToggleMinimize(); }} title="Close">
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8 no-drag" 
+                onClick={toggleFixedMode}
+                title={isFixed ? "Make Movable" : "Fix Position"}
+              >
+                {isFixed ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 no-drag" onClick={() => { setMinimized(true); onToggleMinimize(); }} title="Close">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <ScrollArea className="flex-1 p-4 custom-blue-scrollbar">
             <div className="space-y-6">

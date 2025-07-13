@@ -47,7 +47,7 @@ export const WelcomeScreen = ({ onUploadCSV, onCreateSheet, onStartAI }: Welcome
               </div>
               <CardTitle>New Sheet</CardTitle>
               <CardDescription>
-                Start fresh with a blank spreadsheet and sample data
+                Start fresh with a blank spreadsheet
               </CardDescription>
             </CardHeader>
             <CardContent className="text-center">
