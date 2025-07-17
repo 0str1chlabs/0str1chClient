@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LoaderCircle } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Resizable } from './Resizable';
+import { useAuth } from '@/components/auth/AuthContext';
 
 interface Message {
   type: 'ai' | 'user';
@@ -55,6 +56,7 @@ export const AIAssistant = ({
   const [selectedModel, setSelectedModel] = useState('0str1ch 1.0');
   const [minimized, setMinimized] = useState(isMinimized);
   const [isFixed, setIsFixed] = useState(true); // New state for fixed/movable mode
+  const { user } = useAuth();
 
   const mainPrompts = [
     {
@@ -106,11 +108,16 @@ export const AIAssistant = ({
       addMessage('user', `${operation === 'sum-selected' ? 'Sum' : 'Average'} Selected`);
       addMessage('ai', `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`);
       try {
+        const token = localStorage.getItem('auth_token');
         const response = await fetch('http://localhost:8090/api/ai', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
           body: JSON.stringify({ 
-            message: operation === 'sum-selected' ? 'Calculate the sum of the selected cells' : 'Calculate the average of the selected cells'
+            message: operation === 'sum-selected' ? 'Calculate the sum of the selected cells' : 'Calculate the average of the selected cells',
+            userEmail: user?.email || ''
           }),
         });
         const data = await response.json();
@@ -206,14 +213,19 @@ export const AIAssistant = ({
 
     try {
       const { columns, sampleRows } = extractColumnsAndRows();
+      const token = localStorage.getItem('auth_token');
       const response = await fetch('http://localhost:8090/api/ai', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ 
           message: userMessage,
           columns,
           sampleRows,
-          selectedCells
+          selectedCells,
+          userEmail: user?.email || ''
         }),
       });
 

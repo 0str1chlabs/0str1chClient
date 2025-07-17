@@ -19,6 +19,15 @@ export interface VectorDBConfig {
   dimensions?: number;
 }
 
+export interface RowDocument {
+  sheet: string;
+  rowIndex: number;
+  values: string[];
+  headers: string[];
+  sheetId?: string;
+  timestamp?: number;
+}
+
 /**
  * Transforms CSV data into cell documents suitable for vector database storage
  * Each cell becomes a document with rich context for AI operations
@@ -169,4 +178,29 @@ export function createSheetSummary(cells: CellDocument[]): {
     formulas: formulaCells.length,
     sheetName: cells[0]?.sheet || 'Unknown',
   };
+} 
+
+export function transformCsvToRowDocs(
+  csvData: string[][],
+  sheetName: string,
+  sheetId?: string
+): RowDocument[] {
+  if (!csvData || csvData.length === 0) return [];
+  const headers = csvData[0] || [];
+  const timestamp = Date.now();
+  // Skip header row for data
+  return csvData.slice(1).map((row, idx) => ({
+    sheet: sheetName,
+    rowIndex: idx + 2, // +2 because slice(1) skips header, and rows are 1-indexed
+    values: row,
+    headers,
+    sheetId,
+    timestamp,
+  }));
+}
+
+export function createRowSearchText(rowDoc: RowDocument): string {
+  return rowDoc.headers
+    .map((header, i) => `${header}: ${rowDoc.values[i] ?? ''}`)
+    .join(', ');
 } 

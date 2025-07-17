@@ -23,6 +23,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { pushRowsToQdrantDB } from '@/lib/qdrant';
+import { transformCsvToRowDocs } from '@/lib/vectorDB';
 
 const Index = () => {
   const { user, logout } = useAuth();
@@ -32,6 +34,7 @@ const Index = () => {
   const [chartPositions, setChartPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [zoom, setZoom] = useState(1);
   const [isSheetLoading, setSheetLoading] = useState(false);
+  const [isIndexing, setIsIndexing] = useState(false);
   
   const {
     state,
@@ -262,8 +265,33 @@ const Index = () => {
     }
   };
 
-  const handleCSVUpload = () => {
-    document.getElementById('csv-upload')?.click();
+  // Enhanced upload handler: pushes to Qdrant in the background
+  const handleCSVUploadAndPush = async (csv: string[][]) => {
+    // 1. Show data in UI immediately
+    addSheetFromCSV(csv, 'Uploaded Sheet');
+
+    // 2. Start Qdrant upload in background (non-blocking)
+    if (user?.email) {
+      setIsIndexing(true); // Show loader
+      setTimeout(async () => {
+        try {
+          const rowDocs = transformCsvToRowDocs(csv, 'Uploaded Sheet');
+          await pushRowsToQdrantDB(rowDocs, user.email);
+          toast({
+            title: 'Indexing Complete',
+            description: 'Rows pushed to Qdrant successfully!',
+          });
+        } catch (err) {
+          toast({
+            title: 'Qdrant Upload Failed',
+            description: err instanceof Error ? err.message : 'Unknown error',
+            variant: 'destructive',
+          });
+        } finally {
+          setIsIndexing(false); // Hide loader
+        }
+      }, 0);
+    }
   };
 
   const handleCreateCustom = () => {
@@ -347,7 +375,7 @@ const Index = () => {
           onCreateSheet={() => handleWelcomeAction('sheet')}
           onStartAI={() => handleWelcomeAction('ai')}
         />
-        <CSVUploader onUpload={(csv) => addSheetFromCSV(csv, 'Uploaded Sheet')} />
+        <CSVUploader onUpload={handleCSVUploadAndPush} />
       </ThemeProvider>
     );
   }
@@ -378,7 +406,7 @@ const Index = () => {
             </button>
           </div>
           <div className="ml-2">
-            <CSVUploader onUpload={(csv) => addSheetFromCSV(csv, 'Uploaded Sheet')} />
+            <CSVUploader onUpload={handleCSVUploadAndPush} />
           </div>
           
           {/* User Menu */}
@@ -500,6 +528,7 @@ const Index = () => {
             description: "Tell me what you'd like to create and I'll help you build it!",
           })}
           updateCell={updateCell}
+          isIndexing={isIndexing}
         />
       </div>
     </ThemeProvider>
