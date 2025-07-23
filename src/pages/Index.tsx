@@ -23,8 +23,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { pushRowsToQdrantDB } from '@/lib/qdrant';
 import { transformCsvToRowDocs } from '@/lib/vectorDB';
+import SelectionSummaryDropdown from '@/components/SelectionSummaryDropdown';
 
 const Index = () => {
   const { user, logout } = useAuth();
@@ -276,7 +276,7 @@ const Index = () => {
       setTimeout(async () => {
         try {
           const rowDocs = transformCsvToRowDocs(csv, 'Uploaded Sheet');
-          await pushRowsToQdrantDB(rowDocs, user.email);
+          // Removed: await pushRowsToQdrantDB(rowDocs, user.email);
           toast({
             title: 'Indexing Complete',
             description: 'Rows pushed to Qdrant successfully!',
@@ -463,7 +463,7 @@ const Index = () => {
             )}
             {/* Main Spreadsheet */}
             {activeSheet && (
-              <div className="spreadsheet-container">
+              <div className="spreadsheet-container relative">
                 <Resizable
                   initialWidth={800}
                   initialHeight={600}
@@ -483,6 +483,8 @@ const Index = () => {
                     isSheetLoading={isSheetLoading}
                     setSheetLoading={setSheetLoading}
                   />
+                  {/* Selection Summary Dropdown */}
+                  <SelectionSummaryDropdown selectedCells={selectedCells} sheet={activeSheet} />
                 </Resizable>
               </div>
             )}
@@ -528,7 +530,6 @@ const Index = () => {
             description: "Tell me what you'd like to create and I'll help you build it!",
           })}
           updateCell={updateCell}
-          isIndexing={isIndexing}
         />
       </div>
     </ThemeProvider>
