@@ -11,6 +11,7 @@ import { LoaderCircle } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
+import axios from 'axios'; // Added axios import
 
 interface Message {
   type: 'ai' | 'user';
@@ -27,6 +28,7 @@ interface AIAssistantProps {
   onUploadCSV: () => void;
   onCreateCustom: () => void;
   updateCell: (cellId: string, value: string | number) => void;
+  bulkUpdateCells?: (updates: { cellId: string, value: any }[]) => void;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -39,16 +41,19 @@ export const AIAssistant = ({
   onToggleMinimize,
   onUploadCSV,
   onCreateCustom,
-  updateCell
+  updateCell,
+  bulkUpdateCells
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
       type: 'ai',
-      content: "✨ Welcome to your AI-powered infinite canvas! I can help you analyze data, create stunning visualizations, and perform complex calculations. What would you like to create today?"
+      content: "✨ Welcome to your AI-powered infinite canvas! Upload some data and I'll help you analyze it, create stunning visualizations, and perform complex calculations."
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDuckDBProcessing, setIsDuckDBProcessing] = useState(false);
+  const [isSchemaReady, setIsSchemaReady] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [position, setPosition] = useState({ x: 200, y: 100 });
   const [dragging, setDragging] = useState(false);
@@ -57,6 +62,14 @@ export const AIAssistant = ({
   const [minimized, setMinimized] = useState(isMinimized);
   const [isFixed, setIsFixed] = useState(true); // New state for fixed/movable mode
   const { user } = useAuth();
+  const [pendingAction, setPendingAction] = useState<any>(null);
+  const [pendingReasoning, setPendingReasoning] = useState<string[]>([]);
+  const [pendingType, setPendingType] = useState<'function' | 'sql' | null>(null);
+  const [pendingRaw, setPendingRaw] = useState<any>(null);
+  const [pendingActionType, setPendingActionType] = useState<'update' | 'reply' | null>(null);
+  const [pendingActionReason, setPendingActionReason] = useState<string | null>(null);
+  const [pendingReplyResult, setPendingReplyResult] = useState<string | null>(null);
+  const [currentSchema, setCurrentSchema] = useState<string | null>(null);
 
   const mainPrompts = [
     {
@@ -80,29 +93,44 @@ export const AIAssistant = ({
       icon: Calculator,
       label: 'Sum Selected',
       action: () => handleCalculationSuggestion('sum-selected'),
-      color: 'bg-yellow-500 text-black'
+      color: 'bg-yellow-500 text-black',
+      disabled: isDuckDBProcessing || !isSchemaReady
     },
     {
       icon: TrendingUp,
       label: 'Average',
       action: () => handleCalculationSuggestion('average-selected'),
-      color: 'bg-black text-yellow-400'
+      color: 'bg-black text-yellow-400',
+      disabled: isDuckDBProcessing || !isSchemaReady
     },
     {
       icon: BarChart3,
       label: 'Bar Chart',
       action: () => onGenerateChart('bar'),
-      color: 'bg-yellow-400 text-black'
+      color: 'bg-yellow-400 text-black',
+      disabled: isDuckDBProcessing || !isSchemaReady
     },
     {
       icon: Lightbulb,
       label: 'Analyze',
       action: () => handleSuggestion('analyze trends'),
-      color: 'bg-black text-yellow-400'
+      color: 'bg-black text-yellow-400',
+      disabled: isDuckDBProcessing || !isSchemaReady
     },
   ];
 
   const handleCalculationSuggestion = async (operation: string) => {
+    // Check if DuckDB is still processing or schema is not ready
+    if (isDuckDBProcessing) {
+      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
+      return;
+    }
+
+    if (!isSchemaReady) {
+      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before performing calculations.');
+      return;
+    }
+
     if (selectedCells.length > 0 && activeSheet) {
       setIsLoading(true);
       addMessage('user', `${operation === 'sum-selected' ? 'Sum' : 'Average'} Selected`);
@@ -177,77 +205,460 @@ export const AIAssistant = ({
     setMessages(prev => [...prev, { type, content }]);
   };
 
-  const extractColumnsAndRows = () => {
-    if (!activeSheet) return { columns: [], sampleRows: [] };
-    const { cells, colCount, rowCount } = activeSheet;
-    // Get column headers from first row (row 1)
-    const columns: string[] = [];
+  const createSheetSummary = async () => {
+    if (!activeSheet) {
+      console.error('No active sheet available');
+      return 'No active sheet';
+    }
+
+    // Comprehensive check for activeSheet data
+    console.log('=== ACTIVE SHEET VERIFICATION ===');
+    console.log('Active sheet:', {
+      id: activeSheet.id,
+      name: activeSheet.name,
+      rowCount: activeSheet.rowCount,
+      colCount: activeSheet.colCount,
+      cellsCount: activeSheet.cells ? Object.keys(activeSheet.cells).length : 0,
+      hasCells: !!activeSheet.cells,
+      cellsType: typeof activeSheet.cells
+    });
+
+    // Check if cells data is available
+    if (!activeSheet.cells || Object.keys(activeSheet.cells).length === 0) {
+      console.error('Active sheet has no cells data');
+      return 'Sheet data not yet loaded';
+    }
+
+    // Check if we have meaningful data
+    const cellKeys = Object.keys(activeSheet.cells);
+    const nonEmptyCells = cellKeys.filter(key => {
+      const cell = activeSheet.cells[key] as any;
+      return cell && cell.value !== undefined && cell.value !== null && cell.value !== '';
+    });
+
+    console.log('Cell analysis:', {
+      totalCells: cellKeys.length,
+      nonEmptyCells: nonEmptyCells.length,
+      sampleCellKeys: cellKeys.slice(0, 5),
+      sampleNonEmptyCells: nonEmptyCells.slice(0, 5)
+    });
+
+    if (nonEmptyCells.length === 0) {
+      console.error('No meaningful data found in active sheet');
+      return 'No data found in sheet';
+    }
+
+    console.log('=== END ACTIVE SHEET VERIFICATION ===');
+
+    try {
+      // Ensure sheet is loaded in DuckDB and get schema
+      const { schema } = await ensureSheetLoadedInDuckDB();
+      
+      if (schema) {
+        console.log('Using DuckDB generated schema:', schema);
+        return schema;
+      }
+      
+      // Fallback to manual schema generation if DuckDB schema fails
+      console.log('Falling back to manual schema generation');
+      return createSheetSummaryFallback();
+      
+    } catch (error) {
+      console.error('Error in createSheetSummary:', error);
+      console.log('Falling back to manual schema generation');
+      return createSheetSummaryFallback();
+    }
+  };
+
+  const createSheetSummaryFallback = () => {
+    if (!activeSheet) return 'No active sheet';
+
+    const { colCount, rowCount } = activeSheet;
+    const columnAnalysis: { [key: string]: any } = {};
+    
+    // Analyze each column
     for (let col = 0; col < colCount; col++) {
       const colLetter = String.fromCharCode(65 + col);
-      const cellId = `${colLetter}1`;
-      const cell = cells[cellId];
-      columns.push(cell && cell.value ? String(cell.value) : colLetter);
+      const columnData: any[] = [];
+      
+      // Collect data for this column
+      for (let row = 2; row <= Math.min(rowCount, 10); row++) {
+        const cellId = `${colLetter}${row}`;
+        const cell = activeSheet.cells[cellId];
+        if (cell && cell.value !== undefined) {
+          columnData.push(cell.value);
+        }
+      }
+      
+      // Determine column type and sample values
+      const hasNumbers = columnData.some(val => typeof val === 'number' || !isNaN(Number(val)));
+      const hasStrings = columnData.some(val => typeof val === 'string' && isNaN(Number(val)));
+      const dataType = hasNumbers && !hasStrings ? 'DOUBLE' : 'VARCHAR';
+      
+      columnAnalysis[colLetter] = {
+        dataType,
+        sampleValues: columnData.slice(0, 3),
+        count: columnData.length
+      };
     }
-    // Get up to 5 sample rows (excluding header)
-    const sampleRows: any[][] = [];
-    for (let row = 2; row <= Math.min(rowCount, 6); row++) {
-      const rowArr: any[] = [];
+
+    console.log('Column Analysis:', columnAnalysis);
+
+    // Generate sample rows for schema
+    const sampleRows = [];
+    for (let row = 2; row <= Math.min(5, rowCount); row++) {
+      const rowData = [];
       for (let col = 0; col < colCount; col++) {
         const colLetter = String.fromCharCode(65 + col);
         const cellId = `${colLetter}${row}`;
-        const cell = cells[cellId];
-        rowArr.push(cell && cell.value !== undefined ? cell.value : '');
+        const cell = activeSheet.cells[cellId];
+        rowData.push(cell && cell.value !== undefined ? cell.value : '');
       }
-      sampleRows.push(rowArr);
+      sampleRows.push(`Row ${row}: [${rowData.join(', ')}]`);
     }
-    return { columns, sampleRows };
+
+    // Create SQL-like schema format
+    const schema = `Schema:
+Table: data
+Rows: ${rowCount - 1}
+Columns:
+${Object.entries(columnAnalysis).map(([colLetter, analysis]) => {
+  const sampleText = analysis.sampleValues.map((v: any) => JSON.stringify(v)).join(', ');
+  return `- ${colLetter} (${analysis.dataType}) e.g. ${sampleText}`;
+}).join('\n')}
+
+Column Mapping (Excel Letter → Actual Column Name):
+${Object.entries(columnAnalysis).map(([colLetter, analysis]) => {
+  return `-- ${colLetter} → "${colLetter}"`;
+}).join('\n')}
+
+IMPORTANT: Use exact column names in SQL queries, NOT Excel letters or numeric values.
+
+Sample Data:
+${sampleRows.join('\n')}`;
+
+    return schema;
   };
 
-  const handleSendMessage = async () => {
-    if (!message.trim()) return;
-    setMessage(''); // Clear input immediately
+  // Function to update schema when table is modified
+  const updateSchemaAfterModification = async () => {
+    try {
+      setIsDuckDBProcessing(true);
+      const { extractDuckDBSchemaSummary } = await import('../lib/utils');
+      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'data', 3);
+      console.log('=== UPDATED DUCKDB SCHEMA ===');
+      console.log(schema);
+      console.log('=== END UPDATED SCHEMA ===');
+      setCurrentSchema(schema);
+      setIsDuckDBProcessing(false);
+      setIsSchemaReady(true);
+      return schema;
+    } catch (error) {
+      console.error('Error updating schema after modification:', error);
+      setIsDuckDBProcessing(false);
+      setIsSchemaReady(false);
+      return null;
+    }
+  };
 
-    const userMessage = message;
+  // Refresh spreadsheet data from DuckDB after SQL updates
+  const refreshSpreadsheetFromDuckDB = async () => {
+    try {
+      console.log('Refreshing spreadsheet data from DuckDB...');
+      
+      // Query all data from DuckDB
+      const { queryDuckDB } = await import('../lib/utils');
+      const result = await queryDuckDB('SELECT * FROM data');
+      
+      if (result && result.length > 0) {
+        // Convert DuckDB result to spreadsheet format
+        const updatedCells: Record<string, { value: string | number }> = {};
+        
+        // First row contains headers
+        const headers = Object.keys(result[0]);
+        
+        // Process each row (skip header row if it exists)
+        result.forEach((row: any, rowIndex: number) => {
+          headers.forEach((header: string, colIndex: number) => {
+            const colLetter = String.fromCharCode(65 + colIndex);
+            const cellId = `${colLetter}${rowIndex + 1}`;
+            updatedCells[cellId] = { value: row[header] || '' };
+          });
+        });
+        
+        // Update the spreadsheet with new data
+        if (activeSheet) {
+          // Use bulkUpdateCells to update all cells at once
+          const updates = Object.entries(updatedCells).map(([cellId, cell]) => ({
+            cellId,
+            value: cell.value
+          }));
+          
+          // Update the spreadsheet state
+          if (bulkUpdateCells) {
+            bulkUpdateCells(updates);
+            addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
+          } else {
+            // Fallback: update cells one by one
+            Object.entries(updatedCells).forEach(([cellId, cell]) => {
+              updateCell(cellId, cell.value);
+            });
+            addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error refreshing spreadsheet from DuckDB:', error);
+      addMessage('ai', `⚠️ Could not refresh spreadsheet data: ${error}`);
+    }
+  };
+
+  // Function to verify sheet data structure
+  const verifySheetData = () => {
+    if (!activeSheet) {
+      console.log('No active sheet');
+      return;
+    }
+
+    console.log('=== VERIFYING SHEET DATA ===');
+    console.log('Active sheet object:', activeSheet);
+    console.log('Row count:', activeSheet.rowCount);
+    console.log('Col count:', activeSheet.colCount);
+    console.log('Cells object keys:', Object.keys(activeSheet.cells));
+    console.log('Sample cell data:', Object.entries(activeSheet.cells).slice(0, 5));
+
+    // Check if we have data in the expected format
+    let hasData = false;
+    for (let row = 2; row <= Math.min(5, activeSheet.rowCount); row++) {
+      for (let col = 0; col < activeSheet.colCount; col++) {
+        const colLetter = String.fromCharCode(65 + col);
+        const cellId = `${colLetter}${row}`;
+        const cell = activeSheet.cells[cellId];
+        if (cell && cell.value !== undefined && cell.value !== '') {
+          hasData = true;
+          console.log(`Found data in cell ${cellId}:`, cell.value);
+        }
+      }
+    }
+
+    if (!hasData) {
+      console.warn('WARNING: No data found in sheet cells!');
+    }
+
+    console.log('=== END VERIFYING SHEET DATA ===');
+  };
+
+  // Auto-load sheet into DuckDB and generate schema when activeSheet changes
+  useEffect(() => {
+    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0) {
+      // Check if we have actual data (not just empty cells)
+      const hasActualData = Object.values(activeSheet.cells).some(cell => {
+        if (cell && typeof cell === 'object' && cell !== null && 'value' in cell) {
+          return cell.value !== undefined && cell.value !== '';
+        }
+        return false;
+      });
+
+      if (hasActualData) {
+        console.log('Active sheet changed with actual cell data, verifying data...');
+        verifySheetData();
+        
+        // Set DuckDB processing state
+        setIsDuckDBProcessing(true);
+        setIsSchemaReady(false);
+        
+        // Add a small delay to ensure state is fully updated
+        setTimeout(async () => {
+          console.log('Loading into DuckDB and generating schema...');
+          
+          try {
+            // First, load data into DuckDB
+            const { headerRow, schema } = await ensureSheetLoadedInDuckDB();
+            
+            // Verify that data was actually loaded
+            const { queryDuckDB } = await import('../lib/utils');
+            console.log('Running verification query...');
+            const verifyResult = await queryDuckDB('SELECT COUNT(*) as count FROM "data"');
+            console.log('Verification query result:', verifyResult);
+            
+            // Also try to get a sample of data
+            console.log('Running sample data query...');
+            const sampleResult = await queryDuckDB('SELECT * FROM "data" LIMIT 3');
+            console.log('Sample data result:', sampleResult);
+            
+            if (schema) {
+              console.log('Schema generated and stored for AI processing');
+              console.log('Schema content:', schema);
+              setIsSchemaReady(true);
+              addMessage('ai', '✅ Data processed and schema generated! I\'m ready to help you analyze your data.');
+            } else {
+              console.warn('No schema generated, this might cause issues with AI processing');
+              addMessage('ai', '⚠️ Data loaded but schema generation failed. Some AI features may be limited.');
+            }
+          } catch (error) {
+            console.error('Error loading sheet into DuckDB:', error);
+            addMessage('ai', '❌ Error processing data. Please try uploading your data again.');
+          } finally {
+            setIsDuckDBProcessing(false);
+          }
+        }, 200); // Increased delay to ensure CSV upload is complete
+      } else {
+        console.log('Active sheet has cells but no actual data yet, waiting...');
+        setIsDuckDBProcessing(false);
+        setIsSchemaReady(false);
+      }
+    } else if (activeSheet) {
+      console.log('Active sheet detected but no cell data yet, waiting for data to load...');
+      console.log('Sheet state:', {
+        hasCells: !!activeSheet.cells,
+        cellsCount: activeSheet.cells ? Object.keys(activeSheet.cells).length : 0,
+        rowCount: activeSheet.rowCount,
+        colCount: activeSheet.colCount
+      });
+      setIsDuckDBProcessing(false);
+      setIsSchemaReady(false);
+    } else {
+      // No active sheet
+      setIsDuckDBProcessing(false);
+      setIsSchemaReady(false);
+    }
+  }, [activeSheet]);
+
+  const handleSendMessage = async () => {
+    if (!message.trim() || !activeSheet) return;
+
+    // Check if DuckDB is still processing or schema is not ready
+    if (isDuckDBProcessing) {
+      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
+      return;
+    }
+
+    if (!isSchemaReady) {
+      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.');
+      return;
+    }
+
+    const userMessage = message.trim();
+    setMessage(''); // Clear input immediately
     addMessage('user', userMessage);
+
     setIsLoading(true);
 
     try {
-      const { columns, sampleRows } = extractColumnsAndRows();
+      // Create sheet summary using current schema or generate new one
+      const schema = currentSchema || await createSheetSummary();
       const token = localStorage.getItem('auth_token');
-      const response = await fetch('http://localhost:8090/api/ai', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ 
+
+      // First, get AI1 reasoning and simplified question
+      const ai1Response = await axios.post('/api/ai/ai1', {
           message: userMessage,
-          columns,
-          sampleRows,
-          selectedCells,
-          userEmail: user?.email || ''
-        }),
+        schema,
+        userEmail: user?.email || '',
+        sheetInfo: {
+          totalRows: activeSheet.rowCount - 1,
+          totalColumns: activeSheet.colCount,
+          columnAnalysis: [] // Will be derived from schema
+        }
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to get AI response');
+      if (ai1Response.data.error) {
+        addMessage('ai', `❌ Error: ${ai1Response.data.error}`);
+        return;
       }
 
-      const data = await response.json();
-      const fnString = data.function;
+      const ai1Data = ai1Response.data;
       
-      addMessage('ai', `🤖 I'll help you with that! Here's what I can do:\n\n${fnString}`);
+      // Display AI1 reasoning and simplified question
+      if (ai1Data.ai1_reasoning) {
+        addMessage('ai', `Reasoning: ${ai1Data.ai1_reasoning}`);
+      }
+      if (ai1Data.ai1_simplified_question) {
+        addMessage('ai', `Simplified Question: ${ai1Data.ai1_simplified_question}`);
+      }
 
-      // Execute the AI function if it returns updates
+      // Then, get AI2 code generation
+      const ai2Response = await axios.post('/api/ai/ai2', {
+        message: userMessage,
+        schema,
+        userEmail: user?.email || '',
+        simplified_user_question: ai1Data.simplified_user_question,
+        explanation: ai1Data.explanation,
+        isUpdate: ai1Data.isUpdate,
+        sheetInfo: {
+          totalRows: activeSheet.rowCount - 1,
+          totalColumns: activeSheet.colCount,
+          columnAnalysis: [] // Will be derived from schema
+        }
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (ai2Response.data.error) {
+        addMessage('ai', `❌ Error: ${ai2Response.data.error}`);
+        return;
+      }
+
+      const ai2Data = ai2Response.data;
+      console.log('AI2 response received:', ai2Data);
+
+      if (ai2Data.stage === 'complete') {
+        const masterResponse = ai2Data.master_response;
+        console.log('Master response:', masterResponse);
+        
+        addMessage('ai', `✅ Code generated successfully!`);
+        addMessage('ai', `Generated SQL: ${masterResponse.ai2_generated_code}`);
+        
+        // Extract column analysis from current schema
+        console.log('Current schema for column analysis:', currentSchema);
+        let columnAnalysis = extractColumnAnalysisFromSchema(currentSchema || '');
+        
+        // If schema extraction failed, try fallback method
+        if (columnAnalysis.length === 0) {
+          console.log('Schema extraction failed, trying fallback method...');
+          columnAnalysis = extractColumnAnalysisFromSheet();
+        }
+        
+        console.log('Final column analysis for AI2:', columnAnalysis);
+        console.log('Master response for button logic:', masterResponse);
+        console.log('requires_update value:', masterResponse.requires_update);
+        
+        // For update operations, show confirmation buttons instead of executing immediately
+        if (masterResponse.requires_update) {
+          setPendingAction(masterResponse.ai2_generated_code);
+          setPendingActionType('update');
+          setPendingReasoning([
+            `Generated SQL: ${masterResponse.ai2_generated_code}`,
+            `This will update ${masterResponse.operation_type === 'update' ? 'data in the sheet' : 'query results'}`
+          ]);
+          setPendingRaw(masterResponse);
+        } else {
+          // Execute the code immediately for non-update operations
+          await executeAI2Code(masterResponse.ai2_generated_code, masterResponse.tool, masterResponse.requires_update, columnAnalysis);
+        }
+      } else if (ai2Data.stage === 'ai2_failed') {
+        addMessage('ai', `❌ AI2 processing failed: ${ai2Data.ai2_error?.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error in handleSendMessage:', error);
+      addMessage('ai', `❌ Error: ${error instanceof Error ? error.message : 'Something went wrong'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handler for Apply button
+  const handleApply = async () => {
+    if (!pendingAction) return;
+    if (pendingType === 'function') {
+      // Run the function as before
       let updates;
       try {
-        // Remove code block markers if present
-        let cleanFnString = fnString.trim();
+        let cleanFnString = typeof pendingAction === 'string' ? pendingAction.trim() : '';
         if (cleanFnString.startsWith('```')) {
           cleanFnString = cleanFnString.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
         }
-        
-        // Try to match a named function, but fallback to eval if it fails
         let match = cleanFnString.match(/^function\s+\w+\s*\(([^)]*)\)\s*{([\s\S]*)}\s*$/m);
         let fn;
         if (match) {
@@ -255,30 +666,26 @@ export const AIAssistant = ({
           const body = match[2].trim();
           fn = new Function(arg, body);
         } else {
-          // Fallback: try eval (may be an arrow function, anonymous, or just a function body)
           try {
             fn = eval('(' + cleanFnString + ')');
           } catch (e) {
-            // As a last resort, wrap as a function body
             fn = new Function('cells', cleanFnString + '; return cells;');
           }
         }
-        
         if (typeof fn !== 'function') throw new Error('AI did not return a function');
-        
-        // Build input array from all cells in the sheet
         const allCells = Object.keys(activeSheet.cells).map(cellId => ({
           cellId,
           value: activeSheet.cells[cellId]?.value
         }));
-        
         updates = fn(allCells);
       } catch (e) {
         addMessage('ai', `❌ Error executing AI function: ${e}`);
-        setIsLoading(false);
+        setPendingAction(null);
+        setPendingType(null);
+        setPendingReasoning([]);
+        setPendingRaw(null);
         return;
       }
-      // Apply updates to sheet
       if (updates && Array.isArray(updates)) {
         let applied = 0;
         updates.forEach((update: { cellId: string, value: string | number }) => {
@@ -291,14 +698,57 @@ export const AIAssistant = ({
       } else {
         addMessage('ai', `AI function did not return an updates array.`);
       }
-    } catch (err) {
-      addMessage('ai', '❌ Error getting AI response.');
-      console.error(err);
+    } else if (pendingType === 'sql' || pendingActionType === 'update') {
+      // Execute the SQL query
+      try {
+        const { queryDuckDB } = await import('../lib/utils');
+        const result = await queryDuckDB(pendingAction as string);
+        
+        if (result && result.length > 0) {
+          addMessage('ai', `✅ SQL executed successfully! Modified ${result.length} rows.`);
+          
+          // Refresh spreadsheet data from DuckDB to show updated values
+          await refreshSpreadsheetFromDuckDB();
+          
+          // Update schema after modification
+          await updateSchemaAfterModification();
+        } else {
+          addMessage('ai', `✅ SQL executed successfully, but no rows were modified.`);
+        }
+      } catch (error) {
+        addMessage('ai', `❌ Error executing SQL: ${error}`);
+        console.error('SQL execution error:', error);
+      }
     }
-    setIsLoading(false);
+    setPendingAction(null);
+    setPendingType(null);
+    setPendingActionType(null);
+    setPendingReasoning([]);
+    setPendingRaw(null);
+  };
+
+  // Handler for Reject button
+  const handleReject = () => {
+    addMessage('ai', `Seems like 0str1ch messed up. I am ashamed! Let's give it another go.`);
+    setPendingAction(null);
+    setPendingType(null);
+    setPendingActionType(null);
+    setPendingReasoning([]);
+    setPendingRaw(null);
   };
 
   const handleSuggestion = (suggestion: string) => {
+    // Check if DuckDB is still processing or schema is not ready
+    if (isDuckDBProcessing) {
+      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
+      return;
+    }
+
+    if (!isSchemaReady) {
+      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.');
+      return;
+    }
+
     addMessage('user', suggestion);
     addMessage('ai', `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`);
   };
@@ -352,9 +802,476 @@ export const AIAssistant = ({
   // Toggle fixed/movable mode
   const toggleFixedMode = () => {
     setIsFixed(!isFixed);
-    if (!isFixed) {
-      // When switching to fixed mode, reset position to right side
-      setPosition({ x: window.innerWidth - 460, y: 100 });
+  };
+
+  // Helper function to convert underscore column names back to original names
+  const fixUnderscoreColumnNames = (sql: string): string => {
+    console.log('Original SQL with underscores:', sql);
+    
+    // Map of underscore names to original names
+    const columnMapping = {
+      'Business_Unit': 'Business Unit',
+      'Full_Name': 'Full Name',
+      'Job_Title': 'Job Title',
+      'Hire_Date': 'Hire Date',
+      'Annual_Salary': 'Annual Salary',
+      'Bonus_': 'Bonus _',
+      'Exit_Date': 'Exit Date'
+    };
+    
+    let fixedSql = sql;
+    
+    Object.entries(columnMapping).forEach(([underscoreName, originalName]) => {
+      const regex = new RegExp(`"${underscoreName}"`, 'g');
+      fixedSql = fixedSql.replace(regex, `"${originalName}"`);
+    });
+    
+    console.log('Fixed SQL with original names:', fixedSql);
+    return fixedSql;
+  };
+
+  // Helper function to fix SQL queries with unquoted column names
+  const fixSQLColumnQuoting = (sql: string): string => {
+    console.log('Original SQL:', sql);
+    
+    // Check if the SQL already has properly quoted column names
+    const hasQuotedColumns = /"[^"]*"/.test(sql);
+    if (hasQuotedColumns) {
+      console.log('SQL already has quoted columns, skipping quote fixing');
+      return sql;
+    }
+    
+    // Only quote specific column names that have spaces or special characters
+    const specificColumns = ['Full Name', 'Job Title', 'Business Unit', 'Hire Date', 'Annual Salary', 'Bonus _', 'Exit Date'];
+    let fixedSql = sql;
+    
+    specificColumns.forEach(col => {
+      const unquotedPattern = new RegExp(`\\b${col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+      fixedSql = fixedSql.replace(unquotedPattern, `"${col}"`);
+    });
+    
+    console.log('Fixed SQL:', fixedSql);
+    return fixedSql;
+  };
+
+  // Helper function to ensure sheet data is loaded into DuckDB
+  const ensureSheetLoadedInDuckDB = async () => {
+    if (!activeSheet || !activeSheet.cells) {
+      throw new Error('No active sheet data available');
+    }
+
+    // Set processing state
+    setIsDuckDBProcessing(true);
+    setIsSchemaReady(false);
+
+    console.log('=== ENSURING SHEET LOADED IN DUCKDB ===');
+    console.log('Active sheet:', {
+      rowCount: activeSheet.rowCount,
+      colCount: activeSheet.colCount,
+      cellsCount: Object.keys(activeSheet.cells).length
+    });
+
+    // Import the DuckDB utilities
+    const { loadSheetToDuckDB, extractDuckDBSchemaSummary } = await import('../lib/utils');
+    
+    // Convert sheet data to 2D array format for DuckDB
+    const { colCount, rowCount } = activeSheet;
+    const sheetData: string[][] = [];
+    
+    // Create header row
+    const headerRow: string[] = [];
+    for (let col = 0; col < colCount; col++) {
+      const colLetter = String.fromCharCode(65 + col);
+      const cellId = `${colLetter}1`;
+      const cell = activeSheet.cells[cellId];
+      const headerValue = cell && cell.value ? String(cell.value) : colLetter;
+      headerRow.push(headerValue);
+    }
+    sheetData.push(headerRow);
+    
+    console.log('Header row for DuckDB:', headerRow);
+    console.log('Header row length:', headerRow.length);
+    
+    // Create data rows
+    let dataRowCount = 0;
+    let actualDataFound = false;
+    for (let row = 2; row <= rowCount; row++) {
+      const dataRow: string[] = [];
+      let rowHasData = false;
+      
+      for (let col = 0; col < colCount; col++) {
+        const colLetter = String.fromCharCode(65 + col);
+        const cellId = `${colLetter}${row}`;
+        const cell = activeSheet.cells[cellId];
+        const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
+        dataRow.push(cellValue);
+        
+        if (cellValue && cellValue.trim() !== '') {
+          rowHasData = true;
+        }
+      }
+      
+      if (rowHasData) {
+        sheetData.push(dataRow);
+        dataRowCount++;
+        actualDataFound = true;
+        
+        if (dataRowCount <= 3) {
+          console.log(`Data row ${row}:`, dataRow);
+        }
+      }
+    }
+
+    console.log(`Converted ${dataRowCount} data rows for DuckDB`);
+    console.log('Total sheet data array length:', sheetData.length);
+    console.log('Actual data found:', actualDataFound);
+    console.log('Sheet data for DuckDB (first 3 rows):', sheetData.slice(0, 3));
+
+    if (!actualDataFound) {
+      console.error('ERROR: No actual data found in sheet cells!');
+      throw new Error('No data found in sheet cells');
+    }
+
+    // Load data into DuckDB
+    console.log('Calling loadSheetToDuckDB...');
+    await loadSheetToDuckDB('data', sheetData);
+    console.log('loadSheetToDuckDB completed successfully');
+    
+    // Generate and log schema immediately after loading
+    try {
+      console.log('Calling extractDuckDBSchemaSummary...');
+      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'data', 3);
+      console.log('=== DUCKDB SCHEMA GENERATED ===');
+      console.log(schema);
+      console.log('=== END SCHEMA ===');
+      
+      // Store schema in component state for AI processing
+      setCurrentSchema(schema);
+      
+      // Set final states
+      setIsDuckDBProcessing(false);
+      if (schema) {
+        setIsSchemaReady(true);
+      }
+      
+      return { headerRow, schema };
+    } catch (error) {
+      console.error('Error generating schema:', error);
+      setIsDuckDBProcessing(false);
+      setIsSchemaReady(false);
+      return { headerRow, schema: null };
+    }
+  };
+
+  // Execute SQL query
+  const executeSQLQuery = async (sql: string, requiresUpdate: boolean = false) => {
+    try {
+      console.log('Executing SQL query:', sql);
+      console.log('Requires update:', requiresUpdate);
+
+      const { queryDuckDB } = await import('../lib/utils');
+      const result = await queryDuckDB(sql);
+
+      if (requiresUpdate) {
+        // Update the sheet data with the modified data
+        if (result && result.length > 0) {
+          // Update the active sheet with the new data
+          // This would need to be implemented based on your sheet update logic
+          console.log('Sheet updated with new data:', result);
+          
+          // Update schema after modification
+          await updateSchemaAfterModification();
+          
+          addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);
+        } else {
+          addMessage('ai', `✅ Query executed successfully, but no rows were modified.`);
+        }
+      } else {
+        // Display the query results
+        if (result && result.length > 0) {
+          const resultText = result.map((row: any) => 
+            Object.values(row).join(', ')
+          ).join('\n');
+          
+          addMessage('ai', `📊 Query Results:\n${resultText}`);
+        } else {
+          addMessage('ai', `📊 Query executed successfully. No results returned.`);
+        }
+      }
+    } catch (error) {
+      console.error('Error executing SQL query:', error);
+      addMessage('ai', `❌ Error executing SQL query: ${error}`);
+    }
+  };
+
+  // Extract column analysis from current schema
+  const extractColumnAnalysisFromSchema = (schema: string): any[] => {
+    if (!schema) return [];
+    
+    const columnAnalysis: any[] = [];
+    const lines = schema.split('\n');
+    let inColumnsSection = false;
+    
+    for (const line of lines) {
+      if (line.includes('Columns:')) {
+        inColumnsSection = true;
+        continue;
+      }
+      
+      if (inColumnsSection && line.trim() === '') {
+        break; // End of columns section
+      }
+      
+      if (inColumnsSection && line.startsWith('- ')) {
+        // Parse column line like: "- Column_Name (VARCHAR) e.g. "value1", "value2", "value3""
+        // or just "- Column_Name (VARCHAR)" if no samples
+        const match = line.match(/^- (.+?) \((.+?)\)(?: e\.g\. (.+))?$/);
+        if (match) {
+          const columnName = match[1].trim();
+          const dataType = match[2].trim();
+          const sampleValuesStr = match[3] || '';
+          const sampleValues = sampleValuesStr ? sampleValuesStr.split(', ').map(v => v.replace(/"/g, '')) : [];
+          
+          columnAnalysis.push({
+            name: columnName,
+            type: dataType,
+            column: columnName, // For backward compatibility
+            sampleValues: sampleValues
+          });
+        }
+      }
+    }
+    
+    console.log('Extracted column analysis from schema:', columnAnalysis);
+    return columnAnalysis;
+  };
+
+  // Fallback method to extract column analysis from active sheet data
+  const extractColumnAnalysisFromSheet = (): any[] => {
+    if (!activeSheet || !activeSheet.cells) return [];
+    
+    const columnAnalysis: any[] = [];
+    const { colCount, rowCount } = activeSheet;
+    
+    // Analyze each column
+    for (let col = 0; col < colCount; col++) {
+      const colLetter = String.fromCharCode(65 + col);
+      const columnData: any[] = [];
+      
+      // Collect data for this column
+      for (let row = 2; row <= Math.min(rowCount, 10); row++) {
+        const cellId = `${colLetter}${row}`;
+        const cell = activeSheet.cells[cellId];
+        if (cell && cell.value !== undefined) {
+          columnData.push(cell.value);
+        }
+      }
+      
+      // Determine column type and sample values
+      const hasNumbers = columnData.some(val => typeof val === 'number' || !isNaN(Number(val)));
+      const hasStrings = columnData.some(val => typeof val === 'string' && isNaN(Number(val)));
+      const dataType = hasNumbers && !hasStrings ? 'DOUBLE' : 'VARCHAR';
+      
+      // Use column letter as name if no header found
+      const headerCell = activeSheet.cells[`${colLetter}1`];
+      const columnName = headerCell && headerCell.value ? String(headerCell.value) : colLetter;
+      
+      columnAnalysis.push({
+        name: columnName,
+        type: dataType,
+        column: columnName,
+        sampleValues: columnData.slice(0, 3)
+      });
+    }
+    
+    console.log('Extracted column analysis from sheet:', columnAnalysis);
+    return columnAnalysis;
+  };
+
+  // Execute AI2 generated code immediately
+  // Execute Danfo.js queries
+  const executeDanfoQuery = async (danfoCode: string, columnAnalysis: any[]): Promise<any> => {
+    try {
+      console.log('Executing Danfo query:', danfoCode);
+      
+      // Import Danfo dynamically
+      const { DataFrame, Series } = await import('danfojs');
+      
+      // Convert sheet data to DataFrame format
+      const sheetData = await convertSheetToDataFrame(activeSheet);
+      console.log('Sheet data converted to DataFrame:', sheetData);
+      
+      // Create a simple execution environment
+      const executeDanfoCode = (code: string, df: any) => {
+        // Create a function that has access to the DataFrame
+        const executeFunction = new Function('df', code);
+        const result = executeFunction(df);
+        return result;
+      };
+      
+      // Execute the Danfo code
+      const result = executeDanfoCode(danfoCode, sheetData);
+      
+      console.log('Danfo query result:', result);
+      
+      // Format the result for display
+      let resultText = '';
+      if (result && typeof result === 'object') {
+        if (result.shape) {
+          // It's a DataFrame
+          resultText = `DataFrame with ${result.shape[0]} rows and ${result.shape[1]} columns:\n`;
+          resultText += result.head(10).toString(); // Show first 10 rows
+        } else if (result.length !== undefined) {
+          // It's a Series
+          resultText = `Series with ${result.length} values:\n`;
+          resultText += result.head(10).toString(); // Show first 10 values
+        } else {
+          resultText = `Result: ${JSON.stringify(result, null, 2)}`;
+        }
+      } else {
+        resultText = `Result: ${result}`;
+      }
+      
+      addMessage('ai', `✅ Danfo Query Result:\n${resultText}`);
+      
+      return result;
+      
+    } catch (error) {
+      console.error('Danfo execution error:', error);
+      addMessage('ai', `❌ Error executing Danfo query: ${error}`);
+      throw error;
+    }
+  };
+
+  // Helper function to convert sheet data to DataFrame format
+  const convertSheetToDataFrame = async (sheet: any) => {
+    if (!sheet || !sheet.cells) {
+      throw new Error('No sheet data available');
+    }
+    
+    const { colCount, rowCount } = sheet;
+    const data: any[] = [];
+    const headers: string[] = [];
+    
+    // Extract headers (first row)
+    for (let col = 0; col < colCount; col++) {
+      const colLetter = String.fromCharCode(65 + col);
+      const cellId = `${colLetter}1`;
+      const cell = sheet.cells[cellId];
+      const headerValue = cell && cell.value ? String(cell.value) : colLetter;
+      headers.push(headerValue);
+    }
+    
+    // Extract data rows
+    for (let row = 2; row <= rowCount; row++) {
+      const rowData: any = {};
+      let hasData = false;
+      
+      for (let col = 0; col < colCount; col++) {
+        const colLetter = String.fromCharCode(65 + col);
+        const cellId = `${colLetter}${row}`;
+        const cell = sheet.cells[cellId];
+        const value = cell && cell.value !== undefined ? cell.value : '';
+        
+        if (value !== '') {
+          hasData = true;
+        }
+        
+        rowData[headers[col]] = value;
+      }
+      
+      if (hasData) {
+        data.push(rowData);
+      }
+    }
+    
+    console.log('Converted sheet data:', { headers, dataLength: data.length, sampleData: data.slice(0, 3) });
+    
+    // Import and create DataFrame
+    const { DataFrame } = await import('danfojs');
+    return new DataFrame(data);
+  };
+
+  const executeAI2Code = async (generatedCode: string, tool: string, requiresUpdate: boolean, columnAnalysis: any[]) => {
+    try {
+      console.log('Executing AI2 code:', generatedCode);
+      console.log('Tool:', tool);
+      console.log('Requires update:', requiresUpdate);
+      console.log('Column analysis:', columnAnalysis);
+      console.log('Available column names:', columnAnalysis.map(col => col.name));
+      console.log('Column mapping:', columnAnalysis.map((col, index) => {
+        const excelLetter = String.fromCharCode(65 + index);
+        return `${excelLetter} → "${col.name}"`;
+      }));
+      
+      // Handle different tool types
+      if (tool === 'danfo') {
+        // Execute Danfo query
+        await executeDanfoQuery(generatedCode, columnAnalysis);
+        return;
+      }
+      
+      // Handle SQL queries (existing logic)
+      // Convert Excel-style column references to actual column names
+      const convertExcelToColumnNames = (sql: string, columns: any[]): string => {
+        let convertedSql = sql;
+        
+        console.log('Converting SQL:', sql);
+        console.log('Available columns:', columns.map(col => `${col.name} -> "${col.name}"`));
+        
+        // Replace Excel letters (A, B, C, D, etc.) with actual column names
+        columns.forEach((col, index) => {
+          const excelLetter = String.fromCharCode(65 + index);
+          // Use word boundaries to avoid replacing letters within words
+          const regex = new RegExp(`\\b${excelLetter}\\b`, 'g');
+          convertedSql = convertedSql.replace(regex, `"${col.name}"`);
+        });
+        
+        // Also replace any numeric literals that might be column references
+        // This handles cases where the AI generates SELECT MIN(3) instead of SELECT MIN("Column_3")
+        columns.forEach((col) => {
+          if (col.name.startsWith('Column_')) {
+            const numericPart = col.name.replace('Column_', '');
+            // Replace numeric literals that match column numbers
+            const regex = new RegExp(`\\b${numericPart}\\b`, 'g');
+            convertedSql = convertedSql.replace(regex, `"${col.name}"`);
+          }
+        });
+        
+        console.log('Original SQL:', sql);
+        console.log('Converted SQL:', convertedSql);
+        return convertedSql;
+      };
+      
+      const convertedCode = convertExcelToColumnNames(generatedCode, columnAnalysis);
+      
+      if (convertedCode !== generatedCode) {
+        addMessage('ai', `Note: Converted Excel column references to actual column names in SQL query.`);
+      }
+      
+      // Fix SQL column quoting
+      const fixedSql = fixSQLColumnQuoting(convertedCode);
+      if (fixedSql !== convertedCode) {
+        console.log('Original SQL:', convertedCode);
+        console.log('Fixed SQL:', fixedSql);
+        addMessage('ai', `Note: Fixed unquoted column names in SQL query.`);
+      }
+      
+      // Fix underscore column names
+      const finalSql = fixUnderscoreColumnNames(fixedSql);
+      if (finalSql !== fixedSql) {
+        console.log('SQL with underscores:', fixedSql);
+        console.log('SQL with original names:', finalSql);
+        addMessage('ai', `Note: Fixed underscore column names to original names.`);
+      }
+      
+      console.log('Final SQL to execute:', finalSql);
+      
+      // Execute the converted SQL query
+      await executeSQLQuery(finalSql, requiresUpdate);
+    } catch (error) {
+      addMessage('ai', `❌ Error executing AI2 code: ${error}`);
+      console.error('AI2 execution error:', error);
     }
   };
 
@@ -412,6 +1329,22 @@ export const AIAssistant = ({
             <div className="flex items-center gap-2 font-semibold text-sm">
               <Wand2 className="h-5 w-5 text-primary" />
               AI Assistant
+              {isDuckDBProcessing && (
+                <div className="flex items-center gap-1 ml-2">
+                  <LoaderCircle className="h-3 w-3 animate-spin text-blue-600" />
+                  <span className="text-xs text-blue-600">Processing...</span>
+                </div>
+              )}
+              {!isDuckDBProcessing && !isSchemaReady && activeSheet && (
+                <div className="flex items-center gap-1 ml-2">
+                  <span className="text-xs text-orange-600">Ready</span>
+                </div>
+              )}
+              {!isDuckDBProcessing && isSchemaReady && (
+                <div className="flex items-center gap-1 ml-2">
+                  <span className="text-xs text-green-600">Ready</span>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-1">
               <Button 
@@ -450,6 +1383,19 @@ export const AIAssistant = ({
                   </div>
                 </div>
               ))}
+              {pendingAction && pendingActionType === 'update' && (
+                <div className="flex flex-col items-center gap-3 mt-4">
+                  <div className="flex gap-2">
+                    <Button onClick={handleApply} variant="default">Apply</Button>
+                    <Button onClick={handleReject} variant="destructive">Reject</Button>
+                  </div>
+                </div>
+              )}
+              {pendingReplyResult && pendingActionType === 'reply' && (
+                <div className="flex flex-col items-center gap-3 mt-4">
+                  <div className="text-green-700 font-semibold">Result: {pendingReplyResult}</div>
+                </div>
+              )}
               {isLoading && (
                 <div className="flex justify-start items-start gap-3">
                   <Avatar className="h-8 w-8">
@@ -461,20 +1407,46 @@ export const AIAssistant = ({
                   </div>
                 </div>
               )}
+              {isDuckDBProcessing && (
+                <div className="flex justify-start items-start gap-3">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src="https://placehold.co/40x40.png" data-ai-hint="robot" />
+                    <AvatarFallback>AI</AvatarFallback>
+                  </Avatar>
+                  <div className="bg-blue-50 rounded-2xl px-3 py-2 border border-blue-200">
+                    <div className="flex items-center gap-2">
+                      <LoaderCircle className="h-4 w-4 animate-spin text-blue-600" />
+                      <span className="text-sm text-blue-700">Processing data and generating schema...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </ScrollArea>
           <div className="p-4 border-t border-[hsl(205.91,68.04%,61.96%)] space-y-4">
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0"><FileUp className="h-5 w-5" /></Button>
               <Input
-                placeholder="Ask the AI to do something..."
+                placeholder={
+                  isDuckDBProcessing 
+                    ? "Processing data..." 
+                    : !isSchemaReady 
+                    ? "Waiting for schema..." 
+                    : "Ask the AI to do something..."
+                }
                 value={message}
                 onChange={e => setMessage(e.target.value)}
                 onKeyPress={e => e.key === 'Enter' && handleSendMessage()}
-                disabled={isLoading}
+                disabled={isLoading || isDuckDBProcessing || !isSchemaReady}
                 className="no-drag border-[1.5px] border-[hsl(205.91,68.04%,61.96%)] focus:ring-2 focus:ring-[hsl(205.91,68.04%,61.96%)]"
               />
-              <Button onClick={handleSendMessage} disabled={isLoading || !message.trim()} className="no-drag"><Send className="h-4 w-4" /></Button>
+              <Button 
+                onClick={handleSendMessage} 
+                disabled={isLoading || isDuckDBProcessing || !isSchemaReady || !message.trim()} 
+                className="no-drag"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
             </div>
             <div className="flex items-center justify-center text-xs text-muted-foreground mt-2 gap-2">
               <span>Powered by</span>

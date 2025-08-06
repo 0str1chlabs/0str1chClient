@@ -43,14 +43,16 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
 
     // Load into DuckDB and log a sample query
     if (rows.length > 1) {
-      await loadSheetToDuckDB('Sheet1', rows);
       try {
-        const colB = rows[0][1];
-        const result = await queryDuckDB(`SELECT "${colB}" FROM "Sheet1" LIMIT 1`);
-        const firstBValue = result.length > 0 ? result[0][colB] : undefined;
-        console.log('First value in column B:', firstBValue);
-      } catch (err) {
-        console.error('DuckDB query error:', err);
+        console.log('CSV data prepared for upload, AIAssistant will handle DuckDB loading');
+        console.log('Sample data:', {
+          header: rows[0],
+          firstDataRow: rows[1],
+          totalRows: rows.length
+        });
+      } catch (loadErr) {
+        console.error('Error preparing CSV data:', loadErr);
+        // Don't fail the upload if there are issues
       }
     }
   }, [onUpload]);

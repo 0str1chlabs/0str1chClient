@@ -530,6 +530,7 @@ const Index = () => {
             description: "Tell me what you'd like to create and I'll help you build it!",
           })}
           updateCell={updateCell}
+          bulkUpdateCells={bulkUpdateCells}
         />
       </div>
     </ThemeProvider>
