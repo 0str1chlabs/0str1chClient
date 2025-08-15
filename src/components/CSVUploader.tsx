@@ -38,7 +38,7 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
       const result = await resp.json();
       console.log('Backend embedding response:', result);
     } catch (err) {
-      console.error('Error sending profile summary to backend:', err);
+  
     }
 
     // Load into DuckDB and log a sample query
@@ -51,7 +51,7 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
           totalRows: rows.length
         });
       } catch (loadErr) {
-        console.error('Error preparing CSV data:', loadErr);
+
         // Don't fail the upload if there are issues
       }
     }
@@ -60,9 +60,9 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
   return (
     <div className="p-4 border-b">
       <label htmlFor="csv-upload">
-        <Button variant="outline" className="w-full border-[1.5px] border-[hsl(205.91,68.04%,61.96%)]" asChild>
+        <Button variant="outline" className="w-full text-foreground" asChild>
           <div className="cursor-pointer">
-            <Upload size={16} className="mr-2" />
+            <Upload size={16} className="mr-2 text-foreground" />
             Upload CSV
           </div>
         </Button>

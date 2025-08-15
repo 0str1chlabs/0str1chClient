@@ -22,7 +22,7 @@ export async function parseAndLogSheet(file: File | ArrayBuffer) {
   workbook.SheetNames.forEach(sheetName => {
     const worksheet = workbook.Sheets[sheetName];
     const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-    console.log(`Sheet: ${sheetName}`, json);
+  
   });
 }
 
@@ -39,6 +39,15 @@ export async function parseAndLogSheet(file: File | ArrayBuffer) {
 export async function queryDuckDB(sql: string) {
   if (!window.duckDB) throw new Error('DuckDB is not initialized.');
   const conn = await window.duckDB.connect();
+  
+  // Try to silence logging on this connection
+  try {
+    await conn.query('SET log_level = 0');
+    await conn.query('SET enable_logging = false');
+  } catch (logError) {
+    // Ignore errors if these settings don't exist
+  }
+  
   const result = await conn.query(sql);
   await conn.close();
   return result.toArray();
@@ -99,43 +108,143 @@ export function sheetProfileSummary(meta: { rowCount: number, colCount: number, 
 
 import * as duckdb from '@duckdb/duckdb-wasm';
 
+// Completely silent logger that suppresses all DuckDB logs
+class SilentLogger implements duckdb.Logger {
+  log(entry: duckdb.LogEntryVariant): void {
+    // Suppress ALL DuckDB logs to keep console clean
+    return;
+  }
+  
+  // Override other logging methods to ensure complete silence
+  warn(message: string): void {
+    // Only log critical warnings
+    if (message.includes('CRITICAL') || message.includes('FATAL')) {
+      console.warn(`[DuckDB Critical] ${message}`);
+    }
+  }
+  
+  error(message: string): void {
+    // Only log critical errors
+    if (message.includes('CRITICAL') || message.includes('FATAL')) {
+      console.error(`[DuckDB Critical] ${message}`);
+    }
+  }
+}
+
+// Global DuckDB configuration to disable logging
+const DUCKDB_CONFIG = {
+  logLevel: 0, // Disable all logging
+  enableLogging: false,
+  silentMode: true
+};
+
+// Function to suppress DuckDB SQL logs globally
+function suppressDuckDBLogs() {
+  // Store original console methods
+  const originalLog = console.log;
+  const originalInfo = console.info;
+  
+  // Override console.log to filter DuckDB SQL logs
+  console.log = function(...args: any[]) {
+    const message = args.join(' ');
+    // Check if this is a DuckDB SQL log message
+    if (message.includes('INSERT INTO') || 
+        message.includes('UPDATE') || 
+        message.includes('DELETE FROM') ||
+        message.includes('CREATE TABLE') ||
+        message.includes('DROP TABLE') ||
+        message.includes('SELECT') ||
+        message.includes('ALTER TABLE') ||
+        message.includes('VALUES')) {
+      return; // Suppress SQL logs
+    }
+    originalLog.apply(console, args);
+  };
+  
+  // Override console.info to filter DuckDB SQL logs
+  console.info = function(...args: any[]) {
+    const message = args.join(' ');
+    // Check if this is a DuckDB SQL log message
+    if (message.includes('INSERT INTO') || 
+        message.includes('UPDATE') || 
+        message.includes('DELETE FROM') ||
+        message.includes('CREATE TABLE') ||
+        message.includes('DROP TABLE') ||
+        message.includes('SELECT') ||
+        message.includes('ALTER TABLE') ||
+        message.includes('VALUES')) {
+      return; // Suppress SQL logs
+    }
+    originalInfo.apply(console, args);
+  };
+  
+  console.log('[DuckDB] SQL logging suppressed');
+}
+
+// Make the suppress function available globally
+if (typeof window !== 'undefined') {
+  (window as any).suppressDuckDBLogs = suppressDuckDBLogs;
+}
+
 export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
-  console.log('=== LOADING SHEET TO DUCKDB ===');
-  console.log('Table name:', tableName);
-  console.log('Data length:', data.length);
-  console.log('First row (header):', data[0]);
-  console.log('Sample data rows:', data.slice(1, 4));
+
 
   if (!window.duckDB) {
-    console.log('Initializing DuckDB...');
+
     // Define your custom public paths
     const bundle = {
       mainModule: '/duckdb/duckdb-eh.wasm',
       mainWorker: '/duckdb/duckdb-browser-eh.worker.js',
     };
 
-    // Set up a logger (optional but useful)
-    const logger = new duckdb.ConsoleLogger();
+    // Use completely silent logger to suppress ALL DuckDB logs
+    const logger = new SilentLogger();
 
     // Create a worker
     const worker = new Worker(bundle.mainWorker, { type: 'module' });
 
     // Create DuckDB instance and assign to window
     window.duckDB = new duckdb.AsyncDuckDB(logger, worker);
-    await window.duckDB.instantiate(bundle.mainModule);
-    console.log('DuckDB initialized successfully');
+    
+    // Set log level to 0 to disable all logging
+    try {
+      await window.duckDB.instantiate(bundle.mainModule);
+      
+      // Suppress DuckDB SQL logs globally
+      suppressDuckDBLogs();
+      
+      // Try multiple methods to disable logging
+      if (window.duckDB.setLogLevel) {
+        window.duckDB.setLogLevel(0);
+      }
+      
+      // Also try to disable logging on the connection level
+      const testConn = await window.duckDB.connect();
+      try {
+        // Execute SQL to disable logging if possible
+        await testConn.query('SET log_level = 0');
+        await testConn.query('SET enable_logging = false');
+      } catch (logError) {
+        // Ignore errors if these settings don't exist
+      } finally {
+        await testConn.close();
+      }
+      
+    } catch (error) {
+      console.error('Error initializing DuckDB:', error);
+    }
+
   }
 
   const conn = await window.duckDB.connect();
-  console.log('Connected to DuckDB');
+  
 
   try {
     // Drop existing table to ensure clean state
     try {
       await conn.query(`DROP TABLE IF EXISTS "${tableName}"`);
-      console.log('Dropped existing table');
     } catch (error) {
-      console.log('No existing table to drop or error dropping:', error);
+      // Ignore errors when dropping table
     }
 
     // Prepare SQL table
@@ -152,20 +261,16 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
       return col.toString().replace(/[^a-zA-Z0-9_\s]/g, '_');
     });
     
-    console.log('Original header:', header);
-    console.log('Clean header:', cleanHeader);
+
     
     const columns = cleanHeader.map(col => `"${col}" VARCHAR`).join(', ');
-    console.log('CREATE TABLE SQL:', `CREATE TABLE "${tableName}" (${columns});`);
+
     
     await conn.query(`CREATE TABLE "${tableName}" (${columns});`);
-    console.log('Table created successfully');
+
 
     // Insert data rows
     let insertedRows = 0;
-    console.log('Starting data insertion...');
-    console.log('Data array length:', data.length);
-    console.log('Clean header length:', cleanHeader.length);
     
     for (let i = 1; i < data.length; i++) {
       try {
@@ -182,14 +287,14 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
         const insertSQL = `INSERT INTO "${tableName}" VALUES (${values});`;
         
         if (insertedRows < 3) {
-          console.log(`Inserting row ${i}:`, insertSQL);
+          // Debug logging removed
         }
         
         await conn.query(insertSQL);
         insertedRows++;
         
         if (insertedRows % 100 === 0) {
-          console.log(`Inserted ${insertedRows} rows so far...`);
+          // Progress logging removed
         }
       } catch (error) {
         console.error(`Error inserting row ${i}:`, error);
@@ -200,15 +305,12 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
       }
     }
 
-    console.log(`Successfully inserted ${insertedRows} rows`);
-    console.log('Data insertion completed');
     
     // Verify the data was inserted
     try {
-      console.log('Verifying data insertion...');
       const countResult = await conn.query(`SELECT COUNT(*) as row_count FROM "${tableName}"`);
       const rowCount = countResult.toArray()[0][0];
-      console.log('Final row count in table:', rowCount);
+
       
       if (rowCount === 0) {
         console.error('WARNING: No rows were inserted into the table!');
@@ -218,11 +320,9 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
       // Also check the first few rows to make sure data is there
       const sampleResult = await conn.query(`SELECT * FROM "${tableName}" LIMIT 3`);
       const sampleRows = sampleResult.toArray();
-      console.log('Sample rows from table:', sampleRows);
-      
     } catch (countError) {
       console.error('Error getting row count:', countError);
-      console.log('Proceeding anyway as data was inserted successfully');
+      
     }
 
   } catch (error) {
@@ -230,7 +330,6 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
     throw error;
   } finally {
     await conn.close();
-    console.log('=== END LOADING SHEET TO DUCKDB ===');
   }
 }
 
@@ -242,24 +341,22 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
  * @returns {Promise<string>} - A summary block suitable for duckdb-nsql prompts
  */
 export async function extractDuckDBSchemaSummary(db: any, tableName: string, sampleSize: number = 5): Promise<string> {
-  console.log('=== EXTRACTING DUCKDB SCHEMA ===');
-  console.log('Table name:', tableName);
-  console.log('Sample size:', sampleSize);
+
   
   let rowCount = 0; // Declare rowCount at the top
   
   const conn = await db.connect();
-  console.log('Connected to DuckDB for schema extraction');
+
 
   try {
     // First, check if table exists and has data
     try {
       const tableCheck = await conn.query(`SELECT COUNT(*) as count FROM "${tableName}"`);
-      console.log('Table check result:', tableCheck);
+
       
       // Safely extract row count with validation
       const tableArray = tableCheck.toArray();
-      console.log('Table check array:', tableArray);
+      
       
       if (!tableArray || tableArray.length === 0) {
         console.warn('Table check returned no rows');
@@ -271,9 +368,7 @@ Columns:
       }
       
       const firstRow = tableArray[0];
-      console.log('First row object:', firstRow);
-      console.log('First row type:', typeof firstRow);
-      console.log('First row keys:', Object.keys(firstRow));
+      
       
       if (!firstRow) {
         console.warn('Table check first row is empty');
@@ -290,28 +385,28 @@ Columns:
       // Method 1: Try accessing by index
       if (Array.isArray(firstRow)) {
         extractedRowCount = firstRow[0];
-        console.log('Accessed as array, rowCount:', extractedRowCount);
+
       }
       // Method 2: Try accessing by property name
       else if (typeof firstRow === 'object' && firstRow !== null) {
         // Try common column names for count queries
         extractedRowCount = firstRow.count || firstRow.row_count || firstRow['COUNT(*)'] || firstRow[0];
-        console.log('Accessed as object, rowCount:', extractedRowCount);
+
       }
       // Method 3: Try converting to array and accessing
       else {
         const rowArray = Array.from(firstRow);
         extractedRowCount = rowArray[0];
-        console.log('Converted to array, rowCount:', extractedRowCount);
+
       }
       
       // Handle BigInt values from DuckDB
       if (typeof extractedRowCount === 'bigint') {
         extractedRowCount = Number(extractedRowCount);
-        console.log('Converted BigInt row count to number:', extractedRowCount);
+
       }
       
-      console.log('Table row count check:', extractedRowCount, 'Type:', typeof extractedRowCount);
+
       
       if (extractedRowCount === undefined || extractedRowCount === null) {
         console.warn('Row count is undefined/null');

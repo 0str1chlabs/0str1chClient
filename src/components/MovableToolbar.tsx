@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Toolbar } from './Toolbar';
-import { RotateCw, Move, Pin, PinOff } from 'lucide-react';
+import { RotateCw, Move, Pin, PinOff, LayoutGrid } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface MovableToolbarProps {
@@ -13,6 +13,7 @@ interface MovableToolbarProps {
   canUndo?: boolean;
   canRedo?: boolean;
   onAddSheet?: () => void;
+  onRearrange?: () => void;
 }
 
 export const MovableToolbar = (props: MovableToolbarProps) => {
@@ -144,20 +145,29 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
       <div className="relative">
         {/* Toggle Fixed/Movable Button */}
         <div 
-          className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-white rounded-t-lg px-2 py-1 shadow-md border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
+                      className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-white dark:bg-gray-800 rounded-t-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
           onClick={toggleFixedMode}
           title={isFixed ? "Make Movable" : "Fix Position"}
         >
-          {isFixed ? <PinOff size={12} className="text-gray-600" /> : <Pin size={12} className="text-gray-600" />}
+                     {isFixed ? <PinOff size={12} className="text-foreground" /> : <Pin size={12} className="text-foreground" />}
+        </div>
+        
+        {/* Rearrange Button */}
+        <div 
+          className="absolute -top-8 left-16 bg-white dark:bg-gray-800 rounded-t-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          onClick={props.onRearrange}
+          title="Rearrange Layout"
+        >
+          <LayoutGrid size={12} className="text-foreground" />
         </div>
         
         {/* Drag Handle - only show when not fixed */}
         {!isFixed && (
           <div 
-            className="absolute -top-8 -left-8 bg-white rounded-lg px-2 py-1 shadow-md border border-gray-200 cursor-move hover:bg-gray-50 transition-colors"
+            className="absolute -top-8 -left-8 bg-white dark:bg-gray-800 rounded-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-move hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             data-toolbar-handle="true"
           >
-            <Move size={12} className="text-gray-600" />
+                         <Move size={12} className="text-foreground" />
           </div>
         )}
         
@@ -165,28 +175,28 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         {!isFixed && (
           <>
             <div 
-              className="absolute -top-8 -right-8 bg-white rounded-lg p-1 shadow-md border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
+              className="absolute -top-8 -right-8 bg-white dark:bg-gray-800 rounded-lg p-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               onMouseDown={handleRotationMouseDown}
               title="Rotate Toolbar"
             >
-              <RotateCw size={12} className="text-gray-600" />
+              <RotateCw size={12} className="text-foreground" />
             </div>
             
             {/* Quick Rotation Button */}
             <Button
               variant="ghost"
               size="sm"
-              className="absolute -top-8 left-8 bg-white rounded-lg p-1 shadow-md border border-gray-200 hover:bg-gray-50 transition-colors"
+              className="absolute -top-8 left-8 bg-white dark:bg-gray-800 rounded-lg p-1 shadow-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               onClick={handleRotationClick}
               title="Quick Rotate (45° increments)"
             >
-              <RotateCw size={12} className="text-gray-600" />
+              <RotateCw size={12} className="text-foreground" />
             </Button>
           </>
         )}
         
         {/* Main Toolbar */}
-        <div className="bg-white rounded-2xl shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-gray-200">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-gray-200 dark:border-gray-700">
           <Toolbar {...props} />
         </div>
       </div>

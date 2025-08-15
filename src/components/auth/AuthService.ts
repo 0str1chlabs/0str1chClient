@@ -10,6 +10,8 @@ export interface AuthResponse {
   message: string;
   token: string;
   refreshToken: string;
+  tokenExpiration?: string;
+  rememberMe?: boolean;
   user: User;
 }
 
@@ -30,16 +32,34 @@ export interface GoogleAuthRequest {
   rememberMe?: boolean;
 }
 
+export interface TokenVerificationResponse {
+  valid: boolean;
+  user?: User;
+  tokenExpiration?: string;
+  error?: string;
+  expired?: boolean;
+}
+
 class AuthService {
   private baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api/auth` : 'http://localhost:8090/api/auth';
   private tokenKey = 'auth_token';
   private refreshTokenKey = 'refresh_token';
   private userKey = 'user_data';
+  private tokenExpirationKey = 'token_expiration';
+  private rememberMeKey = 'remember_me';
 
   // Store tokens in localStorage
-  private setTokens(token: string, refreshToken: string): void {
+  private setTokens(token: string, refreshToken: string, tokenExpiration?: string, rememberMe?: boolean): void {
     localStorage.setItem(this.tokenKey, token);
     localStorage.setItem(this.refreshTokenKey, refreshToken);
+    
+    if (tokenExpiration) {
+      localStorage.setItem(this.tokenExpirationKey, tokenExpiration);
+    }
+    
+    if (rememberMe !== undefined) {
+      localStorage.setItem(this.rememberMeKey, rememberMe.toString());
+    }
   }
 
   // Get stored token
@@ -50,6 +70,17 @@ class AuthService {
   // Get stored refresh token
   getRefreshToken(): string | null {
     return localStorage.getItem(this.refreshTokenKey);
+  }
+
+  // Get token expiration
+  getTokenExpiration(): string | null {
+    return localStorage.getItem(this.tokenExpirationKey);
+  }
+
+  // Check if remember me is enabled
+  isRememberMeEnabled(): boolean {
+    const rememberMe = localStorage.getItem(this.rememberMeKey);
+    return rememberMe === 'true';
   }
 
   // Store user data
@@ -68,6 +99,63 @@ class AuthService {
     localStorage.removeItem(this.tokenKey);
     localStorage.removeItem(this.refreshTokenKey);
     localStorage.removeItem(this.userKey);
+    localStorage.removeItem(this.tokenExpirationKey);
+    localStorage.removeItem(this.rememberMeKey);
+  }
+
+  // Check if token is expired
+  isTokenExpired(): boolean {
+    const token = this.getToken();
+    if (!token) return true;
+
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const expirationTime = payload.exp * 1000; // Convert to milliseconds
+      return Date.now() >= expirationTime;
+    } catch (error) {
+      console.error('Token validation error:', error);
+      return true;
+    }
+  }
+
+  // Verify token with server
+  async verifyToken(): Promise<TokenVerificationResponse> {
+    try {
+      const token = this.getToken();
+      if (!token) {
+        return { valid: false, error: 'No token found' };
+      }
+     console.log("bseurlll", this.baseURL)
+      const response = await fetch(`${this.baseURL}/verify-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        return { 
+          valid: false, 
+          error: error.error || 'Token verification failed',
+          expired: error.expired
+        };
+      }
+
+      const data = await response.json();
+      return {
+        valid: true,
+        user: data.user,
+        tokenExpiration: data.tokenExpiration
+      };
+    } catch (error) {
+      console.error('Token verification error:', error);
+      return { 
+        valid: false, 
+        error: error instanceof Error ? error.message : 'Token verification failed' 
+      };
+    }
   }
 
   // Make authenticated request
@@ -129,7 +217,7 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
-      this.setTokens(data.token, data.refreshToken);
+      this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       return data;
     } catch (error) {
@@ -161,7 +249,7 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
-      this.setTokens(data.token, data.refreshToken);
+      this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       return data;
     } catch (error) {
@@ -190,7 +278,7 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
-      this.setTokens(data.token, data.refreshToken);
+      this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       return data;
     } catch (error) {
@@ -203,6 +291,8 @@ class AuthService {
   async hardcodedLogin(email: string, rememberMe: boolean = false): Promise<AuthResponse> {
     try {
       const encryptedEmail = await EmailEncryption.encrypt(email);
+      console.log("bseurlll", this.baseURL)
+      debugger
       
       const response = await fetch(`${this.baseURL}/hardcoded-login`, {
         method: 'POST',
@@ -221,7 +311,7 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
-      this.setTokens(data.token, data.refreshToken);
+      this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       return data;
     } catch (error) {
@@ -254,7 +344,7 @@ class AuthService {
       }
 
       const data = await response.json();
-      this.setTokens(data.token, data.refreshToken);
+      this.setTokens(data.token, data.refreshToken, data.tokenExpiration);
       return true;
     } catch (error) {
       console.error('Refresh token error:', error);
@@ -299,15 +389,36 @@ class AuthService {
     const token = this.getToken();
     if (!token) return false;
 
-    try {
-      // Check if token is expired
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      const expirationTime = payload.exp * 1000; // Convert to milliseconds
-      return Date.now() < expirationTime;
-    } catch (error) {
-      console.error('Token validation error:', error);
+    // Check if token is expired
+    if (this.isTokenExpired()) {
       return false;
     }
+
+    return true;
+  }
+
+  // Auto-login if remember me is enabled and token is valid
+  async autoLogin(): Promise<User | null> {
+    if (!this.isRememberMeEnabled()) {
+      return null;
+    }
+
+    if (!this.isAuthenticated()) {
+      // Try to refresh token
+      const refreshed = await this.refreshToken();
+      if (!refreshed) {
+        return null;
+      }
+    }
+
+    // Verify token with server
+    const verification = await this.verifyToken();
+    if (!verification.valid) {
+      this.clearAuth();
+      return null;
+    }
+
+    return verification.user || null;
   }
 }
 

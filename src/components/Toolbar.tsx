@@ -239,7 +239,7 @@ export const Toolbar = ({
                 onAddSheet();
               }}
             >
-              <Plus size={16} className="text-neutral-800" />
+              <Plus size={16} className="text-foreground" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
@@ -262,7 +262,7 @@ export const Toolbar = ({
                 }}
                 disabled={!canUndo}
               >
-                <Undo size={16} className="text-neutral-800" />
+                <Undo size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -282,7 +282,7 @@ export const Toolbar = ({
                 }}
                 disabled={!canRedo}
               >
-                <Redo size={16} className="text-neutral-800" />
+                <Redo size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -307,8 +307,8 @@ export const Toolbar = ({
                   setShowTextFormat(!showTextFormat);
                 }}
               >
-                <Type size={16} className="text-neutral-800" />
-                <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-neutral-600" />
+                            <Type size={16} className="text-foreground" />
+            <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -319,7 +319,7 @@ export const Toolbar = ({
           
           {/* Text Formatting Dropdown */}
           {showTextFormat && (
-            <div className="absolute left-12 top-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50" data-text-format="true">
+            <div className="absolute left-12 top-0 bg-background rounded-lg shadow-lg border border-border p-2 z-50" data-text-format="true">
               <div className="flex flex-col gap-1">
                 <Button 
                   variant={appliedFormats.bold ? "default" : "ghost"}
@@ -331,7 +331,7 @@ export const Toolbar = ({
                     setShowTextFormat(false);
                   }}
                 >
-                  <Bold size={14} className={appliedFormats.bold ? "text-gray-500" : "text-neutral-800"} />
+                  <Bold size={14} className={appliedFormats.bold ? "text-muted-foreground" : "text-foreground"} />
                   <span className="text-xs">Bold</span>
                 </Button>
                 <Button 
@@ -344,7 +344,7 @@ export const Toolbar = ({
                     setShowTextFormat(false);
                   }}
                 >
-                  <Italic size={14} className={appliedFormats.italic ? "text-gray-500" : "text-neutral-800"} />
+                  <Italic size={14} className={appliedFormats.italic ? "text-muted-foreground" : "text-foreground"} />
                   <span className="text-xs">Italic</span>
                 </Button>
                 <Button 
@@ -357,7 +357,7 @@ export const Toolbar = ({
                     setShowTextFormat(false);
                   }}
                 >
-                  <Underline size={14} className={appliedFormats.underline ? "text-gray-500" : "text-neutral-800"} />
+                  <Underline size={14} className={appliedFormats.underline ? "text-muted-foreground" : "text-foreground"} />
                   <span className="text-xs">Underline</span>
                 </Button>
               </div>
@@ -378,8 +378,8 @@ export const Toolbar = ({
                   setShowColorPalette(!showColorPalette);
                 }}
               >
-                <Palette size={16} className="text-neutral-800" />
-                <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-neutral-600" />
+                            <Palette size={16} className="text-foreground" />
+            <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -408,7 +408,7 @@ export const Toolbar = ({
               </div>
               <div className="mt-2 pt-2 border-t border-gray-200">
                 <button
-                  className="w-full px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                  className="w-full px-2 py-1 text-xs text-foreground hover:bg-muted rounded"
                   onClick={(e) => {
                     e.stopPropagation();
                     onFormat('fill-color', 'transparent');
@@ -434,7 +434,7 @@ export const Toolbar = ({
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('align-left')}
               >
-                <AlignLeft size={16} className="text-neutral-800" />
+                <AlignLeft size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -450,7 +450,7 @@ export const Toolbar = ({
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('align-center')}
               >
-                <AlignCenter size={16} className="text-neutral-800" />
+                <AlignCenter size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -466,7 +466,7 @@ export const Toolbar = ({
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('align-right')}
               >
-                <AlignRight size={16} className="text-neutral-800" />
+                <AlignRight size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -488,7 +488,7 @@ export const Toolbar = ({
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('copy')}
               >
-                <Copy size={16} className="text-neutral-800" />
+                <Copy size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -504,7 +504,7 @@ export const Toolbar = ({
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('paste')}
               >
-                <Clipboard size={16} className="text-neutral-800" />
+                <Clipboard size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -524,7 +524,7 @@ export const Toolbar = ({
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => setShowSearch(true)}
               >
-                <Search size={16} className="text-neutral-800" />
+                <Search size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -540,7 +540,7 @@ export const Toolbar = ({
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('functions')}
               >
-                <Calculator size={16} className="text-neutral-800" />
+                <Calculator size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>

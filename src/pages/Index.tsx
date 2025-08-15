@@ -10,7 +10,7 @@ import { CSVUploader } from '@/components/CSVUploader';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { SheetTabs } from '@/components/SheetTabs';
 import { toast } from '@/hooks/use-toast';
-import { ZoomIn, ZoomOut, User, LogOut } from 'lucide-react';
+import { ZoomIn, ZoomOut, User, LogOut, Sun, Moon, LayoutGrid } from 'lucide-react';
 import { Resizable } from '@/components/Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -261,7 +261,7 @@ const Index = () => {
         formatCells(selectedCells, { textAlign: 'right' });
         break;
       default:
-        console.log('Unhandled format action:', action, value);
+
     }
   };
 
@@ -312,12 +312,127 @@ const Index = () => {
     }));
   };
 
+  // Listen for embed requests from chat and add chart to canvas
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<{ data: any[]; chartSpec: any }>;
+      const payload = custom.detail;
+      if (!payload?.data || !payload?.chartSpec) return;
+
+      const chartId = `chart-${Date.now()}`;
+      // Normalize to ChartBlock format
+      const xField = payload.chartSpec?.x?.field;
+      const yField = payload.chartSpec?.y?.field;
+      const normalized = Array.isArray(payload.data)
+        ? payload.data.map((row: any, i: number) => ({
+            name: row?.[xField] ?? `Item ${i + 1}`,
+            value: Number(row?.[yField] ?? 0)
+          }))
+        : [];
+
+      addChart({
+        type: payload.chartSpec?.type || 'bar',
+        title: payload.chartSpec?.title || 'AI Chart',
+        data: normalized,
+        range: 'AI Generated',
+        minimized: false,
+      });
+
+      // Place below the sheet
+      setChartPositions(prev => ({
+        ...prev,
+        [chartId]: { x: 100, y: 800 + Object.keys(prev).length * 350 }
+      }));
+
+      // Zoom out a bit to reveal the area
+      setTimeout(() => setZoom(z => Math.max(0.6, z - 0.1)), 150);
+      toast({ title: 'Chart embedded', description: 'Added to canvas below the sheet.' });
+    };
+    window.addEventListener('embedChartFromChat', handler as EventListener);
+    return () => window.removeEventListener('embedChartFromChat', handler as EventListener);
+  }, [addChart, setChartPositions]);
+
   const handleZoomIn = () => {
     setZoom(prev => Math.min(prev + 0.1, 3));
   };
 
   const handleZoomOut = () => {
     setZoom(prev => Math.max(prev - 0.1, 0.1));
+  };
+
+  // Rearrange layout function
+  const handleRearrange = () => {
+    if (!activeSheet) return;
+    
+    // Calculate the center position for the sheet
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight - 64; // Subtract header height
+    
+    // Center the sheet horizontally and position it near the top
+    const sheetCenterX = (viewportWidth - 1400) / 2; // 1400 is the sheet width
+    const sheetTopY = 100; // Position sheet near the top
+    
+    // Arrange charts below the sheet
+    const chartStartY = sheetTopY + 800; // Start charts below the sheet
+    const chartSpacing = 450; // Space between charts
+    
+    // Update chart positions
+    const newChartPositions: Record<string, { x: number; y: number }> = {};
+    if (state.charts.length > 0) {
+      state.charts.forEach((chart, index) => {
+        const chartX = sheetCenterX + (index % 2) * 750; // 2 columns of charts
+        const chartY = chartStartY + Math.floor(index / 2) * chartSpacing;
+        newChartPositions[chart.id] = { x: chartX, y: chartY };
+      });
+      setChartPositions(newChartPositions);
+    }
+    
+    // Calculate optimal zoom for the infinite canvas to fit everything in viewport
+    let totalHeight = sheetTopY + 800; // Sheet height
+    let totalWidth = 1400; // Sheet width
+    
+    if (state.charts.length > 0) {
+      const chartRows = Math.ceil(state.charts.length / 2);
+      totalHeight += chartRows * chartSpacing;
+      totalWidth = Math.max(1400, 1500); // Ensure enough width for 2 columns of charts
+    }
+    
+    const zoomX = (viewportWidth - 100) / totalWidth; // Leave 50px margin on each side
+    const zoomY = (viewportHeight - 100) / totalHeight; // Leave 50px margin on top and bottom
+    
+    const optimalZoom = Math.min(zoomX, zoomY, 1); // Don't zoom in beyond 100%
+    
+    // Use the infinite canvas zoom instead of page zoom
+    if (canvasRef.current) {
+      try {
+        // First, zoom the infinite canvas to fit the content
+        if (canvasRef.current.zoomTo) {
+          canvasRef.current.zoomTo(optimalZoom, 500);
+        }
+        
+        // Use a simpler approach: reset the view to center and let the library handle positioning
+        // The charts and sheet are already positioned correctly, so we just need to ensure they're visible
+        setTimeout(() => {
+          // After zoom animation completes, try to center the view
+          if (canvasRef.current && canvasRef.current.centerView) {
+            // Center on the sheet position
+            const centerX = sheetCenterX + 700; // Center of sheet
+            const centerY = sheetTopY + 350; // Center of sheet
+            canvasRef.current.centerView(centerX, centerY, 300);
+          }
+        }, 600); // Wait for zoom animation to complete
+        
+      } catch (error) {
+        console.warn('Error adjusting infinite canvas:', error);
+      }
+    }
+    
+    toast({
+      title: "Layout Rearranged",
+      description: state.charts.length > 0 
+        ? "Sheet centered and charts arranged below for better visibility."
+        : "Sheet centered in the viewport for better visibility.",
+    });
   };
 
   // Handle mouse wheel zoom for the entire board
@@ -360,10 +475,10 @@ const Index = () => {
 
   // CSS grid background (40px squares, light gray)
   const gridBackground = {
-    backgroundColor: '#fff',
-    backgroundImage:
-      'linear-gradient(to right, #ececec 1px, transparent 1px), ' +
-      'linear-gradient(to bottom, #ececec 1px, transparent 1px)',
+    backgroundColor: state.isDarkMode ? '#1a1a1a' : '#fff',
+    backgroundImage: state.isDarkMode 
+      ? 'linear-gradient(to right, #333 1px, transparent 1px), linear-gradient(to bottom, #333 1px, transparent 1px)'
+      : 'linear-gradient(to right, #ececec 1px, transparent 1px), linear-gradient(to bottom, #ececec 1px, transparent 1px)',
     backgroundSize: '40px 40px',
   };
 
@@ -383,28 +498,49 @@ const Index = () => {
   return (
     <ThemeProvider isDarkMode={state.isDarkMode} toggleTheme={toggleTheme}>
       {/* Fixed Header at the top of the screen */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-white border-b shadow-sm flex items-center justify-between px-6 h-16">
+      <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 shadow-sm flex items-center justify-between px-6 h-16">
         <h1 className="text-2xl font-bold text-black dark:text-yellow-400 tracking-wide">0str1ch</h1>
         <div className="flex items-center gap-4">
-          <div className="bg-black/80 text-yellow-200 px-4 py-2 rounded-full shadow-lg text-sm font-semibold select-none">
+          <div className="bg-background/90 text-foreground px-4 py-2 rounded-full shadow-lg text-sm font-semibold select-none border border-border">
             Zoom: {(zoom * 100).toFixed(0)}%
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={handleZoomOut}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
               title="Zoom Out"
             >
-              <ZoomOut size={16} className="text-gray-600" />
+              <ZoomOut size={16} className="text-gray-600 dark:text-gray-300" />
             </button>
             <button
               onClick={handleZoomIn}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
               title="Zoom In"
             >
-              <ZoomIn size={16} className="text-gray-600" />
+              <ZoomIn size={16} className="text-gray-600 dark:text-gray-300" />
+            </button>
+            <button
+              onClick={handleRearrange}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+              title="Rearrange Layout"
+            >
+              <LayoutGrid size={16} className="text-gray-600 dark:text-gray-300" />
             </button>
           </div>
+          
+          {/* Theme Toggle Button */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+            title={state.isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {state.isDarkMode ? (
+              <Sun size={16} className="text-yellow-400" />
+            ) : (
+              <Moon size={16} className="text-gray-600" />
+            )}
+          </button>
+          
           <div className="ml-2">
             <CSVUploader onUpload={handleCSVUploadAndPush} />
           </div>
@@ -415,7 +551,7 @@ const Index = () => {
               <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                 <Avatar className="h-8 w-8">
                   <AvatarFallback className="bg-primary text-primary-foreground">
-                    {user?.name?.charAt(0).toUpperCase() || 'U'}
+                    {user?.email?.charAt(0).toUpperCase() || 'U'}
                   </AvatarFallback>
                 </Avatar>
               </Button>
@@ -464,14 +600,14 @@ const Index = () => {
             {/* Main Spreadsheet */}
             {activeSheet && (
               <div className="spreadsheet-container relative">
-                <Resizable
-                  initialWidth={800}
-                  initialHeight={600}
-                  minWidth={400}
-                  minHeight={300}
-                  maxWidth={1200}
-                  maxHeight={800}                
-                >
+                      <Resizable
+        initialWidth={1400}
+        initialHeight={700}
+        minWidth={600}
+        minHeight={400}
+        maxWidth={1800}
+        maxHeight={900}
+      >
                   <ModernSpreadsheet
                     sheet={activeSheet}
                     updateCell={updateCell}
@@ -514,6 +650,7 @@ const Index = () => {
           canUndo={canUndo}
           canRedo={canRedo}
           onAddSheet={handleAddSheet}
+          onRearrange={handleRearrange}
         />
         
         {/* AI Assistant */}

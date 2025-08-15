@@ -9,13 +9,19 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LoaderCircle } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
+import { ChartRenderer } from './ChartRenderer';
 import axios from 'axios'; // Added axios import
 
 interface Message {
   type: 'ai' | 'user';
   content: string;
+  chartData?: {
+    data: any[];
+    chartSpec: any;
+  };
 }
 
 interface AIAssistantProps {
@@ -201,8 +207,8 @@ export const AIAssistant = ({
     addMessage('user', `Calculate ${operation}`);
   };
 
-  const addMessage = (type: 'ai' | 'user', content: string) => {
-    setMessages(prev => [...prev, { type, content }]);
+  const addMessage = (type: 'ai' | 'user', content: string, chartData?: { data: any[]; chartSpec: any }) => {
+    setMessages(prev => [...prev, { type, content, chartData }]);
   };
 
   const createSheetSummary = async () => {
@@ -211,17 +217,7 @@ export const AIAssistant = ({
       return 'No active sheet';
     }
 
-    // Comprehensive check for activeSheet data
-    console.log('=== ACTIVE SHEET VERIFICATION ===');
-    console.log('Active sheet:', {
-      id: activeSheet.id,
-      name: activeSheet.name,
-      rowCount: activeSheet.rowCount,
-      colCount: activeSheet.colCount,
-      cellsCount: activeSheet.cells ? Object.keys(activeSheet.cells).length : 0,
-      hasCells: !!activeSheet.cells,
-      cellsType: typeof activeSheet.cells
-    });
+
 
     // Check if cells data is available
     if (!activeSheet.cells || Object.keys(activeSheet.cells).length === 0) {
@@ -236,36 +232,29 @@ export const AIAssistant = ({
       return cell && cell.value !== undefined && cell.value !== null && cell.value !== '';
     });
 
-    console.log('Cell analysis:', {
-      totalCells: cellKeys.length,
-      nonEmptyCells: nonEmptyCells.length,
-      sampleCellKeys: cellKeys.slice(0, 5),
-      sampleNonEmptyCells: nonEmptyCells.slice(0, 5)
-    });
+
 
     if (nonEmptyCells.length === 0) {
       console.error('No meaningful data found in active sheet');
       return 'No data found in sheet';
     }
 
-    console.log('=== END ACTIVE SHEET VERIFICATION ===');
+    
 
     try {
       // Ensure sheet is loaded in DuckDB and get schema
       const { schema } = await ensureSheetLoadedInDuckDB();
       
       if (schema) {
-        console.log('Using DuckDB generated schema:', schema);
+
         return schema;
       }
       
       // Fallback to manual schema generation if DuckDB schema fails
-      console.log('Falling back to manual schema generation');
       return createSheetSummaryFallback();
       
     } catch (error) {
       console.error('Error in createSheetSummary:', error);
-      console.log('Falling back to manual schema generation');
       return createSheetSummaryFallback();
     }
   };
@@ -302,7 +291,7 @@ export const AIAssistant = ({
       };
     }
 
-    console.log('Column Analysis:', columnAnalysis);
+
 
     // Generate sample rows for schema
     const sampleRows = [];
@@ -346,9 +335,7 @@ ${sampleRows.join('\n')}`;
       setIsDuckDBProcessing(true);
       const { extractDuckDBSchemaSummary } = await import('../lib/utils');
       const schema = await extractDuckDBSchemaSummary(window.duckDB, 'data', 3);
-      console.log('=== UPDATED DUCKDB SCHEMA ===');
-      console.log(schema);
-      console.log('=== END UPDATED SCHEMA ===');
+
       setCurrentSchema(schema);
       setIsDuckDBProcessing(false);
       setIsSchemaReady(true);
@@ -364,7 +351,7 @@ ${sampleRows.join('\n')}`;
   // Refresh spreadsheet data from DuckDB after SQL updates
   const refreshSpreadsheetFromDuckDB = async () => {
     try {
-      console.log('Refreshing spreadsheet data from DuckDB...');
+  
       
       // Query all data from DuckDB
       const { queryDuckDB } = await import('../lib/utils');
@@ -374,14 +361,21 @@ ${sampleRows.join('\n')}`;
         // Convert DuckDB result to spreadsheet format
         const updatedCells: Record<string, { value: string | number }> = {};
         
-        // First row contains headers
+        // Get headers from the first row
         const headers = Object.keys(result[0]);
         
-        // Process each row (skip header row if it exists)
+        // First, preserve the header row (row 1)
+        headers.forEach((header: string, colIndex: number) => {
+          const colLetter = String.fromCharCode(65 + colIndex);
+          const cellId = `${colLetter}1`;
+          updatedCells[cellId] = { value: header };
+        });
+        
+        // Then process data rows (starting from row 2)
         result.forEach((row: any, rowIndex: number) => {
           headers.forEach((header: string, colIndex: number) => {
             const colLetter = String.fromCharCode(65 + colIndex);
-            const cellId = `${colLetter}${rowIndex + 1}`;
+            const cellId = `${colLetter}${rowIndex + 2}`; // Start from row 2 to preserve headers
             updatedCells[cellId] = { value: row[header] || '' };
           });
         });
@@ -416,16 +410,11 @@ ${sampleRows.join('\n')}`;
   // Function to verify sheet data structure
   const verifySheetData = () => {
     if (!activeSheet) {
-      console.log('No active sheet');
+  
       return;
     }
 
-    console.log('=== VERIFYING SHEET DATA ===');
-    console.log('Active sheet object:', activeSheet);
-    console.log('Row count:', activeSheet.rowCount);
-    console.log('Col count:', activeSheet.colCount);
-    console.log('Cells object keys:', Object.keys(activeSheet.cells));
-    console.log('Sample cell data:', Object.entries(activeSheet.cells).slice(0, 5));
+
 
     // Check if we have data in the expected format
     let hasData = false;
@@ -436,7 +425,7 @@ ${sampleRows.join('\n')}`;
         const cell = activeSheet.cells[cellId];
         if (cell && cell.value !== undefined && cell.value !== '') {
           hasData = true;
-          console.log(`Found data in cell ${cellId}:`, cell.value);
+  
         }
       }
     }
@@ -445,7 +434,7 @@ ${sampleRows.join('\n')}`;
       console.warn('WARNING: No data found in sheet cells!');
     }
 
-    console.log('=== END VERIFYING SHEET DATA ===');
+
   };
 
   // Auto-load sheet into DuckDB and generate schema when activeSheet changes
@@ -460,7 +449,7 @@ ${sampleRows.join('\n')}`;
       });
 
       if (hasActualData) {
-        console.log('Active sheet changed with actual cell data, verifying data...');
+    
         verifySheetData();
         
         // Set DuckDB processing state
@@ -469,7 +458,7 @@ ${sampleRows.join('\n')}`;
         
         // Add a small delay to ensure state is fully updated
         setTimeout(async () => {
-          console.log('Loading into DuckDB and generating schema...');
+      
           
           try {
             // First, load data into DuckDB
@@ -477,18 +466,13 @@ ${sampleRows.join('\n')}`;
             
             // Verify that data was actually loaded
             const { queryDuckDB } = await import('../lib/utils');
-            console.log('Running verification query...');
             const verifyResult = await queryDuckDB('SELECT COUNT(*) as count FROM "data"');
-            console.log('Verification query result:', verifyResult);
             
             // Also try to get a sample of data
-            console.log('Running sample data query...');
             const sampleResult = await queryDuckDB('SELECT * FROM "data" LIMIT 3');
-            console.log('Sample data result:', sampleResult);
             
             if (schema) {
-              console.log('Schema generated and stored for AI processing');
-              console.log('Schema content:', schema);
+              
               setIsSchemaReady(true);
               addMessage('ai', '✅ Data processed and schema generated! I\'m ready to help you analyze your data.');
             } else {
@@ -503,18 +487,13 @@ ${sampleRows.join('\n')}`;
           }
         }, 200); // Increased delay to ensure CSV upload is complete
       } else {
-        console.log('Active sheet has cells but no actual data yet, waiting...');
+    
         setIsDuckDBProcessing(false);
         setIsSchemaReady(false);
       }
     } else if (activeSheet) {
-      console.log('Active sheet detected but no cell data yet, waiting for data to load...');
-      console.log('Sheet state:', {
-        hasCells: !!activeSheet.cells,
-        cellsCount: activeSheet.cells ? Object.keys(activeSheet.cells).length : 0,
-        rowCount: activeSheet.rowCount,
-        colCount: activeSheet.colCount
-      });
+      setIsDuckDBProcessing(false);
+      setIsSchemaReady(false);
       setIsDuckDBProcessing(false);
       setIsSchemaReady(false);
     } else {
@@ -570,15 +549,23 @@ ${sampleRows.join('\n')}`;
 
       const ai1Data = ai1Response.data;
       
-      // Display AI1 reasoning and simplified question
-      if (ai1Data.ai1_reasoning) {
-        addMessage('ai', `Reasoning: ${ai1Data.ai1_reasoning}`);
+      // Display the response to user from AI1
+      if (ai1Data.response_to_user) {
+        addMessage('ai', ai1Data.response_to_user);
       }
-      if (ai1Data.ai1_simplified_question) {
-        addMessage('ai', `Simplified Question: ${ai1Data.ai1_simplified_question}`);
+      
+      // If the query is not sheet-related, stop here
+      if (!ai1Data.is_sheet_related) {
+        setIsLoading(false);
+        return;
+      }
+      
+      // If sheet-related, show explanation and proceed to AI2
+      if (ai1Data.explanation) {
+        addMessage('ai', ai1Data.explanation);
       }
 
-      // Then, get AI2 code generation
+      // Then, get AI2 code generation (only for sheet-related queries)
       const ai2Response = await axios.post('/api/ai/ai2', {
         message: userMessage,
         schema,
@@ -586,6 +573,7 @@ ${sampleRows.join('\n')}`;
         simplified_user_question: ai1Data.simplified_user_question,
         explanation: ai1Data.explanation,
         isUpdate: ai1Data.isUpdate,
+        isChart: ai1Data.isChart || false,
         sheetInfo: {
           totalRows: activeSheet.rowCount - 1,
           totalColumns: activeSheet.colCount,
@@ -607,9 +595,6 @@ ${sampleRows.join('\n')}`;
         const masterResponse = ai2Data.master_response;
         console.log('Master response:', masterResponse);
         
-        addMessage('ai', `✅ Code generated successfully!`);
-        addMessage('ai', `Generated SQL: ${masterResponse.ai2_generated_code}`);
-        
         // Extract column analysis from current schema
         console.log('Current schema for column analysis:', currentSchema);
         let columnAnalysis = extractColumnAnalysisFromSchema(currentSchema || '');
@@ -624,12 +609,33 @@ ${sampleRows.join('\n')}`;
         console.log('Master response for button logic:', masterResponse);
         console.log('requires_update value:', masterResponse.requires_update);
         
-        // For update operations, show confirmation buttons instead of executing immediately
-        if (masterResponse.requires_update) {
+        // Check if this is a chart response
+        if (masterResponse.is_chart && masterResponse.chart_spec) {
+          // Execute the SQL query to get data for the chart
+          try {
+            // Suppress raw query output in chat for chart requests
+            const chartData = await executeSQLQuery(
+              masterResponse.ai2_generated_code,
+              false,
+              { suppressOutput: true }
+            );
+            if (chartData && chartData.length > 0) {
+              // Add chart message with data
+              addMessage('ai', `📊 Here's your ${masterResponse.chart_spec.type} chart:`, {
+                data: chartData,
+                chartSpec: masterResponse.chart_spec
+              });
+            } else {
+              addMessage('ai', '❌ No data found for the chart.');
+            }
+          } catch (error) {
+            addMessage('ai', `❌ Error generating chart: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        } else if (masterResponse.requires_update) {
+          // For update operations, show confirmation buttons instead of executing immediately
           setPendingAction(masterResponse.ai2_generated_code);
           setPendingActionType('update');
           setPendingReasoning([
-            `Generated SQL: ${masterResponse.ai2_generated_code}`,
             `This will update ${masterResponse.operation_type === 'update' ? 'data in the sheet' : 'query results'}`
           ]);
           setPendingRaw(masterResponse);
@@ -774,9 +780,18 @@ ${sampleRows.join('\n')}`;
   };
   const handleDrag = (e: MouseEvent) => {
     if (!dragging || isFixed) return;
+    
+    // Calculate new position with free movement
+    const newX = e.clientX - dragOffset.current.x;
+    const newY = e.clientY - dragOffset.current.y;
+    
+    // Keep within viewport bounds but allow more freedom
+    const maxX = window.innerWidth - 400; // Allow some overflow
+    const maxY = window.innerHeight - 600; // Allow some overflow
+    
     setPosition({
-      x: e.clientX - dragOffset.current.x,
-      y: e.clientY - dragOffset.current.y,
+      x: Math.max(-50, Math.min(newX, maxX)), // Allow slight overflow
+      y: Math.max(64, Math.min(newY, maxY)), // Keep below header (64px)
     });
   };
   const handleDragEnd = () => {
@@ -964,7 +979,11 @@ ${sampleRows.join('\n')}`;
   };
 
   // Execute SQL query
-  const executeSQLQuery = async (sql: string, requiresUpdate: boolean = false) => {
+  const executeSQLQuery = async (
+    sql: string,
+    requiresUpdate: boolean = false,
+    options?: { suppressOutput?: boolean }
+  ): Promise<any[] | null> => {
     try {
       console.log('Executing SQL query:', sql);
       console.log('Requires update:', requiresUpdate);
@@ -982,25 +1001,34 @@ ${sampleRows.join('\n')}`;
           // Update schema after modification
           await updateSchemaAfterModification();
           
-          addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);
+          if (!options?.suppressOutput) {
+            addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);
+          }
         } else {
-          addMessage('ai', `✅ Query executed successfully, but no rows were modified.`);
+          if (!options?.suppressOutput) {
+            addMessage('ai', `✅ Query executed successfully, but no rows were modified.`);
+          }
         }
       } else {
         // Display the query results
-        if (result && result.length > 0) {
-          const resultText = result.map((row: any) => 
-            Object.values(row).join(', ')
-          ).join('\n');
-          
-          addMessage('ai', `📊 Query Results:\n${resultText}`);
-        } else {
-          addMessage('ai', `📊 Query executed successfully. No results returned.`);
+        if (!options?.suppressOutput) {
+          if (result && result.length > 0) {
+            const resultText = result.map((row: any) => 
+              Object.values(row).join(', ')
+            ).join('\n');
+            addMessage('ai', `📊 Query Results:\n${resultText}`);
+          } else {
+            addMessage('ai', `📊 Query executed successfully. No results returned.`);
+          }
         }
       }
+      return result;
     } catch (error) {
       console.error('Error executing SQL query:', error);
-      addMessage('ai', `❌ Error executing SQL query: ${error}`);
+      if (!options?.suppressOutput) {
+        addMessage('ai', `❌ Error executing SQL query: ${error}`);
+      }
+      return null;
     }
   };
 
@@ -1281,14 +1309,13 @@ ${sampleRows.join('\n')}`;
         onClick={() => { setMinimized(false); onToggleMinimize(); }}
         style={{
           position: 'fixed',
-          right: 0,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          zIndex: 1001,
+          right: 20,
+          top: 100, // Position below header
+          zIndex: 9999, // Very high z-index to stay on top
           borderRadius: '9999px 0 0 9999px',
-          background: 'white',
+          background: 'hsl(var(--background))',
           boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12), 0 1.5px 4px 0 rgba(0,0,0,0.10)',
-          border: '1px solid #e5e7eb',
+          border: '1px solid hsl(var(--border))',
           padding: '12px 16px',
           display: 'flex',
           alignItems: 'center',
@@ -1303,29 +1330,29 @@ ${sampleRows.join('\n')}`;
   // Fixed position styles
   const fixedStyles = isFixed ? {
     position: 'fixed' as const,
-    right: 0,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    zIndex: 1000,
+    right: 20,
+    top: 100, // Position below header (header is 64px + some margin)
+    maxHeight: 'calc(100vh - 120px)', // Ensure it doesn't exceed viewport height
+    zIndex: 9999, // Very high z-index to stay on top
   } : {
-    position: 'absolute' as const,
+    position: 'fixed' as const,
     left: position.x,
     top: position.y,
-    zIndex: 1000,
+    zIndex: 9999, // Very high z-index to stay on top
   };
 
   return (
     <div id="ai-chatbox" data-ai-chatbox className="ai-assistant" style={fixedStyles}>
       <Resizable
-        initialWidth={440}
-        initialHeight={650}
-        minWidth={300}
+        initialWidth={500}
+        initialHeight={600}
+        minWidth={350}
         minHeight={400}
-        maxWidth={800}
-        maxHeight={1000}
+        maxWidth={900}
+        maxHeight={800}
       >
-        <Card className="w-full h-full shadow-2xl flex flex-col overflow-hidden bg-background/80 backdrop-blur-sm border-[1.5px] border-[hsl(205.91,68.04%,61.96%)]">
-          <div className="flex items-center justify-between p-3 border-b border-[hsl(205.91,68.04%,61.96%)] drag-handle cursor-move" onMouseDown={handleDragStart}>
+        <Card className="w-full h-full shadow-2xl flex flex-col overflow-hidden bg-background/80 backdrop-blur-md border border-border" style={{ filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))' }}>
+          <div className="flex items-center justify-between p-3 border-b border-border drag-handle cursor-move" onMouseDown={handleDragStart}>
             <div className="flex items-center gap-2 font-semibold text-sm">
               <Wand2 className="h-5 w-5 text-primary" />
               AI Assistant
@@ -1354,14 +1381,14 @@ ${sampleRows.join('\n')}`;
                 onClick={toggleFixedMode}
                 title={isFixed ? "Make Movable" : "Fix Position"}
               >
-                {isFixed ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                {isFixed ? <PinOff className="h-4 w-4 text-foreground" /> : <Pin className="h-4 w-4 text-foreground" />}
               </Button>
               <Button variant="ghost" size="icon" className="h-8 w-8 no-drag" onClick={() => { setMinimized(true); onToggleMinimize(); }} title="Close">
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4 text-foreground" />
               </Button>
             </div>
           </div>
-          <ScrollArea className="flex-1 p-4 custom-blue-scrollbar">
+          <ScrollArea className="flex-1 p-4 custom-blue-scrollbar" style={{ maxHeight: 'calc(100% - 100px)' }}>
             <div className="space-y-6">
               {messages.map((msg, index) => (
                 <div
@@ -1376,10 +1403,36 @@ ${sampleRows.join('\n')}`;
                     className={`max-w-md rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
                       msg.type === 'user'
                         ? 'bg-[hsl(205.91,68.04%,61.96%)] text-white'
-                        : 'bg-[hsl(210,40%,96.08%)] text-gray-900'
+                        : 'bg-muted text-foreground'
                     }`}
                   >
                     {msg.content}
+                    {msg.chartData && (
+                      <div className="mt-4">
+                        <ChartRenderer
+                          data={msg.chartData.data}
+                          chartSpec={msg.chartData.chartSpec}
+                          width={500}
+                          height={300}
+                          className="border rounded-lg"
+                        />
+                        <div className="mt-2 flex justify-center">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const detail = {
+                                data: msg.chartData?.data,
+                                chartSpec: msg.chartData?.chartSpec
+                              };
+                              window.dispatchEvent(new CustomEvent('embedChartFromChat', { detail }));
+                            }}
+                          >
+                            Embed on Canvas
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1393,7 +1446,7 @@ ${sampleRows.join('\n')}`;
               )}
               {pendingReplyResult && pendingActionType === 'reply' && (
                 <div className="flex flex-col items-center gap-3 mt-4">
-                  <div className="text-green-700 font-semibold">Result: {pendingReplyResult}</div>
+                  <div className="text-green-600 dark:text-green-400 font-semibold">Result: {pendingReplyResult}</div>
                 </div>
               )}
               {isLoading && (
@@ -1413,7 +1466,7 @@ ${sampleRows.join('\n')}`;
                     <AvatarImage src="https://placehold.co/40x40.png" data-ai-hint="robot" />
                     <AvatarFallback>AI</AvatarFallback>
                   </Avatar>
-                  <div className="bg-blue-50 rounded-2xl px-3 py-2 border border-blue-200">
+                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl px-3 py-2 border border-blue-200 dark:border-blue-700">
                     <div className="flex items-center gap-2">
                       <LoaderCircle className="h-4 w-4 animate-spin text-blue-600" />
                       <span className="text-sm text-blue-700">Processing data and generating schema...</span>
@@ -1423,29 +1476,40 @@ ${sampleRows.join('\n')}`;
               )}
             </div>
           </ScrollArea>
-          <div className="p-4 border-t border-[hsl(205.91,68.04%,61.96%)] space-y-4">
+          <div className="p-4 border-t border-border space-y-4">
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0"><FileUp className="h-5 w-5" /></Button>
-              <Input
-                placeholder={
-                  isDuckDBProcessing 
-                    ? "Processing data..." 
-                    : !isSchemaReady 
-                    ? "Waiting for schema..." 
-                    : "Ask the AI to do something..."
-                }
-                value={message}
-                onChange={e => setMessage(e.target.value)}
-                onKeyPress={e => e.key === 'Enter' && handleSendMessage()}
-                disabled={isLoading || isDuckDBProcessing || !isSchemaReady}
-                className="no-drag border-[1.5px] border-[hsl(205.91,68.04%,61.96%)] focus:ring-2 focus:ring-[hsl(205.91,68.04%,61.96%)]"
-              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Input
+                    placeholder={
+                      isDuckDBProcessing 
+                        ? "Processing data..." 
+                        : !isSchemaReady 
+                        ? "Waiting for schema..." 
+                        : "Ask the AI to do something..."
+                    }
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && handleSendMessage()}
+                    disabled={isLoading || isDuckDBProcessing || !isSchemaReady}
+                    className="no-drag"
+                  />
+                </TooltipTrigger>
+                {(!isSchemaReady && !isDuckDBProcessing) && (
+                  <TooltipContent>
+                    <p>Upload CSV to get started</p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
               <Button 
                 onClick={handleSendMessage} 
                 disabled={isLoading || isDuckDBProcessing || !isSchemaReady || !message.trim()} 
                 className="no-drag"
+                size="icon"
+                variant="ghost"
               >
-                <Send className="h-4 w-4" />
+                <Send className="h-4 w-4 text-foreground" />
               </Button>
             </div>
             <div className="flex items-center justify-center text-xs text-muted-foreground mt-2 gap-2">

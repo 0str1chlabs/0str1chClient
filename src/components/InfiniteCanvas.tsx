@@ -23,6 +23,7 @@ export interface InfiniteCanvasHandle {
   zoomIn: (step?: number) => void;
   zoomOut: (step?: number) => void;
   zoomTo: (scale: number, duration?: number) => void;
+  centerView: (x: number, y: number, duration?: number) => void;
 }
 
 export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
@@ -101,6 +102,38 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
         if (transformRef.current) {
           transformRef.current.zoomTo(scale, duration);
         }
+      },
+      centerView: (x: number, y: number, duration = 300) => {
+        if (transformRef.current) {
+          try {
+            // Use the correct method to center the view on specific coordinates
+            // The library expects the center point in the transformed coordinate system
+            if (transformRef.current.setTransform) {
+              // Calculate the center position relative to the viewport
+              const viewportWidth = window.innerWidth;
+              const viewportHeight = window.innerHeight;
+              
+              // Convert the target coordinates to the library's coordinate system
+              const centerX = -(x + viewportWidth / 2);
+              const centerY = -(y + viewportHeight / 2);
+              
+              transformRef.current.setTransform(centerX, centerY, 1, duration);
+            } else if (transformRef.current.centerOn) {
+              // Fallback to centerOn if setTransform is not available
+              transformRef.current.centerOn(x, y, duration);
+            }
+          } catch (error) {
+            console.warn('Error centering view:', error);
+            // Final fallback: try to use the instance methods directly
+            try {
+              if (transformRef.current.instance) {
+                transformRef.current.instance.setTransform(x, y, 1, duration);
+              }
+            } catch (fallbackError) {
+              console.warn('Fallback centering also failed:', fallbackError);
+            }
+          }
+        }
       }
     }), []);
 
@@ -115,8 +148,8 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
         style={{
           width: '8000px',
           height: '6000px',
-          backgroundColor: '#f7f8fa',
-          backgroundImage: 'radial-gradient(rgba(180,180,180,0.18) 2px, transparent 2px)',
+          backgroundColor: 'hsl(var(--background))',
+          backgroundImage: 'radial-gradient(hsla(var(--foreground), 0.1) 2px, transparent 2px)',
           backgroundSize: '24px 24px',
         }}>
           <TransformWrapper
@@ -152,8 +185,8 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 style={{
                   width: '8000px',
                   height: '6000px',
-                  backgroundColor: '#f7f8fa',
-                  backgroundImage: 'radial-gradient(rgba(180,180,180,0.18) 2px, transparent 2px)',
+                  backgroundColor: 'hsl(var(--background))',
+                  backgroundImage: 'radial-gradient(hsla(var(--foreground), 0.1) 2px, transparent 2px)',
                   backgroundSize: '24px 24px',
                 }}
               >
@@ -172,8 +205,8 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 {/* Placeholder if no children */}
                 {(!children || (Array.isArray(children) && children.length === 0)) && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
-                    <FileSpreadsheet size={64} className="text-yellow-300 mb-4 opacity-60" />
-                    <div className="text-lg font-semibold text-yellow-400 opacity-70">Drag sheets or charts here</div>
+                    <FileSpreadsheet size={64} className="text-muted-foreground mb-4 opacity-60" />
+                    <div className="text-lg font-semibold text-muted-foreground opacity-70">Drag sheets or charts here</div>
                   </div>
                 )}
               </div>

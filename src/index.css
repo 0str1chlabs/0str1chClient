@@ -92,50 +92,120 @@
 
 /* Custom scrollbar styling */
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-yellow-100 dark:bg-neutral-800;
-  border-radius: 6px;
+  @apply bg-yellow-100 dark:bg-gray-800;
+  border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(205.91,68.04%,61.96%);
-  border-radius: 6px;
+  @apply bg-gray-400 dark:bg-gray-600;
+  border-radius: 8px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(205.91,68.04%,51.96%);
+  @apply bg-gray-500 dark:bg-gray-500;
   background-clip: content-box;
 }
 
 /* Spreadsheet-specific scrollbar */
 .spreadsheet-container ::-webkit-scrollbar {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
 }
 
 .spreadsheet-container ::-webkit-scrollbar-track {
-  background: #dcfce7;
-  border-radius: 8px;
+  @apply bg-green-100 dark:bg-gray-800;
+  border-radius: 10px;
 }
 
 .spreadsheet-container ::-webkit-scrollbar-thumb {
-  background: #86efac;
-  border-radius: 8px;
-  border: 2px solid #dcfce7;
+  @apply bg-green-400 dark:bg-gray-600;
+  border-radius: 10px;
+  border: 2px solid transparent;
   background-clip: content-box;
 }
 
 .spreadsheet-container ::-webkit-scrollbar-thumb:hover {
-  background: #4ade80;
+  @apply bg-green-500 dark:bg-gray-500;
   background-clip: content-box;
 }
 
 .spreadsheet-container ::-webkit-scrollbar-corner {
-  background: #dcfce7;
+  @apply bg-green-100 dark:bg-gray-800;
+}
+
+/* Ensure scrollbars are always visible */
+.spreadsheet-container {
+  scrollbar-gutter: stable;
+}
+
+/* Make scrollbars more prominent and easier to interact with */
+.spreadsheet-container::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  min-width: 40px;
+}
+
+/* Ensure scrollbars are always visible and prominent */
+.spreadsheet-container {
+  scrollbar-gutter: stable;
+  overflow: auto;
+}
+
+/* Make scrollbars more visible in both light and dark modes */
+.spreadsheet-container::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+  border-radius: 10px;
+}
+
+.spreadsheet-container::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground));
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.spreadsheet-container::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--foreground));
+  background-clip: content-box;
+}
+
+/* AI Assistant positioning and styling */
+.ai-assistant {
+  z-index: 9999 !important;
+  position: fixed !important;
+}
+
+/* Ensure AI Assistant stays on top of all other elements */
+.ai-assistant * {
+  z-index: inherit;
+}
+
+/* Ensure AI Assistant input area is always visible */
+.ai-assistant .border-t {
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--background)/90);
+  position: sticky;
+  bottom: 0;
+  backdrop-filter: blur(8px);
+}
+
+/* Ensure the input area has proper spacing */
+.ai-assistant input {
+  min-height: 40px;
+}
+
+/* AI Assistant transparency and backdrop */
+.ai-assistant {
+  backdrop-filter: blur(12px);
+}
+
+/* Ensure text remains readable with transparency */
+.ai-assistant * {
+  color: hsl(var(--foreground));
 }

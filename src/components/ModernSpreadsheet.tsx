@@ -463,12 +463,12 @@ export const ModernSpreadsheet = ({
       {/* Spreadsheet Grid */}
       <div 
         ref={scrollAreaRef}
-        className="overflow-auto max-h-[600px] select-none relative scrollbar-thin scrollbar-thumb-green-300 scrollbar-track-green-100" 
+        className="overflow-auto max-h-[600px] select-none relative" 
         data-scrollable="true"
         style={{ 
           cursor: isDragging ? 'crosshair' : 'default',
-          scrollbarWidth: 'thin',
-          scrollbarColor: '#86efac #dcfce7'
+          scrollbarWidth: 'auto',
+          scrollbarGutter: 'stable'
         }}
         onMouseDown={e => {
           // Check if click is on scrollbar area
