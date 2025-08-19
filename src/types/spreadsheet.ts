@@ -40,3 +40,33 @@ export interface SpreadsheetState {
   isAIMode: boolean;
   isDarkMode: boolean;
 }
+
+// Pivot Table Types
+export interface PivotField {
+  id: string;
+  name: string;
+  type: 'text' | 'number' | 'date';
+  column: string; // e.g., 'A', 'B', 'C'
+}
+
+export interface PivotZone {
+  type: 'rows' | 'columns' | 'values' | 'filters';
+  fields: PivotField[];
+}
+
+export interface PivotTable {
+  id: string;
+  name: string;
+  zones: PivotZone[];
+  data: any[][];
+  headers: string[];
+  isVisible: boolean;
+}
+
+export interface PivotTableState {
+  rows: string[];
+  cols: string[];
+  vals: string[];
+  aggregatorName: string;
+  rendererName: string;
+}

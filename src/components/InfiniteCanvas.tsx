@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useImperativeHandle, forwardRef, 
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { Plus, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ChartRenderer } from './ChartRenderer';
 
 interface CanvasBlock {
   id: string;
@@ -17,6 +18,15 @@ interface InfiniteCanvasProps {
   uploadButton?: React.ReactNode;
   zoom?: number;
   onZoomChange?: (zoom: number) => void;
+  embeddedCharts?: Array<{
+    id: string;
+    type: string;
+    data: any;
+    chartSpec: any;
+    position: { x: number; y: number };
+    size: { width: number; height: number };
+  }>;
+  onRemoveChart?: (chartId: string) => void;
 }
 
 export interface InfiniteCanvasHandle {
@@ -24,10 +34,11 @@ export interface InfiniteCanvasHandle {
   zoomOut: (step?: number) => void;
   zoomTo: (scale: number, duration?: number) => void;
   centerView: (x: number, y: number, duration?: number) => void;
+  fitToView: (duration?: number) => void;
 }
 
 export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
-  ({ children, onAddSheet, uploadButton, zoom, onZoomChange }, ref) => {
+  ({ children, onAddSheet, uploadButton, zoom, onZoomChange, embeddedCharts = [], onRemoveChart }, ref) => {
     const [blocks, setBlocks] = useState<CanvasBlock[]>([]);
     const [isPanning, setIsPanning] = useState(false);
     const transformRef = useRef<any>(null);
@@ -100,37 +111,82 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
       },
       zoomTo: (scale: number, duration = 300) => {
         if (transformRef.current) {
-          transformRef.current.zoomTo(scale, duration);
+          try {
+            // Use the correct method from react-zoom-pan-pinch
+            if (transformRef.current.zoomTo) {
+              transformRef.current.zoomTo(scale, duration);
+            } else if (transformRef.current.setTransform) {
+              // Fallback: use setTransform with current position
+              const currentState = transformRef.current.state;
+              transformRef.current.setTransform(
+                currentState.positionX,
+                currentState.positionY,
+                scale,
+                duration
+              );
+            } else if (transformRef.current.instance) {
+              // Final fallback: use the instance directly
+              transformRef.current.instance.zoomTo(scale, duration);
+            }
+          } catch (error) {
+            console.warn('Error in zoomTo:', error);
+          }
         }
       },
       centerView: (x: number, y: number, duration = 300) => {
         if (transformRef.current) {
           try {
-            // Use the correct method to center the view on specific coordinates
-            // The library expects the center point in the transformed coordinate system
-            if (transformRef.current.setTransform) {
-              // Calculate the center position relative to the viewport
+            // Try multiple methods to center the view
+            if (transformRef.current.centerOn) {
+              // Primary method: use centerOn
+              transformRef.current.centerOn(x, y, duration);
+            } else if (transformRef.current.setTransform) {
+              // Fallback: use setTransform to center on coordinates
               const viewportWidth = window.innerWidth;
               const viewportHeight = window.innerHeight;
               
-              // Convert the target coordinates to the library's coordinate system
-              const centerX = -(x + viewportWidth / 2);
-              const centerY = -(y + viewportHeight / 2);
+              // Calculate the position to center the target point
+              const centerX = -(x - viewportWidth / 2);
+              const centerY = -(y - viewportHeight / 2);
               
-              transformRef.current.setTransform(centerX, centerY, 1, duration);
-            } else if (transformRef.current.centerOn) {
-              // Fallback to centerOn if setTransform is not available
-              transformRef.current.centerOn(x, y, duration);
+              // Get current scale
+              const currentScale = transformRef.current.state?.scale || 1;
+              
+              transformRef.current.setTransform(centerX, centerY, currentScale, duration);
+            } else if (transformRef.current.instance) {
+              // Final fallback: try instance methods
+              if (transformRef.current.instance.centerOn) {
+                transformRef.current.instance.centerOn(x, y, duration);
+              }
             }
           } catch (error) {
             console.warn('Error centering view:', error);
-            // Final fallback: try to use the instance methods directly
+          }
+        }
+      },
+      
+      // Method to fit all content in the viewport
+      fitToView: (duration = 500) => {
+        if (transformRef.current) {
+          try {
+            // Try to use the library's built-in fit to view method
+            if (transformRef.current.fitToView) {
+              transformRef.current.fitToView(duration);
+            } else if (transformRef.current.instance && transformRef.current.instance.fitToView) {
+              transformRef.current.instance.fitToView(duration);
+            } else {
+              // Fallback: reset to initial state
+              transformRef.current.resetTransform(duration);
+            }
+          } catch (error) {
+            console.warn('Error fitting to view:', error);
+            // Final fallback: reset transform
             try {
-              if (transformRef.current.instance) {
-                transformRef.current.instance.setTransform(x, y, 1, duration);
+              if (transformRef.current.resetTransform) {
+                transformRef.current.resetTransform(duration);
               }
-            } catch (fallbackError) {
-              console.warn('Fallback centering also failed:', fallbackError);
+            } catch (resetError) {
+              console.warn('Reset transform also failed:', resetError);
             }
           }
         }
@@ -139,7 +195,7 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
 
     return (
       <div
-        className="w-full h-screen relative overflow-hidden"
+        className="w-full h-full relative overflow-hidden"
         ref={wrapperRef}
         style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       >
@@ -196,12 +252,55 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                   style={{ 
                     left: 0, 
                     top: 0,
-                    width: '6000px',
-                    height: '4000px'
+                    width: '100%',
+                    height: '100%'
                   }}
                 >
                   {children}
                 </div>
+                
+                {/* Embedded Charts */}
+                {embeddedCharts.map((chart) => (
+                  <div
+                    key={chart.id}
+                    className="absolute chart-block bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700"
+                    style={{
+                      left: chart.position.x,
+                      top: chart.position.y,
+                      width: chart.size.width,
+                      height: chart.size.height,
+                      zIndex: 20
+                    }}
+                  >
+                    <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
+                      </span>
+                      <button
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                        onClick={() => {
+                          if (onRemoveChart) {
+                            onRemoveChart(chart.id);
+                          }
+                        }}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="p-3">
+                      <ChartRenderer
+                        data={chart.data}
+                        chartSpec={chart.chartSpec}
+                        width={chart.size.width - 20}
+                        height={chart.size.height - 80}
+                        className="w-full h-full"
+                      />
+                    </div>
+                  </div>
+                ))}
+                
                 {/* Placeholder if no children */}
                 {(!children || (Array.isArray(children) && children.length === 0)) && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">

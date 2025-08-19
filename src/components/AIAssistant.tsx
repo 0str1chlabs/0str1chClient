@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff } from 'lucide-react';
+import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff, History, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,15 +13,21 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
 import { ChartRenderer } from './ChartRenderer';
-import axios from 'axios'; // Added axios import
+import { useSessionStorage } from '@/hooks/useSessionStorage';
+import { MessageShimmer } from '@/components/ui/shimmer';
+import axios from 'axios';
 
 interface Message {
+  _id: string; // Changed from id to _id for MongoDB
   type: 'ai' | 'user';
   content: string;
   chartData?: {
     data: any[];
     chartSpec: any;
   };
+  timestamp: Date;
+  sessionId?: string;
+  messageOrder: number;
 }
 
 interface AIAssistantProps {
@@ -35,6 +41,7 @@ interface AIAssistantProps {
   onCreateCustom: () => void;
   updateCell: (cellId: string, value: string | number) => void;
   bulkUpdateCells?: (updates: { cellId: string, value: any }[]) => void;
+  onEmbedChart?: (chartData: any, chartSpec: any) => void;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -48,15 +55,10 @@ export const AIAssistant = ({
   onUploadCSV,
   onCreateCustom,
   updateCell,
-  bulkUpdateCells
+  bulkUpdateCells,
+  onEmbedChart
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      type: 'ai',
-      content: "✨ Welcome to your AI-powered infinite canvas! Upload some data and I'll help you analyze it, create stunning visualizations, and perform complex calculations."
-    }
-  ]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDuckDBProcessing, setIsDuckDBProcessing] = useState(false);
   const [isSchemaReady, setIsSchemaReady] = useState(false);
@@ -76,6 +78,92 @@ export const AIAssistant = ({
   const [pendingActionReason, setPendingActionReason] = useState<string | null>(null);
   const [pendingReplyResult, setPendingReplyResult] = useState<string | null>(null);
   const [currentSchema, setCurrentSchema] = useState<string | null>(null);
+
+  // Session storage for messages
+  const {
+    recentMessages: messages,
+    addMessage,
+    clearMessages,
+    getRecentMessages
+  } = useSessionStorage();
+
+  // State for older messages
+  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [showOlderButton, setShowOlderButton] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+
+  // Initialize with welcome message if no messages exist
+  useEffect(() => {
+    // Check if welcome message already exists in current messages
+    const hasWelcomeMessage = messages.some(msg => 
+      msg.sessionId === 'welcome' && 
+      msg.content.includes('Welcome to your AI-powered infinite canvas')
+    );
+    
+    if (messages.length === 0 && !hasWelcomeMessage) {
+      addMessageToSession({
+        type: 'ai',
+        content: "✨ Welcome to your AI-powered infinite canvas! Upload some data and I'll help you analyze it, create stunning visualizations, and perform complex calculations.",
+        sessionId: 'welcome'
+      });
+    }
+  }, [messages]); // Only run when messages change
+
+  // Check if we should show the older messages button
+  useEffect(() => {
+    if (messages.length >= 4 && hasOlderMessages) {
+      setShowOlderButton(true);
+    } else {
+      setShowOlderButton(false);
+    }
+  }, [messages.length, hasOlderMessages]);
+
+  // Load older messages from database
+  const loadOlderMessages = async () => {
+    if (!user?.email) return;
+
+    setIsLoadingOlder(true);
+    try {
+      const response = await axios.get(`/api/ai/messages/older?cursor=${nextCursor || ''}&limit=20`);
+      const { messages: newMessages, hasMore, nextCursor: newCursor } = response.data;
+
+      setOlderMessages(prev => [...prev, ...newMessages]);
+      setNextCursor(newCursor);
+      setHasOlderMessages(hasMore);
+    } catch (error) {
+      console.error('Failed to load older messages:', error);
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  };
+
+  // Store message in database
+  const storeMessageInDB = async (message: Omit<Message, '_id' | 'timestamp' | 'messageOrder'>) => {
+    if (!user?.email) return;
+
+    try {
+      await axios.post('/api/ai/messages/store', {
+        type: message.type,
+        content: message.content,
+        chartData: message.chartData,
+        sessionId: message.sessionId
+      });
+    } catch (error) {
+      console.error('Failed to store message in DB:', error);
+    }
+  };
+
+  // Enhanced add message function
+  const addMessageToSession = (message: Omit<Message, '_id' | 'timestamp' | 'messageOrder'>) => {
+    const messageWithOrder = {
+      ...message,
+      messageOrder: Date.now() // Generate a simple order based on timestamp
+    };
+    addMessage(messageWithOrder);
+    storeMessageInDB(message); // Pass original message without messageOrder
+  };
 
   const mainPrompts = [
     {
@@ -128,19 +216,35 @@ export const AIAssistant = ({
   const handleCalculationSuggestion = async (operation: string) => {
     // Check if DuckDB is still processing or schema is not ready
     if (isDuckDBProcessing) {
-      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
+      addMessageToSession({
+        type: 'ai',
+        content: '⏳ Please wait while I process your data and generate the schema...',
+        sessionId: 'current'
+      });
       return;
     }
 
     if (!isSchemaReady) {
-      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before performing calculations.');
+      addMessageToSession({
+        type: 'ai',
+        content: '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before performing calculations.',
+        sessionId: 'current'
+      });
       return;
     }
 
     if (selectedCells.length > 0 && activeSheet) {
       setIsLoading(true);
-      addMessage('user', `${operation === 'sum-selected' ? 'Sum' : 'Average'} Selected`);
-      addMessage('ai', `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`);
+      addMessageToSession({
+        type: 'user',
+        content: `${operation === 'sum-selected' ? 'Sum' : 'Average'} Selected`,
+        sessionId: 'current'
+      });
+      addMessageToSession({
+        type: 'ai',
+        content: `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`,
+        sessionId: 'current'
+      });
       try {
         const token = localStorage.getItem('auth_token');
         const response = await fetch('http://localhost:8090/api/ai', {
@@ -186,29 +290,45 @@ export const AIAssistant = ({
           }));
           result = fn(allCells);
         } catch (e) {
-          addMessage('ai', `❌ Error executing AI function: ${e}`);
+          addMessageToSession({
+            type: 'ai',
+            content: `❌ Error executing AI function: ${e}`,
+            sessionId: 'current'
+          });
           setIsLoading(false);
           return;
         }
         // Show result
         if (Array.isArray(result)) {
-          addMessage('ai', `Result: ${JSON.stringify(result)}`);
+          addMessageToSession({
+            type: 'ai',
+            content: `Result: ${JSON.stringify(result)}`,
+            sessionId: 'current'
+          });
         } else {
-          addMessage('ai', `Result: ${result}`);
+          addMessageToSession({
+            type: 'ai',
+            content: `Result: ${result}`,
+            sessionId: 'current'
+          });
         }
       } catch (err) {
-        addMessage('ai', `❌ Error calculating ${operation === 'sum-selected' ? 'sum' : 'average'}`);
+        addMessageToSession({
+          type: 'ai',
+          content: `❌ Error calculating ${operation === 'sum-selected' ? 'sum' : 'average'}`,
+          sessionId: 'current'
+        });
         console.error(err);
       }
       setIsLoading(false);
       return;
     }
     onCalculate(operation);
-    addMessage('user', `Calculate ${operation}`);
-  };
-
-  const addMessage = (type: 'ai' | 'user', content: string, chartData?: { data: any[]; chartSpec: any }) => {
-    setMessages(prev => [...prev, { type, content, chartData }]);
+    addMessageToSession({
+      type: 'user',
+      content: `Calculate ${operation}`,
+      sessionId: 'current'
+    });
   };
 
   const createSheetSummary = async () => {
@@ -391,19 +511,31 @@ ${sampleRows.join('\n')}`;
           // Update the spreadsheet state
           if (bulkUpdateCells) {
             bulkUpdateCells(updates);
-            addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
+            addMessageToSession({
+              type: 'ai',
+              content: `🔄 Spreadsheet refreshed with updated data from database.`,
+              sessionId: 'current'
+            });
           } else {
             // Fallback: update cells one by one
             Object.entries(updatedCells).forEach(([cellId, cell]) => {
               updateCell(cellId, cell.value);
             });
-            addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
+            addMessageToSession({
+              type: 'ai',
+              content: `🔄 Spreadsheet refreshed with updated data from database.`,
+              sessionId: 'current'
+            });
           }
         }
       }
     } catch (error) {
       console.error('Error refreshing spreadsheet from DuckDB:', error);
-      addMessage('ai', `⚠️ Could not refresh spreadsheet data: ${error}`);
+      addMessageToSession({
+        type: 'ai',
+        content: `⚠️ Could not refresh spreadsheet data: ${error}`,
+        sessionId: 'current'
+      });
     }
   };
 
@@ -474,14 +606,26 @@ ${sampleRows.join('\n')}`;
             if (schema) {
               
               setIsSchemaReady(true);
-              addMessage('ai', '✅ Data processed and schema generated! I\'m ready to help you analyze your data.');
+              addMessageToSession({
+                type: 'ai',
+                content: '✅ Data processed and schema generated! I\'m ready to help you analyze your data.',
+                sessionId: 'current'
+              });
             } else {
               console.warn('No schema generated, this might cause issues with AI processing');
-              addMessage('ai', '⚠️ Data loaded but schema generation failed. Some AI features may be limited.');
+              addMessageToSession({
+                type: 'ai',
+                content: '⚠️ Data loaded but schema generation failed. Some AI features may be limited.',
+                sessionId: 'current'
+              });
             }
           } catch (error) {
             console.error('Error loading sheet into DuckDB:', error);
-            addMessage('ai', '❌ Error processing data. Please try uploading your data again.');
+            addMessageToSession({
+              type: 'ai',
+              content: '❌ Error processing data. Please try uploading your data again.',
+              sessionId: 'current'
+            });
           } finally {
             setIsDuckDBProcessing(false);
           }
@@ -508,18 +652,30 @@ ${sampleRows.join('\n')}`;
 
     // Check if DuckDB is still processing or schema is not ready
     if (isDuckDBProcessing) {
-      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
+      addMessageToSession({
+        type: 'ai',
+        content: '⏳ Please wait while I process your data and generate the schema...',
+        sessionId: 'current'
+      });
       return;
     }
 
     if (!isSchemaReady) {
-      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.');
+      addMessageToSession({
+        type: 'ai',
+        content: '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.',
+        sessionId: 'current'
+      });
       return;
     }
 
     const userMessage = message.trim();
     setMessage(''); // Clear input immediately
-    addMessage('user', userMessage);
+    addMessageToSession({
+      type: 'user',
+      content: userMessage,
+      sessionId: 'current'
+    });
 
     setIsLoading(true);
 
@@ -543,7 +699,11 @@ ${sampleRows.join('\n')}`;
       });
 
       if (ai1Response.data.error) {
-        addMessage('ai', `❌ Error: ${ai1Response.data.error}`);
+        addMessageToSession({
+          type: 'ai',
+          content: `❌ Error: ${ai1Response.data.error}`,
+          sessionId: 'current'
+        });
         return;
       }
 
@@ -551,7 +711,11 @@ ${sampleRows.join('\n')}`;
       
       // Display the response to user from AI1
       if (ai1Data.response_to_user) {
-        addMessage('ai', ai1Data.response_to_user);
+        addMessageToSession({
+          type: 'ai',
+          content: ai1Data.response_to_user,
+          sessionId: 'current'
+        });
       }
       
       // If the query is not sheet-related, stop here
@@ -562,7 +726,11 @@ ${sampleRows.join('\n')}`;
       
       // If sheet-related, show explanation and proceed to AI2
       if (ai1Data.explanation) {
-        addMessage('ai', ai1Data.explanation);
+        addMessageToSession({
+          type: 'ai',
+          content: ai1Data.explanation,
+          sessionId: 'current'
+        });
       }
 
       // Then, get AI2 code generation (only for sheet-related queries)
@@ -584,7 +752,11 @@ ${sampleRows.join('\n')}`;
       });
 
       if (ai2Response.data.error) {
-        addMessage('ai', `❌ Error: ${ai2Response.data.error}`);
+        addMessageToSession({
+          type: 'ai',
+          content: `❌ Error: ${ai2Response.data.error}`,
+          sessionId: 'current'
+        });
         return;
       }
 
@@ -621,15 +793,28 @@ ${sampleRows.join('\n')}`;
             );
             if (chartData && chartData.length > 0) {
               // Add chart message with data
-              addMessage('ai', `📊 Here's your ${masterResponse.chart_spec.type} chart:`, {
-                data: chartData,
-                chartSpec: masterResponse.chart_spec
+              addMessageToSession({
+                type: 'ai',
+                content: `📊 Here's your ${masterResponse.chart_spec.type} chart:`,
+                chartData: {
+                  data: chartData,
+                  chartSpec: masterResponse.chart_spec
+                },
+                sessionId: 'current'
               });
             } else {
-              addMessage('ai', '❌ No data found for the chart.');
+              addMessageToSession({
+                type: 'ai',
+                content: '❌ No data found for the chart.',
+                sessionId: 'current'
+              });
             }
           } catch (error) {
-            addMessage('ai', `❌ Error generating chart: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            addMessageToSession({
+              type: 'ai',
+              content: `❌ Error generating chart: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              sessionId: 'current'
+            });
           }
         } else if (masterResponse.requires_update) {
           // For update operations, show confirmation buttons instead of executing immediately
@@ -644,11 +829,19 @@ ${sampleRows.join('\n')}`;
           await executeAI2Code(masterResponse.ai2_generated_code, masterResponse.tool, masterResponse.requires_update, columnAnalysis);
         }
       } else if (ai2Data.stage === 'ai2_failed') {
-        addMessage('ai', `❌ AI2 processing failed: ${ai2Data.ai2_error?.error || 'Unknown error'}`);
+        addMessageToSession({
+          type: 'ai',
+          content: `❌ AI2 processing failed: ${ai2Data.ai2_error?.error || 'Unknown error'}`,
+          sessionId: 'current'
+        });
       }
     } catch (error) {
       console.error('Error in handleSendMessage:', error);
-      addMessage('ai', `❌ Error: ${error instanceof Error ? error.message : 'Something went wrong'}`);
+      addMessageToSession({
+        type: 'ai',
+        content: `❌ Error: ${error instanceof Error ? error.message : 'Something went wrong'}`,
+        sessionId: 'current'
+      });
     } finally {
       setIsLoading(false);
     }
@@ -685,7 +878,11 @@ ${sampleRows.join('\n')}`;
         }));
         updates = fn(allCells);
       } catch (e) {
-        addMessage('ai', `❌ Error executing AI function: ${e}`);
+        addMessageToSession({
+          type: 'ai',
+          content: `❌ Error executing AI function: ${e}`,
+          sessionId: 'current'
+        });
         setPendingAction(null);
         setPendingType(null);
         setPendingReasoning([]);
@@ -700,9 +897,17 @@ ${sampleRows.join('\n')}`;
             applied++;
           }
         });
-        addMessage('ai', `Applied ${applied} cell update${applied !== 1 ? 's' : ''} to the spreadsheet.`);
+        addMessageToSession({
+          type: 'ai',
+          content: `Applied ${applied} cell update${applied !== 1 ? 's' : ''} to the spreadsheet.`,
+          sessionId: 'current'
+        });
       } else {
-        addMessage('ai', `AI function did not return an updates array.`);
+        addMessageToSession({
+          type: 'ai',
+          content: `AI function did not return an updates array.`,
+          sessionId: 'current'
+        });
       }
     } else if (pendingType === 'sql' || pendingActionType === 'update') {
       // Execute the SQL query
@@ -711,7 +916,11 @@ ${sampleRows.join('\n')}`;
         const result = await queryDuckDB(pendingAction as string);
         
         if (result && result.length > 0) {
-          addMessage('ai', `✅ SQL executed successfully! Modified ${result.length} rows.`);
+          addMessageToSession({
+            type: 'ai',
+            content: `✅ SQL executed successfully! Modified ${result.length} rows.`,
+            sessionId: 'current'
+          });
           
           // Refresh spreadsheet data from DuckDB to show updated values
           await refreshSpreadsheetFromDuckDB();
@@ -719,10 +928,18 @@ ${sampleRows.join('\n')}`;
           // Update schema after modification
           await updateSchemaAfterModification();
         } else {
-          addMessage('ai', `✅ SQL executed successfully, but no rows were modified.`);
+          addMessageToSession({
+            type: 'ai',
+            content: `✅ SQL executed successfully, but no rows were modified.`,
+            sessionId: 'current'
+        });
         }
       } catch (error) {
-        addMessage('ai', `❌ Error executing SQL: ${error}`);
+        addMessageToSession({
+          type: 'ai',
+          content: `❌ Error executing SQL: ${error}`,
+          sessionId: 'current'
+        });
         console.error('SQL execution error:', error);
       }
     }
@@ -735,7 +952,11 @@ ${sampleRows.join('\n')}`;
 
   // Handler for Reject button
   const handleReject = () => {
-    addMessage('ai', `Seems like 0str1ch messed up. I am ashamed! Let's give it another go.`);
+    addMessageToSession({
+      type: 'ai',
+      content: `Seems like 0str1ch messed up. I am ashamed! Let's give it another go.`,
+      sessionId: 'current'
+    });
     setPendingAction(null);
     setPendingType(null);
     setPendingActionType(null);
@@ -746,17 +967,33 @@ ${sampleRows.join('\n')}`;
   const handleSuggestion = (suggestion: string) => {
     // Check if DuckDB is still processing or schema is not ready
     if (isDuckDBProcessing) {
-      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
+      addMessageToSession({
+        type: 'ai',
+        content: '⏳ Please wait while I process your data and generate the schema...',
+        sessionId: 'current'
+      });
       return;
     }
 
     if (!isSchemaReady) {
-      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.');
+      addMessageToSession({
+        type: 'ai',
+        content: '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.',
+        sessionId: 'current'
+      });
       return;
     }
 
-    addMessage('user', suggestion);
-    addMessage('ai', `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`);
+    addMessageToSession({
+      type: 'user',
+      content: suggestion,
+      sessionId: 'current'
+    });
+    addMessageToSession({
+      type: 'ai',
+      content: `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`,
+      sessionId: 'current'
+    });
   };
 
   // Auto-expand textarea height
@@ -1002,11 +1239,19 @@ ${sampleRows.join('\n')}`;
           await updateSchemaAfterModification();
           
           if (!options?.suppressOutput) {
-            addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);
+            addMessageToSession({
+              type: 'ai',
+              content: `✅ Sheet updated successfully! Modified ${result.length} rows.`,
+              sessionId: 'current'
+            });
           }
         } else {
           if (!options?.suppressOutput) {
-            addMessage('ai', `✅ Query executed successfully, but no rows were modified.`);
+            addMessageToSession({
+              type: 'ai',
+              content: `✅ Query executed successfully, but no rows were modified.`,
+              sessionId: 'current'
+            });
           }
         }
       } else {
@@ -1016,9 +1261,17 @@ ${sampleRows.join('\n')}`;
             const resultText = result.map((row: any) => 
               Object.values(row).join(', ')
             ).join('\n');
-            addMessage('ai', `📊 Query Results:\n${resultText}`);
+            addMessageToSession({
+              type: 'ai',
+              content: `📊 Query Results:\n${resultText}`,
+              sessionId: 'current'
+            });
           } else {
-            addMessage('ai', `📊 Query executed successfully. No results returned.`);
+            addMessageToSession({
+              type: 'ai',
+              content: `📊 Query executed successfully. No results returned.`,
+              sessionId: 'current'
+            });
           }
         }
       }
@@ -1026,7 +1279,11 @@ ${sampleRows.join('\n')}`;
     } catch (error) {
       console.error('Error executing SQL query:', error);
       if (!options?.suppressOutput) {
-        addMessage('ai', `❌ Error executing SQL query: ${error}`);
+        addMessageToSession({
+          type: 'ai',
+          content: `❌ Error executing SQL query: ${error}`,
+          sessionId: 'current'
+        });
       }
       return null;
     }
@@ -1160,13 +1417,21 @@ ${sampleRows.join('\n')}`;
         resultText = `Result: ${result}`;
       }
       
-      addMessage('ai', `✅ Danfo Query Result:\n${resultText}`);
+      addMessageToSession({
+        type: 'ai',
+        content: `✅ Danfo Query Result:\n${resultText}`,
+        sessionId: 'current'
+      });
       
       return result;
       
     } catch (error) {
       console.error('Danfo execution error:', error);
-      addMessage('ai', `❌ Error executing Danfo query: ${error}`);
+      addMessageToSession({
+        type: 'ai',
+        content: `❌ Error executing Danfo query: ${error}`,
+        sessionId: 'current'
+      });
       throw error;
     }
   };
@@ -1274,7 +1539,11 @@ ${sampleRows.join('\n')}`;
       const convertedCode = convertExcelToColumnNames(generatedCode, columnAnalysis);
       
       if (convertedCode !== generatedCode) {
-        addMessage('ai', `Note: Converted Excel column references to actual column names in SQL query.`);
+        addMessageToSession({
+          type: 'ai',
+          content: `Note: Converted Excel column references to actual column names in SQL query.`,
+          sessionId: 'current'
+        });
       }
       
       // Fix SQL column quoting
@@ -1282,7 +1551,11 @@ ${sampleRows.join('\n')}`;
       if (fixedSql !== convertedCode) {
         console.log('Original SQL:', convertedCode);
         console.log('Fixed SQL:', fixedSql);
-        addMessage('ai', `Note: Fixed unquoted column names in SQL query.`);
+        addMessageToSession({
+          type: 'ai',
+          content: `Note: Fixed unquoted column names in SQL query.`,
+          sessionId: 'current'
+        });
       }
       
       // Fix underscore column names
@@ -1290,7 +1563,11 @@ ${sampleRows.join('\n')}`;
       if (finalSql !== fixedSql) {
         console.log('SQL with underscores:', fixedSql);
         console.log('SQL with original names:', finalSql);
-        addMessage('ai', `Note: Fixed underscore column names to original names.`);
+        addMessageToSession({
+          type: 'ai',
+          content: `Note: Fixed underscore column names to original names.`,
+          sessionId: 'current'
+        });
       }
       
       console.log('Final SQL to execute:', finalSql);
@@ -1298,7 +1575,11 @@ ${sampleRows.join('\n')}`;
       // Execute the converted SQL query
       await executeSQLQuery(finalSql, requiresUpdate);
     } catch (error) {
-      addMessage('ai', `❌ Error executing AI2 code: ${error}`);
+      addMessageToSession({
+        type: 'ai',
+        content: `❌ Error executing AI2 code: ${error}`,
+        sessionId: 'current'
+      });
       console.error('AI2 execution error:', error);
     }
   };
@@ -1351,8 +1632,8 @@ ${sampleRows.join('\n')}`;
         maxWidth={900}
         maxHeight={800}
       >
-        <Card className="w-full h-full shadow-2xl flex flex-col overflow-hidden bg-background/80 backdrop-blur-md border border-border" style={{ filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))' }}>
-          <div className="flex items-center justify-between p-3 border-b border-border drag-handle cursor-move" onMouseDown={handleDragStart}>
+        <Card className="w-full h-full shadow-2xl flex flex-col overflow-hidden bg-background/80 backdrop-blur-md border border-border relative z-50" style={{ filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))' }}>
+          <div className="flex items-center justify-between p-3 border-b border-border drag-handle cursor-move bg-background/95 backdrop-blur-sm sticky top-0 z-10" onMouseDown={handleDragStart}>
             <div className="flex items-center gap-2 font-semibold text-sm">
               <Wand2 className="h-5 w-5 text-primary" />
               AI Assistant
@@ -1373,23 +1654,102 @@ ${sampleRows.join('\n')}`;
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 relative z-20">
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="h-8 w-8 no-drag" 
+                className="h-8 w-8 no-drag hover:bg-accent" 
                 onClick={toggleFixedMode}
                 title={isFixed ? "Make Movable" : "Fix Position"}
               >
                 {isFixed ? <PinOff className="h-4 w-4 text-foreground" /> : <Pin className="h-4 w-4 text-foreground" />}
               </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 no-drag" onClick={() => { setMinimized(true); onToggleMinimize(); }} title="Close">
+              <Button variant="ghost" size="icon" className="h-8 w-8 no-drag hover:bg-accent" onClick={() => { setMinimized(true); onToggleMinimize(); }} title="Close">
                 <X className="h-4 w-4 text-foreground" />
               </Button>
             </div>
           </div>
           <ScrollArea className="flex-1 p-4 custom-blue-scrollbar" style={{ maxHeight: 'calc(100% - 100px)' }}>
             <div className="space-y-6">
+              {/* Older Messages Button */}
+              {showOlderButton && (
+                <div className="flex justify-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadOlderMessages}
+                    disabled={isLoadingOlder}
+                    className="flex items-center gap-2"
+                  >
+                    {isLoadingOlder ? (
+                      <>
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      <>
+                        <History className="h-4 w-4" />
+                        Load Older Messages
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
+
+              {/* Loading Shimmer for Older Messages */}
+              {isLoadingOlder && (
+                <div className="space-y-4">
+                  <MessageShimmer count={4} />
+                </div>
+              )}
+
+              {/* Older Messages */}
+              {olderMessages.map((msg, index) => (
+                <div
+                  key={`older-${msg._id}`}
+                  className={`flex items-start gap-3 ${msg.type === 'user' ? 'flex-row-reverse' : ''}`}
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={`https://placehold.co/40x40.png`} data-ai-hint={msg.type === 'user' ? 'person user' : 'robot'} />
+                    <AvatarFallback>{msg.type === 'user' ? 'ME' : 'AI'}</AvatarFallback>
+                  </Avatar>
+                  <div
+                    className={`max-w-md rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
+                      msg.type === 'user'
+                        ? 'bg-[hsl(205.91,68.04%,61.96%)] text-white'
+                        : 'bg-muted text-foreground'
+                    }`}
+                  >
+                    {msg.content}
+                    {msg.chartData && (
+                      <div className="mt-4">
+                        <ChartRenderer
+                          data={msg.chartData.data}
+                          chartSpec={msg.chartData.chartSpec}
+                          width={500}
+                          height={300}
+                          className="border rounded-lg"
+                        />
+                        <div className="mt-2 flex justify-center">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (onEmbedChart && msg.chartData) {
+                                onEmbedChart(msg.chartData.data, msg.chartData.chartSpec);
+                              }
+                            }}
+                          >
+                            Embed on Canvas
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {/* Current Session Messages */}
               {messages.map((msg, index) => (
                 <div
                   key={index}
@@ -1421,11 +1781,9 @@ ${sampleRows.join('\n')}`;
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              const detail = {
-                                data: msg.chartData?.data,
-                                chartSpec: msg.chartData?.chartSpec
-                              };
-                              window.dispatchEvent(new CustomEvent('embedChartFromChat', { detail }));
+                              if (onEmbedChart && msg.chartData) {
+                                onEmbedChart(msg.chartData.data, msg.chartData.chartSpec);
+                              }
                             }}
                           >
                             Embed on Canvas

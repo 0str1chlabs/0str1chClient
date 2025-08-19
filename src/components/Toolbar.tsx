@@ -21,7 +21,9 @@ import {
   Calculator,
   ChevronDown,
   ChevronRight,
-  Settings
+  Settings,
+  BarChart3,
+  LayoutGrid
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -58,6 +60,9 @@ interface ToolbarProps {
   canUndo?: boolean;
   canRedo?: boolean;
   onAddSheet?: () => void;
+  onShowPivotTable?: () => void;
+  onShowPivotFullScreen?: () => void;
+  onShowPivotModal?: () => void;
 }
 
 // Tool descriptions for tooltips
@@ -88,13 +93,18 @@ export const Toolbar = ({
   onRedo,
   canUndo = false,
   canRedo = false,
-  onAddSheet
+  onAddSheet,
+  onShowPivotTable,
+  onShowPivotFullScreen,
+  onShowPivotModal
 }: ToolbarProps) => {
   const [showSearch, setShowSearch] = useState(false);
   const [showColorPalette, setShowColorPalette] = useState(false);
   const [showTextFormat, setShowTextFormat] = useState(false);
+  const [showTextColor, setShowTextColor] = useState(false);
   const colorPaletteRef = useRef<HTMLDivElement>(null);
   const textFormatRef = useRef<HTMLDivElement>(null);
+  const textPaletteRef = useRef<HTMLDivElement>(null);
   
   const fontSizes = ['8', '9', '10', '11', '12', '14', '16', '18', '20', '24', '28', '32'];
   const fonts = ['Arial', 'Roboto', 'Times New Roman', 'Helvetica', 'Georgia', 'Courier New'];
@@ -110,9 +120,17 @@ export const Toolbar = ({
     '#ffffff', '#f3f4f6', '#e5e7eb', '#d1d5db', '#9ca3af', // Grays
   ];
 
+  // Text colors for text color picker
+  const textColors = [
+    '#000000', '#333333', '#666666', '#999999', '#cccccc', // Dark grays
+    '#ffffff', '#f0f0f0', '#e0e0e0', '#d0d0d0', '#c0c0c0', // Light grays
+    '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', // Primary colors
+    '#00ffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', // Secondary colors
+  ];
+
   const getAppliedFormats = () => {
     if (!activeSheet || selectedCells.length === 0) {
-      return { bold: false, italic: false, underline: false };
+      return { bold: false, italic: false, underline: false, fontSize: 12, fontFamily: 'Arial' };
     }
     
     // Check if all selected cells have the same formatting
@@ -122,6 +140,8 @@ export const Toolbar = ({
         bold: cell?.style?.bold || false,
         italic: cell?.style?.italic || false,
         underline: cell?.style?.underline || false,
+        fontSize: cell?.style?.fontSize || 12,
+        fontFamily: cell?.style?.fontFamily || 'Arial',
       };
     });
     
@@ -130,11 +150,15 @@ export const Toolbar = ({
     const allSameBold = formats.every(f => f.bold === formats[0].bold);
     const allSameItalic = formats.every(f => f.italic === formats[0].italic);
     const allSameUnderline = formats.every(f => f.underline === formats[0].underline);
+    const allSameFontSize = formats.every(f => f.fontSize === formats[0].fontSize);
+    const allSameFontFamily = formats.every(f => f.fontFamily === formats[0].fontFamily);
     
     return {
       bold: allSameBold ? formats[0].bold : false,
       italic: allSameItalic ? formats[0].italic : false,
       underline: allSameUnderline ? formats[0].underline : false,
+      fontSize: allSameFontSize ? formats[0].fontSize : 12,
+      fontFamily: allSameFontFamily ? formats[0].fontFamily : 'Arial',
     };
   };
 
@@ -212,16 +236,19 @@ export const Toolbar = ({
       if (textFormatRef.current && !textFormatRef.current.contains(event.target as Node)) {
         setShowTextFormat(false);
       }
+      if (textPaletteRef.current && !textPaletteRef.current.contains(event.target as Node)) {
+        setShowTextColor(false);
+      }
     };
 
-    if (showColorPalette || showTextFormat) {
+    if (showColorPalette || showTextFormat || showTextColor) {
       document.addEventListener('mousedown', handleClickOutside);
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [showColorPalette, showTextFormat]);
+  }, [showColorPalette, showTextFormat, showTextColor]);
 
   return (
     <>
@@ -247,6 +274,8 @@ export const Toolbar = ({
             <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.addSheet.description}</p>
           </TooltipContent>
         </Tooltip>
+
+        {/* Pivot Table Buttons - Moved to top navbar for better accessibility */}
 
         {/* Undo/Redo Group */}
         <div className="flex flex-col gap-1">
@@ -365,6 +394,66 @@ export const Toolbar = ({
           )}
         </div>
 
+        {/* Font Size Selection */}
+        <div className="relative">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="w-8 h-8">
+                <Select
+                  value={getAppliedFormats().fontSize?.toString() || '12'}
+                  onValueChange={(value) => onFormat('font-size', value)}
+                >
+                  <SelectTrigger className="w-8 h-8 p-0 hover:bg-gray-100 border-0 bg-transparent">
+                    <SelectValue className="text-xs" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fontSizes.map((size) => (
+                      <SelectItem key={size} value={size}>
+                        {size}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">Font Size</p>
+              <p className="text-xs text-muted-foreground">Change text size</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* Font Family Selection */}
+        <div className="relative">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="w-8 h-8">
+                <Select
+                  value={getAppliedFormats().fontFamily || 'Arial'}
+                  onValueChange={(value) => onFormat('font-family', value)}
+                >
+                  <SelectTrigger className="w-8 h-8 p-0 hover:bg-gray-100 border-0 bg-transparent">
+                    <SelectValue className="text-xs" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fonts.map((font) => (
+                      <SelectItem key={font} value={font}>
+                        {font}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">Font Family</p>
+              <p className="text-xs text-muted-foreground">Change font type</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        <Separator className="w-6 my-1 bg-gray-200" />
+
         {/* Color Palette Button */}
         <div className="relative" ref={colorPaletteRef}>
           <Tooltip>
@@ -416,6 +505,63 @@ export const Toolbar = ({
                   }}
                 >
                   Clear Color
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Text Color Button */}
+        <div className="relative" ref={textPaletteRef}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="w-8 h-8 p-0 hover:bg-gray-100 relative"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowTextColor(!showTextColor);
+                }}
+              >
+                <Type size={16} className="text-foreground" />
+                <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-semibold">Text Color</p>
+              <p className="text-xs text-muted-foreground">Change text color</p>
+            </TooltipContent>
+          </Tooltip>
+          
+          {/* Text Color Dropdown */}
+          {showTextColor && (
+            <div className="absolute left-12 top-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50" data-text-color="true">
+              <div className="grid grid-cols-7 gap-1 w-48">
+                {textColors.map((color, index) => (
+                  <button
+                    key={index}
+                    className="w-5 h-5 rounded border border-gray-300 hover:scale-110 transition-transform"
+                    style={{ backgroundColor: color }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFormat('text-color', color);
+                      setShowTextColor(false);
+                    }}
+                    title={`Apply ${color} text color`}
+                  />
+                ))}
+              </div>
+              <div className="mt-2 pt-2 border-t border-gray-200">
+                <button
+                  className="w-full px-2 py-1 text-xs text-foreground hover:bg-muted rounded"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFormat('text-color', '#000000');
+                    setShowTextColor(false);
+                  }}
+                >
+                  Reset to Black
                 </button>
               </div>
             </div>

@@ -22,4 +22,11 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // Expose environment variables to the client
+  define: {
+    // Expose all VITE_ prefixed environment variables
+    'process.env': process.env
+  },
+  // Environment variable handling
+  envPrefix: 'VITE_'
 }));

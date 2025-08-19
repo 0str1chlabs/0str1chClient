@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { Rnd } from 'react-rnd';
 import { Input } from '@/components/ui/input';
 import type { SheetData, Cell } from '@/types/spreadsheet';
 import Menu from '@mui/material/Menu';
@@ -19,6 +20,8 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import { spreadsheetFunctions } from '../../../AIServer/formulation';
 import Skeleton from '@mui/material/Skeleton';
+import { Move, Maximize2, Minimize2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface ModernSpreadsheetProps {
   sheet: SheetData;
@@ -27,6 +30,7 @@ interface ModernSpreadsheetProps {
   onSelectionChange?: (selectedCells: string[]) => void;
   selectedCells?: string[];
   onAddMoreRows?: () => void;
+  onSheetNameChange?: (newName: string) => void;
   className?: string;
   isSheetLoading?: boolean;
   setSheetLoading?: (loading: boolean) => void;
@@ -62,13 +66,15 @@ const SpreadsheetCell = React.memo(({
           ? 'bg-green-100/70 dark:bg-green-800/30'
           : 'hover:bg-green-50 dark:hover:bg-green-700/50'
         }
-        ${cell?.value ? 'bg-white dark:bg-green-900' : ''}
       `}
+      style={{
+        backgroundColor: cell?.style?.backgroundColor || (cell?.value ? 'white' : 'white'),
+        ...style
+      }}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onMouseDown={onMouseDown}
       onMouseEnter={onMouseEnter}
-      style={style}
       data-cell-id={cellId}
     >
       {isSheetLoading ? (
@@ -124,6 +130,7 @@ export const ModernSpreadsheet = ({
   onSelectionChange, 
   selectedCells = [],
   onAddMoreRows,
+  onSheetNameChange,
   className = '',
   isSheetLoading,
   setSheetLoading
@@ -141,12 +148,41 @@ export const ModernSpreadsheet = ({
   const [anchorCell, setAnchorCell] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [showAddRowsButton, setShowAddRowsButton] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(100);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [menuCol, setMenuCol] = useState<string | null>(null);
   const [hoveredCol, setHoveredCol] = useState<number | null>(null);
   const [sortedCol, setSortedCol] = useState<string | null>(null);
+  const [dimensions, setDimensions] = useState({
+    width: window.innerWidth * 0.75,
+    height: window.innerHeight * 0.8
+  });
+
+  // Set initial dimensions and handle window resize
+  useEffect(() => {
+    const updateDimensions = () => {
+      const newWidth = window.innerWidth * 0.75;
+      const newHeight = window.innerHeight * 0.8;
+      console.log('Updating dimensions:', { newWidth, newHeight, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight });
+      setDimensions({
+        width: newWidth,
+        height: newHeight
+      });
+    };
+
+    // Set initial dimensions immediately
+    updateDimensions();
+
+    // Add resize listener
+    window.addEventListener('resize', updateDimensions);
+    
+    return () => {
+      window.removeEventListener('resize', updateDimensions);
+    };
+  }, []);
 
   // Virtual scrolling constants
   const ROW_HEIGHT = 48; // h-12 = 48px
@@ -205,6 +241,80 @@ export const ModernSpreadsheet = ({
     };
   }, []);
 
+  // Cell handling functions
+  const handleCellClick = useCallback((cellId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    
+    // If we were editing a cell, save its value first
+    if (editingCell && editingCell !== cellId) {
+      updateCell(editingCell, editValue);
+      setEditingCell(null);
+    }
+    
+    if (selectedCell !== cellId) {
+      onSelectionChange?.([cellId]);
+    }
+  }, [editingCell, editValue, updateCell, selectedCell, onSelectionChange]);
+
+  const handleCellDoubleClick = useCallback((cellId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    setEditingCell(cellId);
+    setEditValue(sheet.cells[cellId]?.value?.toString() || '');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }, [sheet.cells]);
+
+  const handleCellMouseDown = useCallback((cellId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    setDragStart(cellId);
+    onSelectionChange?.([cellId]);
+    setIsDragging(true);
+  }, [onSelectionChange]);
+
+  const handleCellMouseEnter = useCallback((cellId: string) => {
+    if (isDragging && dragStart) {
+      const range = getCellsInRange(dragStart, cellId);
+      onSelectionChange?.(range);
+    }
+  }, [isDragging, dragStart, getCellsInRange, onSelectionChange]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+    setDragStart(null);
+  }, []);
+
+  const handleEditSubmit = useCallback((cellId: string) => {
+    if (editingCell) {
+      updateCell(editingCell, editValue);
+      setEditingCell(null);
+      setEditValue('');
+    }
+  }, [editingCell, editValue, updateCell]);
+
+  const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (editingCell) {
+        handleEditSubmit(editingCell);
+      }
+    } else if (e.key === 'Escape') {
+      setEditingCell(null);
+      setEditValue('');
+    }
+  }, [editingCell, handleEditSubmit]);
+
+  // Zoom functionality
+  const handleZoomIn = useCallback(() => {
+    setZoomLevel(prev => Math.min(prev + 25, 400));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomLevel(prev => Math.max(prev - 25, 25));
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setZoomLevel(100);
+  }, []);
+
   // Handle scrolling and track scroll position for virtual scrolling
   useEffect(() => {
     const scrollArea = scrollAreaRef.current;
@@ -237,481 +347,467 @@ export const ModernSpreadsheet = ({
     };
   }, []);
 
-  // Arrow key navigation for cell selection
+  // Global mouse up handler for drag operations
   useEffect(() => {
-    const handleArrowKey = (event: KeyboardEvent) => {
-      if (!selectedCell || editingCell) return;
-      const { row, col } = parseCellId(selectedCell);
-      let nextRow = row;
-      let nextCol = col;
-      let handled = false;
-      if (event.key === 'ArrowUp') {
-        nextRow = Math.max(0, row - 1);
-        handled = true;
-      } else if (event.key === 'ArrowDown') {
-        nextRow = Math.min(sheet.rowCount - 1, row + 1);
-        handled = true;
-      } else if (event.key === 'ArrowLeft') {
-        nextCol = Math.max(0, col - 1);
-        handled = true;
-      } else if (event.key === 'ArrowRight') {
-        nextCol = Math.min(sheet.colCount - 1, col + 1);
-        handled = true;
-      } else if (event.key === 'Escape' && !editingCell) {
-        // Unselect all cells on Escape if not editing
-        setAnchorCell(null);
-        onSelectionChange?.([]);
-        return;
-      }
-      if (handled) {
-        event.preventDefault();
-        const nextCellId = getCellId(nextRow, nextCol);
-        if (event.shiftKey && selectedCell) {
-          // Use anchorCell as the start of the selection
-          const anchor = anchorCell || selectedCell;
-          const range = getCellsInRange(anchor, nextCellId);
-          onSelectionChange?.(range);
-          if (!anchorCell) setAnchorCell(selectedCell);
-        } else {
-          setAnchorCell(null);
-          onSelectionChange?.([nextCellId]);
-        }
-        // Scroll selected cell into view
-        setTimeout(() => {
-          const cellElem = document.querySelector(`[data-cell-id="${nextCellId}"]`);
-          if (cellElem && cellElem.scrollIntoView) {
-            cellElem.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-          }
-        }, 0);
+    const handleGlobalMouseUp = () => {
+      if (isDragging) {
+        setIsDragging(false);
+        setDragStart(null);
       }
     };
-    document.addEventListener('keydown', handleArrowKey);
-    return () => document.removeEventListener('keydown', handleArrowKey);
-  }, [selectedCell, editingCell, sheet.rowCount, sheet.colCount, getCellId, getCellsInRange, onSelectionChange, parseCellId, anchorCell]);
 
-  // Unselect cells when clicking outside the spreadsheet
-  useEffect(() => {
-    const handleDocumentClick = (event: MouseEvent) => {
-      const spreadsheet = scrollAreaRef.current;
-      const target = event.target as HTMLElement;
-      // Check if click is on toolbar or its children
-      const isOnToolbar = target.closest('.toolbar') || 
-                         target.closest('[data-toolbar]') ||
-                         target.closest('[data-toolbar-handle]') ||
-                         target.closest('.color-palette') ||
-                         target.closest('[data-color-palette]');
-      // Check if click is on AI chatbox
-      const isOnChatbox = target.closest('#ai-chatbox') || target.closest('[data-ai-chatbox]');
-      if (spreadsheet && !spreadsheet.contains(target) && !isOnToolbar && !isOnChatbox) {
-        setAnchorCell(null);
-        onSelectionChange?.([]);
-      }
-    };
-    document.addEventListener('mousedown', handleDocumentClick);
-    return () => document.removeEventListener('mousedown', handleDocumentClick);
-  }, [onSelectionChange]);
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [isDragging]);
 
-  // Reset anchorCell when selection changes not via shift
-  useEffect(() => {
-    setAnchorCell(null);
-  }, [editingCell]);
-
-  // Optimized event handlers
-  const handleCellClick = useCallback((cellId: string, event: React.MouseEvent) => {
-    event.preventDefault();
-    
-    if (editingCell && editingCell !== cellId) {
-      updateCell(editingCell, editValue);
-      setEditingCell(null);
-    }
-    
-    // Handle Shift+click for range selection
-    if (isShiftPressed && selectedCell) {
-      const range = getCellsInRange(selectedCell, cellId);
-      onSelectionChange?.(range);
-    } else {
-      onSelectionChange?.([cellId]);
-    }
-  }, [editingCell, editValue, updateCell, selectedCell, onSelectionChange, isShiftPressed, getCellsInRange]);
-
-  const handleCellMouseDown = useCallback((cellId: string, event: React.MouseEvent) => {
-    event.preventDefault();
-    
-    // Only start dragging if it's a left click and not on a scrollbar
-    if (!isShiftPressed && event.button === 0) {
-      // Check if we're clicking on a scrollbar
-      const target = event.target as HTMLElement;
-      const isScrollbar = target.closest('::-webkit-scrollbar') || 
-                         target.classList.contains('scrollbar-thumb') ||
-                         target.classList.contains('scrollbar-track');
-      
-      if (!isScrollbar) {
-      setDragStart(cellId);
-      setIsDragging(true);
-      onSelectionChange?.([cellId]);
-      }
-    }
-  }, [onSelectionChange, isShiftPressed]);
-
-  const handleCellMouseEnter = useCallback((cellId: string) => {
-    if (isDragging && dragStart && !isShiftPressed) {
-      const range = getCellsInRange(dragStart, cellId);
-      onSelectionChange?.(range);
-    }
-  }, [isDragging, dragStart, getCellsInRange, onSelectionChange, isShiftPressed]);
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-    setDragStart(null);
-  }, []);
-
-  const handleCellDoubleClick = useCallback((cellId: string, event: React.MouseEvent) => {
-    event.preventDefault();
-    const cell = sheet.cells[cellId];
-    setEditingCell(cellId);
-    setEditValue(
-      typeof cell?.value === 'object' && cell?.value !== null
-        ? ((cell?.value && typeof cell.value === 'object' && cell.value !== null && 'message' in cell.value && (cell.value as any).message)
-          || (cell?.value && typeof cell.value === 'object' && cell.value !== null && 'value' in cell.value && (cell.value as any).value)
-          || '')
-        : cell?.value?.toString() || ''
-    );
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-        inputRef.current.select();
-      }
-    }, 0);
-  }, [sheet.cells]);
-
-  const handleEditSubmit = useCallback(() => {
-    if (editingCell) {
-      updateCell(editingCell, editValue);
-      setEditingCell(null);
-      setEditValue('');
-    }
-  }, [editingCell, editValue, updateCell]);
-
-  const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleEditSubmit();
-    } else if (e.key === 'Escape') {
-      setEditingCell(null);
-      setEditValue('');
-    }
-  }, [handleEditSubmit]);
-
-  // Effects
-  useEffect(() => {
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => document.removeEventListener('mouseup', handleMouseUp);
-  }, [handleMouseUp]);
-
-  // Virtual scrolling calculations
-  const scrollAreaHeight = 600; // max-h-[600px]
-  const visibleRowCount = Math.ceil(scrollAreaHeight / ROW_HEIGHT) + VISIBLE_ROWS_BUFFER * 2;
+  // Calculate visible rows for virtual scrolling
   const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_ROWS_BUFFER);
-  const endRow = Math.min(sheet.rowCount - 1, startRow + visibleRowCount);
+  const endRow = Math.min(sheet.rowCount, Math.ceil((scrollTop + 800) / ROW_HEIGHT) + VISIBLE_ROWS_BUFFER);
 
-  // Optimized memoized data structures
-  const visibleColumns = useMemo(() => 
-    sheet.colCount, // Show all available columns
-  [sheet.colCount]);
-
-  const columnHeaders = useMemo(() => 
-    Array.from({ length: visibleColumns }, (_, col) => ({
-      col,
-      header: getColHeader(col)
-    }))
-  , [visibleColumns, getColHeader]);
-
+  // Generate row data for virtual scrolling
   const rowData = useMemo(() => {
     const rows = [];
-    for (let row = startRow; row <= endRow; row++) {
+    for (let row = startRow; row < endRow; row++) {
       const cells = [];
-      for (let col = 0; col < visibleColumns; col++) {
+      for (let col = 0; col < sheet.colCount; col++) {
         const cellId = getCellId(row, col);
-        cells.push({
-          cellId,
-          cell: sheet.cells[cellId]
-        });
+        cells.push({ cellId, cell: sheet.cells[cellId] });
       }
       rows.push({ row, cells });
     }
     return rows;
-  }, [startRow, endRow, visibleColumns, sheet.cells, getCellId]);
+  }, [startRow, endRow, sheet.rowCount, sheet.colCount, sheet.cells, getCellId]);
 
-  // Use a Set for selectedCells for fast lookup
-  const selectedCellsSet = useMemo(() => new Set(selectedCells), [selectedCells]);
+  // Generate column headers for virtual scrolling
+  const columnHeaders = useMemo(() => {
+    const headers = [];
+    for (let col = 0; col < sheet.colCount; col++) {
+      headers.push({ col, header: getColHeader(col) });
+    }
+    return headers;
+  }, [sheet.colCount, getColHeader]);
 
-  // Memoize event handlers for each cell
-  const getCellHandlers = (cellId: string) => ({
+  // Create a set for faster lookups
+  const selectedCellsSet = useMemo(() => new Set(selectedRange), [selectedRange]);
+
+  // Optimized event handlers
+  const getCellHandlers = useCallback((cellId: string) => ({
     onClick: (e: React.MouseEvent) => handleCellClick(cellId, e),
     onDoubleClick: (e: React.MouseEvent) => handleCellDoubleClick(cellId, e),
     onMouseDown: (e: React.MouseEvent) => handleCellMouseDown(cellId, e),
     onMouseEnter: () => handleCellMouseEnter(cellId),
-  });
+  }), [handleCellClick, handleCellDoubleClick, handleCellMouseDown, handleCellMouseEnter]);
+
+  // Handle cell selection when editing is done
+  useEffect(() => {
+    if (!editingCell) {
+      setAnchorCell(null);
+    }
+  }, [editingCell]);
 
   return (
-    <div className={`bg-green-50 dark:bg-green-900 rounded-2xl border border-green-200 dark:border-green-700 overflow-hidden spreadsheet-container ${className}`} data-scrollable="true">
-      {/* Sheet Header */}
-      <div className="bg-gradient-to-r from-green-100 to-emerald-100 dark:from-green-800 dark:to-emerald-800 px-6 py-4 border-b border-green-200 dark:border-green-700">
-        <h2 className="text-lg font-semibold text-green-800 dark:text-green-200">{sheet.name}</h2>
-      </div>
-
-      {/* Spreadsheet Grid */}
-      <div 
-        ref={scrollAreaRef}
-        className="overflow-auto max-h-[600px] select-none relative" 
-        data-scrollable="true"
-        style={{ 
-          cursor: isDragging ? 'crosshair' : 'default',
-          scrollbarWidth: 'auto',
-          scrollbarGutter: 'stable'
-        }}
-        onMouseDown={e => {
-          // Check if click is on scrollbar area
-          const rect = e.currentTarget.getBoundingClientRect();
-          const isOnScrollbar = e.clientX > rect.right - 20 || e.clientY > rect.bottom - 20;
-          
-          if (!isOnScrollbar) {
-            e.stopPropagation();
-          }
-        }}
-        onMouseMove={e => isDragging && e.stopPropagation()}
-      >
-        <div className="min-w-fit relative">
-          {/* Column Headers */}
-          <div className="sticky top-0 z-20 flex bg-gradient-to-b from-green-100 to-green-50 dark:from-green-700 dark:to-green-800">
-            <div className="w-16 h-12 bg-green-200 dark:bg-green-600 border-r border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-medium text-green-600 dark:text-green-300">
-            </div>
-            {columnHeaders.map(({ col, header }) => (
-              <div
-                key={col}
-                className={`w-32 h-12 border-r border-green-300 dark:border-green-500 bg-gradient-to-b from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 flex items-center justify-center text-xs font-semibold text-green-700 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-600 transition-colors cursor-pointer relative ${sortedCol === header ? 'animate-flash' : ''}`}
-                onClick={e => {
-                  // Select all cells in this column
-                  const cellIds = [];
-                  for (let row = 1; row < sheet.rowCount; row++) {
-                    cellIds.push(`${header}${row + 1}`);
-                  }
-                  onSelectionChange?.(cellIds);
-                  setMenuAnchor(e.currentTarget);
-                  setMenuCol(header);
-                }}
-                onMouseEnter={() => setHoveredCol(col)}
-                onMouseLeave={() => setHoveredCol(null)}
-              >
-                <span>{header}</span>
-                {hoveredCol === col && (
-                  <ArrowDropDownIcon style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#059669' }} fontSize="small" />
-                )}
-              </div>
-            ))}
+    <Rnd
+      default={{
+        x: 50,
+        y: 100,
+        width: dimensions.width,
+        height: dimensions.height,
+      }}
+      size={{
+        width: dimensions.width,
+        height: dimensions.height,
+      }}
+      minWidth={400}
+      minHeight={300}
+      maxWidth={dimensions.width * 1.3}
+      maxHeight={dimensions.height * 1.3}
+      dragAxis="both"
+      enableResizing={{
+        top: true,
+        right: true,
+        bottom: true,
+        left: true,
+        topRight: true,
+        bottomRight: true,
+        bottomLeft: true,
+        topLeft: true,
+      }}
+      className="z-10"
+      style={{
+        background: 'transparent',
+        boxShadow: 'none'
+      }}
+    >
+      <div className="bg-green-50 dark:bg-green-900 rounded-2xl border border-green-200 dark:border-green-700 overflow-hidden spreadsheet-container" style={{ backgroundImage: 'radial-gradient(circle, #10b981 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
+        {/* Control Bar */}
+        <div className="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 flex items-center justify-between cursor-move">
+          <div className="flex items-center gap-2">
+            <Move className="h-4 w-4" />
+            <span className="font-medium text-sm">Sheet: {sheet.name}</span>
           </div>
+          <div className="flex items-center gap-2">
+            {/* Zoom Controls */}
+            <div className="flex items-center gap-1 bg-green-600 rounded px-2 py-1">
+              <button
+                onClick={handleZoomOut}
+                className="text-white hover:bg-green-700 rounded px-1 py-0.5 transition-colors"
+                title="Zoom Out"
+              >
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                </svg>
+              </button>
+              <span className="text-xs text-white min-w-[40px] text-center">{zoomLevel}%</span>
+              <button
+                onClick={handleZoomIn}
+                className="text-white hover:bg-green-700 rounded px-1 py-0.5 transition-colors"
+                title="Zoom In"
+              >
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+              <button
+                onClick={handleZoomReset}
+                className="text-white hover:bg-green-700 rounded px-1 py-0.5 transition-colors text-xs"
+                title="Reset Zoom"
+              >
+                Reset
+              </button>
+            </div>
+            
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsMinimized(!isMinimized)}
+              className="h-6 w-6 p-0 hover:bg-green-600 text-white"
+            >
+              {isMinimized ? <Maximize2 className="h-3 w-3" /> : <Minimize2 className="h-3 w-3" />}
+            </Button>
+          </div>
+        </div>
 
-          {/* Virtual scrolling container */}
-          <div style={{ height: sheet.rowCount * ROW_HEIGHT, position: 'relative' }}>
-          {/* Dotted border overlay for selected range */}
-          {selectedRange.length > 1 && (() => {
-            // Calculate min/max row/col from selectedRange
-            const positions = selectedRange.map(parseCellId);
-            const minRow = Math.min(...positions.map(p => p.row));
-            const maxRow = Math.max(...positions.map(p => p.row));
-            const minCol = Math.min(...positions.map(p => p.col));
-            const maxCol = Math.max(...positions.map(p => p.col));
-            // Cell size constants (must match cell classes)
-            const cellWidth = 128; // w-32 = 8*16px
-            const cellHeight = 48; // h-12 = 4*12px
-            const rowHeaderWidth = 64; // w-16 = 4*16px
-            const colHeaderHeight = 48; // h-12 = 4*12px
-            return (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: rowHeaderWidth + minCol * cellWidth - 2, // -2 for border width
-                  top: colHeaderHeight + minRow * cellHeight - 2,
-                  width: (maxCol - minCol + 1) * cellWidth + 3, // +3 for border width
-                  height: (maxRow - minRow + 1) * cellHeight + 3,
-                  pointerEvents: 'none',
-                  zIndex: 30,
-                  border: '2px dotted #059669', // green-600
-                  borderRadius: 4,
-                  boxSizing: 'border-box',
-                }}
-              />
-            );
-          })()}
-
-            {/* Visible Rows */}
-            <div style={{ position: 'absolute', top: startRow * ROW_HEIGHT, left: 0, right: 0 }}>
-          {rowData.map(({ row, cells }) => (
-            <div key={row} className="flex hover:bg-green-100/30 dark:hover:bg-green-800/10 transition-colors">
-              {/* Row Header */}
-              <div className="w-16 h-12 bg-gradient-to-r from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 border-r border-b border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-semibold text-green-600 dark:text-green-300 sticky left-0 z-10">
-                {row + 1}
+        {/* Spreadsheet Content */}
+        {!isMinimized && (
+          <div className="overflow-auto" style={{ height: 'calc(100% - 40px)' }}>
+            {/* Sheet Name Header - Editable */}
+            <div className="bg-gradient-to-r from-green-100 to-green-200 dark:from-green-800 dark:to-green-700 border-b border-green-300 dark:border-green-600 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-semibold text-green-800 dark:text-green-200">
+                    {sheet.name}
+                  </h2>
+                  {onSheetNameChange && (
+                    <button
+                      onClick={() => {
+                        const newName = prompt('Enter new sheet name:', sheet.name);
+                        if (newName && newName.trim() && newName !== sheet.name) {
+                          onSheetNameChange(newName.trim());
+                        }
+                      }}
+                      className="p-1 rounded-full hover:bg-green-300 dark:hover:bg-green-600 text-green-700 dark:text-green-300 transition-colors"
+                      title="Edit sheet name"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2v11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                <div className="text-sm text-green-600 dark:text-green-400">
+                  {sheet.rowCount} rows × {sheet.colCount} columns
+                </div>
               </div>
               
-              {/* Cells */}
-              {cells.map(({ cellId, cell }, cellIdx) => {
-                const isSelected = selectedCell === cellId;
-                const isInRange = selectedCellsSet.has(cellId);
-                const isEditing = editingCell === cellId;
-                const colLetter = cellId[0];
-                return (
-                  <SpreadsheetCell
-                    key={cellId}
-                    cellId={cellId}
-                    cell={cell}
-                    isSelected={isSelected}
-                    isInRange={isInRange}
-                    isEditing={isEditing}
-                    {...getCellHandlers(cellId)}
-                    inputRef={inputRef}
-                    editValue={editValue}
-                    setEditValue={setEditValue}
-                    handleEditSubmit={handleEditSubmit}
-                    handleEditKeyDown={handleEditKeyDown}
-                    style={{ 
-                      userSelect: 'none',
-                      border: isInRange ? '2px dotted #059669' : undefined,
-                      boxSizing: 'border-box',
-                      ...(sortedCol === colLetter ? { animation: 'flash 0.5s' } : {})
-                    }}
-                    isSheetLoading={isSheetLoading}
-                  />
-                );
-              })}
+              {/* Add Rows Button */}
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={() => onAddMoreRows && onAddMoreRows()}
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:scale-105"
+                >
+                  + Add 1000 Rows
+                </button>
+                <span className="text-xs text-green-600 dark:text-green-400">
+                  Current: {sheet.rowCount} rows
+                </span>
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
-          
-        </div>
-      </div>
-      
-      {/* Add More Rows Button - Only show when at bottom */}
-      {showAddRowsButton && onAddMoreRows && sheet.rowCount < 100000 && (
-        <div className="flex justify-center py-4 bg-green-50 dark:bg-green-900 border-t border-green-200 dark:border-green-700">
-          <button
-            onClick={onAddMoreRows}
-            className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-medium transition-colors shadow-lg hover:shadow-xl flex items-center gap-2"
-            title={`Add 1,000 more rows (${sheet.rowCount.toLocaleString()} / 100,000 total rows)`}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            Add 1,000 More Rows
-            <span className="text-sm opacity-80">
-              ({sheet.rowCount.toLocaleString()} / 100,000)
-            </span>
-          </button>
-        </div>
-      )}
 
-      <Menu
-        anchorEl={menuAnchor}
-        open={Boolean(menuAnchor)}
-        onClose={() => setMenuAnchor(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-      >
-        <MenuItem onClick={() => { /* Cut logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><ContentCutIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Cut</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { /* Copy logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><ContentCopyIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Copy</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { /* Paste logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><ContentPasteIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Paste</ListItemText>
-        </MenuItem>
-        <Divider />
-        <MenuItem onClick={() => { /* Insert left logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><AddIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Insert 1 column to the left</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { /* Insert right logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><AddIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Insert 1 column to the right</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { /* Delete column logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><DeleteIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Delete column</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { /* Clear column logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><RemoveIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Clear column</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={() => { /* Hide column logic */ setMenuAnchor(null); }}>
-          <ListItemIcon><VisibilityOffIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Hide column</ListItemText>
-        </MenuItem>
-        <Divider />
-        <MenuItem onClick={async () => {
-          if (menuCol && bulkUpdateCells && setSheetLoading) {
-            setSheetLoading(true);
-            const values = [];
-            for (let row = 1; row < sheet.rowCount; row++) {
-              const cellId = `${menuCol}${row + 1}`;
-              values.push(sheet.cells[cellId]?.value);
+            {/* Spreadsheet Grid */}
+            <div 
+              ref={scrollAreaRef}
+              className="overflow-auto select-none relative" 
+              style={{ 
+                cursor: isDragging ? 'crosshair' : 'default',
+                scrollbarWidth: 'auto',
+                scrollbarGutter: 'stable',
+                transform: `scale(${zoomLevel / 100})`,
+                transformOrigin: 'top left',
+                height: 'calc(100vh - 300px)', // Fixed height for proper scrolling
+                minHeight: '400px'
+              }}
+              onMouseDown={e => {
+                // Check if click is on scrollbar area
+                const rect = e.currentTarget.getBoundingClientRect();
+                const isOnScrollbar = e.clientX > rect.right - 20 || e.clientY > rect.bottom - 20;
+                
+                if (!isOnScrollbar) {
+                  e.stopPropagation();
+                }
+              }}
+              onMouseMove={e => isDragging && e.stopPropagation()}
+            >
+              <div className="min-w-fit relative">
+                {/* Column Headers */}
+                <div className="sticky top-0 z-20 flex bg-gradient-to-b from-green-100 to-green-50 dark:from-green-700 dark:to-green-800">
+                  <div className="w-16 h-12 bg-green-200 dark:bg-green-600 border-r border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-medium text-green-600 dark:text-green-300">
+                  </div>
+                  {columnHeaders.map(({ col, header }) => (
+                    <div
+                      key={col}
+                      className={`w-32 h-12 border-r border-green-300 dark:border-green-500 bg-gradient-to-b from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 flex items-center justify-center text-xs font-semibold text-green-700 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-600 transition-colors cursor-pointer relative ${sortedCol === header ? 'animate-flash' : ''}`}
+                      onClick={e => {
+                        // Select all cells in this column
+                        const cellIds = [];
+                        for (let row = 1; row < sheet.rowCount; row++) {
+                          cellIds.push(`${header}${row + 1}`);
+                        }
+                        onSelectionChange?.(cellIds);
+                        setMenuAnchor(e.currentTarget);
+                        setMenuCol(header);
+                      }}
+                      onMouseEnter={() => setHoveredCol(col)}
+                      onMouseLeave={() => setHoveredCol(null)}
+                    >
+                      <span>{header}</span>
+                      {hoveredCol === col && (
+                        <ArrowDropDownIcon style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#059669' }} fontSize="small" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Virtual scrolling container */}
+                <div style={{ height: sheet.rowCount * ROW_HEIGHT, position: 'relative' }}>
+                  {/* Dotted border overlay for selected range */}
+                  {selectedRange.length > 1 && (() => {
+                    // Calculate min/max row/col from selectedRange
+                    const positions = selectedRange.map(parseCellId);
+                    const minRow = Math.min(...positions.map(p => p.row));
+                    const maxRow = Math.max(...positions.map(p => p.row));
+                    const minCol = Math.min(...positions.map(p => p.col));
+                    const maxCol = Math.max(...positions.map(p => p.col));
+                    // Cell size constants (must match cell classes)
+                    const cellWidth = 128; // w-32 = 8*16px
+                    const cellHeight = 48; // h-12 = 4*12px
+                    const rowHeaderWidth = 64; // w-16 = 4*16px
+                    const colHeaderHeight = 48; // h-12 = 4*12px
+                    return (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: rowHeaderWidth + minCol * cellWidth - 2, // -2 for border width
+                          top: colHeaderHeight + minRow * cellHeight - 2,
+                          width: (maxCol - minCol + 1) * cellWidth + 3, // +3 for border width
+                          height: (maxRow - minRow + 1) * cellHeight + 3,
+                          pointerEvents: 'none',
+                          zIndex: 30,
+                          border: '2px dotted #059669', // green-600
+                          borderRadius: 4,
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    );
+                  })()}
+
+                  {/* Visible Rows */}
+                  <div style={{ position: 'absolute', top: startRow * ROW_HEIGHT, left: 0, right: 0 }}>
+                    {rowData.map(({ row, cells }) => (
+                      <div key={row} className="flex hover:bg-green-100/30 dark:hover:bg-green-800/10 transition-colors">
+                        {/* Row Header */}
+                        <div className="w-16 h-12 bg-gradient-to-r from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 border-r border-b border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-semibold text-green-600 dark:text-green-300 sticky left-0 z-10">
+                          {row + 1}
+                        </div>
+                        
+                        {/* Cells */}
+                        {cells.map(({ cellId, cell }, cellIdx) => {
+                          const isSelected = selectedCell === cellId;
+                          const isInRange = selectedCellsSet.has(cellId);
+                          const isEditing = editingCell === cellId;
+                          const colLetter = cellId[0];
+                          return (
+                            <SpreadsheetCell
+                              key={cellId}
+                              cellId={cellId}
+                              cell={cell}
+                              isSelected={isSelected}
+                              isInRange={isInRange}
+                              isEditing={isEditing}
+                              {...getCellHandlers(cellId)}
+                              inputRef={inputRef}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              handleEditSubmit={handleEditSubmit}
+                              handleEditKeyDown={handleEditKeyDown}
+                              style={{ 
+                                userSelect: 'none',
+                                border: isInRange ? '2px dotted #059669' : undefined,
+                                boxSizing: 'border-box',
+                                ...(sortedCol === colLetter ? { animation: 'flash 0.5s' } : {})
+                              }}
+                              isSheetLoading={isSheetLoading}
+                            />
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Add More Rows Button - Only show when at bottom */}
+            {showAddRowsButton && onAddMoreRows && sheet.rowCount < 100000 && (
+              <div className="flex justify-center py-4 bg-green-50 dark:bg-green-900 border-t border-green-200 dark:border-green-700">
+                <button
+                  onClick={onAddMoreRows}
+                  className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-medium transition-colors shadow-lg hover:shadow-xl flex items-center gap-2"
+                  title={`Add 1,000 more rows (${sheet.rowCount.toLocaleString()} / 100,000 total rows)`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Add 1,000 More Rows
+                  <span className="text-sm opacity-80">
+                    ({sheet.rowCount.toLocaleString()} / 100,000)
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Context Menu */}
+        <Menu
+          anchorEl={menuAnchor}
+          open={Boolean(menuAnchor)}
+          onClose={() => setMenuAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        >
+          <MenuItem onClick={() => { /* Cut logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><ContentCutIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Cut</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => { /* Copy logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><ContentCopyIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Copy</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => { /* Paste logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><ContentPasteIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Paste</ListItemText>
+          </MenuItem>
+          <Divider />
+          <MenuItem onClick={() => { /* Insert left logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><AddIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Insert 1 column to the left</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => { /* Insert right logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><AddIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Insert 1 column to the right</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => { /* Delete column logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><DeleteIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Delete column</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => { /* Clear column logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><RemoveIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Clear column</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={() => { /* Hide column logic */ setMenuAnchor(null); }}>
+            <ListItemIcon><VisibilityOffIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Hide column</ListItemText>
+          </MenuItem>
+          <Divider />
+          <MenuItem onClick={async () => {
+            if (menuCol && bulkUpdateCells && setSheetLoading) {
+              setSheetLoading(true);
+              const values = [];
+              for (let row = 1; row < sheet.rowCount; row++) {
+                const cellId = `${menuCol}${row + 1}`;
+                values.push(sheet.cells[cellId]?.value);
+              }
+              const sortedValues = [...values].sort((a, b) => {
+                if (a == null) return 1;
+                if (b == null) return -1;
+                return a - b;
+              });
+              const updates = [];
+              for (let row = 1; row < sheet.rowCount; row++) {
+                const cellId = `${menuCol}${row + 1}`;
+                updates.push({ cellId, value: sortedValues[row - 1] });
+              }
+              await bulkUpdateCells(updates);
+              setSortedCol(menuCol);
+              setTimeout(() => {
+                setSortedCol(null);
+                setSheetLoading(false);
+              }, 500);
             }
-            const sortedValues = [...values].sort((a, b) => {
-              if (a == null) return 1;
-              if (b == null) return -1;
-              return a - b;
-            });
-            const updates = [];
-            for (let row = 1; row < sheet.rowCount; row++) {
-              const cellId = `${menuCol}${row + 1}`;
-              updates.push({ cellId, value: sortedValues[row - 1] });
+            setMenuAnchor(null);
+          }}>
+            <ListItemIcon><ArrowDownwardIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Sort sheet A to Z</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={async () => {
+            if (menuCol && bulkUpdateCells && setSheetLoading) {
+              setSheetLoading(true);
+              const values = [];
+              for (let row = 1; row < sheet.rowCount; row++) {
+                const cellId = `${menuCol}${row + 1}`;
+                values.push(sheet.cells[cellId]?.value);
+              }
+              const sortedValues = [...values].sort((a, b) => {
+                if (a == null) return 1;
+                if (b == null) return -1;
+                return b - a;
+              });
+              const updates = [];
+              for (let row = 1; row < sheet.rowCount; row++) {
+                const cellId = `${menuCol}${row + 1}`;
+                updates.push({ cellId, value: sortedValues[row - 1] });
+              }
+              await bulkUpdateCells(updates);
+              setSortedCol(menuCol);
+              setTimeout(() => {
+                setSortedCol(null);
+                setSheetLoading(false);
+              }, 500);
             }
-            await bulkUpdateCells(updates);
-            setSortedCol(menuCol);
-            setTimeout(() => {
-              setSortedCol(null);
-              setSheetLoading(false);
-            }, 500);
-          }
-          setMenuAnchor(null);
-        }}>
-          <ListItemIcon><ArrowDownwardIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Sort sheet A to Z</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={async () => {
-          if (menuCol && bulkUpdateCells && setSheetLoading) {
-            setSheetLoading(true);
-            const values = [];
-            for (let row = 1; row < sheet.rowCount; row++) {
-              const cellId = `${menuCol}${row + 1}`;
-              values.push(sheet.cells[cellId]?.value);
-            }
-            const sortedValues = [...values].sort((a, b) => {
-              if (a == null) return 1;
-              if (b == null) return -1;
-              return b - a;
-            });
-            const updates = [];
-            for (let row = 1; row < sheet.rowCount; row++) {
-              const cellId = `${menuCol}${row + 1}`;
-              updates.push({ cellId, value: sortedValues[row - 1] });
-            }
-            await bulkUpdateCells(updates);
-            setSortedCol(menuCol);
-            setTimeout(() => {
-              setSortedCol(null);
-              setSheetLoading(false);
-            }, 500);
-          }
-          setMenuAnchor(null);
-        }}>
-          <ListItemIcon><ArrowUpwardIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Sort sheet Z to A</ListItemText>
-        </MenuItem>
-        {/* Add more menu items as needed */}
-      </Menu>
-    </div>
+            setMenuAnchor(null);
+          }}>
+            <ListItemIcon><ArrowUpwardIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Sort sheet Z to A</ListItemText>
+          </MenuItem>
+          {/* Add more menu items as needed */}
+        </Menu>
+      </div>
+
+      {/* CSS for dotted background and animations */}
+      <style>{`
+        .spreadsheet-container {
+          background-image: radial-gradient(circle, #10b981 1px, transparent 1px);
+          background-size: 20px 20px;
+        }
+        
+        @keyframes flash {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+        
+        .animate-flash {
+          animation: flash 0.5s ease-in-out;
+        }
+      `}</style>
+    </Rnd>
   );
 };

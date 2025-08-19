@@ -14,6 +14,9 @@ interface MovableToolbarProps {
   canRedo?: boolean;
   onAddSheet?: () => void;
   onRearrange?: () => void;
+  onShowPivotTable?: () => void;
+  onShowPivotFullScreen?: () => void;
+  onShowPivotModal?: () => void;
 }
 
 export const MovableToolbar = (props: MovableToolbarProps) => {

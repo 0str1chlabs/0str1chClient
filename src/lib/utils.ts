@@ -42,8 +42,8 @@ export async function queryDuckDB(sql: string) {
   
   // Try to silence logging on this connection
   try {
-    await conn.query('SET log_level = 0');
-    await conn.query('SET enable_logging = false');
+    await conn.query('SET logging_level = 0');
+    await conn.query('SET enable_progress_bar = false');
   } catch (logError) {
     // Ignore errors if these settings don't exist
   }
@@ -222,8 +222,8 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
       const testConn = await window.duckDB.connect();
       try {
         // Execute SQL to disable logging if possible
-        await testConn.query('SET log_level = 0');
-        await testConn.query('SET enable_logging = false');
+        await testConn.query('SET logging_level = 0');
+        await testConn.query('SET enable_progress_bar = false');
       } catch (logError) {
         // Ignore errors if these settings don't exist
       } finally {
