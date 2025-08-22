@@ -1,19 +1,7 @@
 import React, { useState } from 'react';
 import { authService, User } from './AuthService';
+import { GoogleLogin } from '@react-oauth/google';
 
-// Google OAuth types
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: any) => void;
-          prompt: () => void;
-        };
-      };
-    };
-  }
-}
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -98,51 +86,37 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
 
     try {
       const response = await authService.hardcodedLogin(hardcodedEmail, rememberMe);
-      setSuccess('Login successful!');
+      setSuccess('Quick login successful!');
       setTimeout(() => {
         onLoginSuccess(response.user);
       }, 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(err instanceof Error ? err.message : 'Quick login failed');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleSuccess = async (credentialResponse: any) => {
     setLoading(true);
     setError(null);
 
     try {
-      // Initialize Google OAuth
-      if (typeof window !== 'undefined' && window.google) {
-        const google = window.google;
-        google.accounts.id.initialize({
-          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || 'your-google-client-id',
-          callback: async (response: any) => {
-            try {
-              const authResponse = await authService.googleLogin(response.credential, rememberMe);
-              setSuccess('Google login successful!');
-              setTimeout(() => {
-                onLoginSuccess(authResponse.user);
-              }, 1000);
-            } catch (err) {
-              setError(err instanceof Error ? err.message : 'Google login failed');
-            } finally {
-              setLoading(false);
-            }
-          },
-        });
-
-        google.accounts.id.prompt();
-      } else {
-        setError('Google OAuth not available');
-        setLoading(false);
-      }
+      const authResponse = await authService.googleLogin(credentialResponse.credential, rememberMe);
+      setSuccess('Google login successful!');
+      setTimeout(() => {
+        onLoginSuccess(authResponse.user);
+      }, 1000);
     } catch (err) {
-      setError('Google login failed');
+      setError(err instanceof Error ? err.message : 'Google login failed');
+    } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogleError = () => {
+    setError('Google login failed');
+    setLoading(false);
   };
 
   return (
@@ -227,16 +201,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
 
               <div className="mt-6">
                 <Separator className="my-4" />
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleGoogleLogin}
-                  disabled={loading}
-                >
-                  <Chrome className="mr-2 h-4 w-4" />
-                  Continue with Google
-                </Button>
+                <GoogleLogin
+                  onSuccess={handleGoogleSuccess}
+                  onError={handleGoogleError}
+                  useOneTap
+                />
               </div>
             </TabsContent>
 

@@ -209,3 +209,86 @@
 .ai-assistant * {
   color: hsl(var(--foreground));
 }
+
+/* Prevent white blocks and ensure proper positioning */
+.ai-chatbox,
+.movable-toolbar {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.ai-chatbox > *,
+.movable-toolbar > * {
+  background: inherit;
+}
+
+/* Ensure no unwanted backgrounds */
+.relative,
+.absolute,
+.fixed {
+  background: transparent;
+}
+
+/* Specific positioning fixes */
+.ai-chatbox {
+  background: white !important;
+  background-color: white !important;
+}
+
+.movable-toolbar {
+  background: transparent !important;
+}
+
+/* Prevent canvas background issues */
+.infinite-canvas {
+  background: transparent !important;
+}
+
+/* Enhanced dotted background for infinite canvas */
+.infinite-canvas {
+  background-color: #fafafa !important;
+  background-image: radial-gradient(circle, #e5e7eb 1px, transparent 1px) !important;
+  background-size: 20px 20px !important;
+  background-position: 0 0 !important;
+  background-repeat: repeat !important;
+}
+
+/* Ensure dotted pattern is visible on all canvas elements */
+.infinite-canvas > * {
+  background-color: #fafafa !important;
+  background-image: radial-gradient(circle, #e5e7eb 1px, transparent 1px) !important;
+  background-size: 20px 20px !important;
+  background-position: 0 0 !important;
+  background-repeat: repeat !important;
+}
+
+/* Dark mode support for dotted background */
+.dark .infinite-canvas,
+.dark .infinite-canvas > * {
+  background-color: #1f2937 !important;
+  background-image: radial-gradient(circle, #4b5563 1px, transparent 1px) !important;
+  background-size: 20px 20px !important;
+  background-position: 0 0 !important;
+  background-repeat: repeat !important;
+}
+
+/* Statistical Summary Component */
+.statistical-summary {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 50;
+}
+
+.statistical-summary .dropdown-option {
+  transition: all 0.2s ease-in-out;
+}
+
+.statistical-summary .dropdown-option:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.statistical-summary .dropdown-option.selected {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: rgb(59, 130, 246);
+}

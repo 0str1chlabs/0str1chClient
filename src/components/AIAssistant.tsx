@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff } from 'lucide-react';
+import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
 import { ChartRenderer } from './ChartRenderer';
+import { createCellSelectionContext, formatSelectionContextForAI, CellSelectionContext } from '@/lib/cellSelectionUtils';
 import axios from 'axios'; // Added axios import
 
 interface Message {
@@ -35,6 +36,10 @@ interface AIAssistantProps {
   onCreateCustom: () => void;
   updateCell: (cellId: string, value: string | number) => void;
   bulkUpdateCells?: (updates: { cellId: string, value: any }[]) => void;
+  onEmbedChart?: (chartData: any, chartSpec: any) => void;
+  csvUploaded?: boolean;
+  resetCsvUploadFlag?: () => void;
+  setIsProcessingCSV?: (processing: boolean) => void;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -48,7 +53,11 @@ export const AIAssistant = ({
   onUploadCSV,
   onCreateCustom,
   updateCell,
-  bulkUpdateCells
+  bulkUpdateCells,
+  onEmbedChart,
+  csvUploaded,
+  resetCsvUploadFlag,
+  setIsProcessingCSV
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -76,6 +85,28 @@ export const AIAssistant = ({
   const [pendingActionReason, setPendingActionReason] = useState<string | null>(null);
   const [pendingReplyResult, setPendingReplyResult] = useState<string | null>(null);
   const [currentSchema, setCurrentSchema] = useState<string | null>(null);
+  const [selectionContext, setSelectionContext] = useState<CellSelectionContext | null>(null);
+
+  // Update selection context when selectedCells changes
+  useEffect(() => {
+    if (selectedCells.length > 0 && activeSheet) {
+      const context = createCellSelectionContext(selectedCells, activeSheet);
+      setSelectionContext(context);
+      
+      // Show helpful message when cells are first selected (only if schema is ready)
+      if (isSchemaReady && !isDuckDBProcessing && context && messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        // Only add message if the last message isn't already about selection
+        if (!lastMessage.content.includes('selected') && !lastMessage.content.includes('selection')) {
+          setTimeout(() => {
+            addMessage('ai', `🎯 I see you've selected ${context.selection_type === 'single' ? 'a cell' : context.selection_type === 'range' ? 'a range' : 'multiple cells'} (${context.selected_range}). I can help you analyze, update, or create charts from your selected data. Try asking: "What's the average?" or "Update these values" or "Create a chart".`);
+          }, 1000);
+        }
+      }
+    } else {
+      setSelectionContext(null);
+    }
+  }, [selectedCells, activeSheet, isSchemaReady, isDuckDBProcessing]);
 
   const mainPrompts = [
     {
@@ -94,36 +125,38 @@ export const AIAssistant = ({
     }
   ];
 
-  const quickActions = [
-    {
-      icon: Calculator,
-      label: 'Sum Selected',
-      action: () => handleCalculationSuggestion('sum-selected'),
-      color: 'bg-yellow-500 text-black',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-    {
-      icon: TrendingUp,
-      label: 'Average',
-      action: () => handleCalculationSuggestion('average-selected'),
-      color: 'bg-black text-yellow-400',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-    {
-      icon: BarChart3,
-      label: 'Bar Chart',
-      action: () => onGenerateChart('bar'),
-      color: 'bg-yellow-400 text-black',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-    {
-      icon: Lightbulb,
-      label: 'Analyze',
-      action: () => handleSuggestion('analyze trends'),
-      color: 'bg-black text-yellow-400',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-  ];
+  const quickActions = useMemo(() => {
+    return [
+      {
+        icon: Calculator,
+        label: 'Calculate',
+        action: () => handleCalculationSuggestion('sum-selected'),
+        color: 'bg-yellow-500 text-black',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+      {
+        icon: TrendingUp,
+        label: 'Average',
+        action: () => handleCalculationSuggestion('average-selected'),
+        color: 'bg-black text-yellow-400',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+      {
+        icon: BarChart3,
+        label: 'Chart',
+        action: () => onGenerateChart('bar'),
+        color: 'bg-yellow-400 text-black',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+      {
+        icon: Lightbulb,
+        label: 'Analyze',
+        action: () => handleSuggestion('analyze data'),
+        color: 'bg-black text-yellow-400',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+    ];
+  }, [isDuckDBProcessing, isSchemaReady]);
 
   const handleCalculationSuggestion = async (operation: string) => {
     // Check if DuckDB is still processing or schema is not ready
@@ -334,7 +367,7 @@ ${sampleRows.join('\n')}`;
     try {
       setIsDuckDBProcessing(true);
       const { extractDuckDBSchemaSummary } = await import('../lib/utils');
-      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'data', 3);
+      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'sheet_data', 3);
 
       setCurrentSchema(schema);
       setIsDuckDBProcessing(false);
@@ -355,7 +388,7 @@ ${sampleRows.join('\n')}`;
       
       // Query all data from DuckDB
       const { queryDuckDB } = await import('../lib/utils');
-      const result = await queryDuckDB('SELECT * FROM data');
+      const result = await queryDuckDB('SELECT * FROM sheet_data');
       
       if (result && result.length > 0) {
         // Convert DuckDB result to spreadsheet format
@@ -437,9 +470,19 @@ ${sampleRows.join('\n')}`;
 
   };
 
-  // Auto-load sheet into DuckDB and generate schema when activeSheet changes
+  // Show message when CSV is uploaded
   useEffect(() => {
-    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0) {
+    if (csvUploaded) {
+      // Don't show automatic messages, just set processing state
+      setIsProcessingCSV?.(true);
+    }
+  }, [csvUploaded, setIsProcessingCSV]);
+
+  // Auto-load sheet into DuckDB and generate schema when activeSheet changes or CSV is uploaded
+  useEffect(() => {
+    // Load DuckDB if this is a new sheet, no schema yet, or CSV was uploaded
+    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0 && 
+        (!currentSchema || csvUploaded)) {
       // Check if we have actual data (not just empty cells)
       const hasActualData = Object.values(activeSheet.cells).some(cell => {
         if (cell && typeof cell === 'object' && cell !== null && 'value' in cell) {
@@ -449,32 +492,62 @@ ${sampleRows.join('\n')}`;
       });
 
       if (hasActualData) {
-    
+        if (csvUploaded) {
+          console.log('CSV upload detected - forcing DuckDB reload...');
+        } else {
+          console.log('Initial sheet detected - loading into DuckDB...');
+        }
+        
         verifySheetData();
         
         // Set DuckDB processing state
         setIsDuckDBProcessing(true);
         setIsSchemaReady(false);
         
-        // Add a small delay to ensure state is fully updated
-        setTimeout(async () => {
-      
-          
+        // Process immediately without delay
+        (async () => {
           try {
             // First, load data into DuckDB
             const { headerRow, schema } = await ensureSheetLoadedInDuckDB();
             
-            // Verify that data was actually loaded
-            const { queryDuckDB } = await import('../lib/utils');
-            const verifyResult = await queryDuckDB('SELECT COUNT(*) as count FROM "data"');
-            
-            // Also try to get a sample of data
-            const sampleResult = await queryDuckDB('SELECT * FROM "data" LIMIT 3');
-            
+            // Only verify if we have a schema (meaning the table was created successfully)
             if (schema) {
+              try {
+                // Use the same DuckDB instance and connection pattern as loadSheetToDuckDB
+                console.log('=== CHECKING WHAT TABLES EXIST ===');
+                if (!window.duckDB) {
+                  throw new Error('DuckDB not initialized for verification');
+                }
+                
+                const conn = await window.duckDB.connect();
+                try {
+                  // First, let's see what tables actually exist
+                  const tablesResult = await conn.query('SHOW TABLES');
+                  console.log('Available tables:', tablesResult.toArray());
+                  
+                  // Now try to verify the specific table
+                  console.log('=== VERIFYING "sheet_data" TABLE ===');
+                  const verifyResult = await conn.query('SELECT COUNT(*) as count FROM "sheet_data"');
+                  console.log('Table verification successful:', verifyResult.toArray());
+                  
+                  // Also try to get a sample of data
+                  const sampleResult = await conn.query('SELECT * FROM "sheet_data" LIMIT 3');
+                  console.log('Sample data retrieved successfully:', sampleResult.toArray());
+                } finally {
+                  await conn.close();
+                }
+              } catch (verifyError) {
+                console.error('Error verifying table (but schema exists):', verifyError);
+                // Don't fail completely if verification fails but schema exists
+              }
               
               setIsSchemaReady(true);
-              addMessage('ai', '✅ Data processed and schema generated! I\'m ready to help you analyze your data.');
+              if (csvUploaded) {
+                // Reset the CSV upload flag and processing state
+                resetCsvUploadFlag?.();
+              } else {
+                addMessage('ai', '✅ Data processed and schema generated! I\'m ready to help you analyze your data.');
+              }
             } else {
               console.warn('No schema generated, this might cause issues with AI processing');
               addMessage('ai', '⚠️ Data loaded but schema generation failed. Some AI features may be limited.');
@@ -485,23 +558,21 @@ ${sampleRows.join('\n')}`;
           } finally {
             setIsDuckDBProcessing(false);
           }
-        }, 200); // Increased delay to ensure CSV upload is complete
+        })();
       } else {
-    
         setIsDuckDBProcessing(false);
         setIsSchemaReady(false);
       }
-    } else if (activeSheet) {
+    } else if (activeSheet && !currentSchema) {
+      // Sheet exists but no schema - this might be a new empty sheet
       setIsDuckDBProcessing(false);
       setIsSchemaReady(false);
-      setIsDuckDBProcessing(false);
-      setIsSchemaReady(false);
-    } else {
+    } else if (!activeSheet) {
       // No active sheet
       setIsDuckDBProcessing(false);
       setIsSchemaReady(false);
     }
-  }, [activeSheet]);
+  }, [activeSheet?.id, currentSchema, csvUploaded, resetCsvUploadFlag]); // Added csvUploaded dependency back
 
   const handleSendMessage = async () => {
     if (!message.trim() || !activeSheet) return;
@@ -533,10 +604,13 @@ ${sampleRows.join('\n')}`;
           message: userMessage,
         schema,
         userEmail: user?.email || '',
+        selectionContext: selectionContext ? formatSelectionContextForAI(selectionContext) : null,
         sheetInfo: {
           totalRows: activeSheet.rowCount - 1,
           totalColumns: activeSheet.colCount,
-          columnAnalysis: [] // Will be derived from schema
+          columnAnalysis: [], // Will be derived from schema
+          hasSelection: selectionContext !== null,
+          selectionDetails: selectionContext
         }
       }, {
         headers: { Authorization: `Bearer ${token}` }
@@ -574,10 +648,13 @@ ${sampleRows.join('\n')}`;
         explanation: ai1Data.explanation,
         isUpdate: ai1Data.isUpdate,
         isChart: ai1Data.isChart || false,
+        selectionContext: selectionContext ? formatSelectionContextForAI(selectionContext) : null,
         sheetInfo: {
           totalRows: activeSheet.rowCount - 1,
           totalColumns: activeSheet.colCount,
-          columnAnalysis: [] // Will be derived from schema
+          columnAnalysis: [], // Will be derived from schema
+          hasSelection: selectionContext !== null,
+          selectionDetails: selectionContext
         }
       }, {
         headers: { Authorization: `Bearer ${token}` }
@@ -756,7 +833,13 @@ ${sampleRows.join('\n')}`;
     }
 
     addMessage('user', suggestion);
-    addMessage('ai', `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`);
+    
+    // Add context-aware response
+    if (selectionContext) {
+      addMessage('ai', `🎯 I'll ${suggestion.toLowerCase()} for your selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'} (${selectionContext.selected_range}).`);
+    } else {
+      addMessage('ai', `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`);
+    }
   };
 
   // Auto-expand textarea height
@@ -949,13 +1032,13 @@ ${sampleRows.join('\n')}`;
 
     // Load data into DuckDB
     console.log('Calling loadSheetToDuckDB...');
-    await loadSheetToDuckDB('data', sheetData);
+    await loadSheetToDuckDB('sheet_data', sheetData);
     console.log('loadSheetToDuckDB completed successfully');
     
     // Generate and log schema immediately after loading
     try {
       console.log('Calling extractDuckDBSchemaSummary...');
-      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'data', 3);
+      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'sheet_data', 3);
       console.log('=== DUCKDB SCHEMA GENERATED ===');
       console.log(schema);
       console.log('=== END SCHEMA ===');
@@ -1314,7 +1397,7 @@ ${sampleRows.join('\n')}`;
           zIndex: 9999, // Very high z-index to stay on top
           borderRadius: '9999px 0 0 9999px',
           background: 'hsl(var(--background))',
-          boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12), 0 1.5px 4px 0 rgba(0,0,0,0.10)',
+          boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12), 0 1.5px 4px 0 rgba(0, 0, 0, 0.10)',
           border: '1px solid hsl(var(--border))',
           padding: '12px 16px',
           display: 'flex',
@@ -1351,8 +1434,8 @@ ${sampleRows.join('\n')}`;
         maxWidth={900}
         maxHeight={800}
       >
-        <Card className="w-full h-full shadow-2xl flex flex-col overflow-hidden bg-background/80 backdrop-blur-md border border-border" style={{ filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))' }}>
-          <div className="flex items-center justify-between p-3 border-b border-border drag-handle cursor-move" onMouseDown={handleDragStart}>
+        <Card className="w-full h-full shadow-2xl flex flex-col overflow-hidden bg-background/80 backdrop-blur-md border border-border relative z-50" style={{ filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))' }}>
+          <div className="flex items-center justify-between p-3 border-b border-border drag-handle cursor-move bg-background/95 backdrop-blur-sm sticky top-0 z-10" onMouseDown={handleDragStart}>
             <div className="flex items-center gap-2 font-semibold text-sm">
               <Wand2 className="h-5 w-5 text-primary" />
               AI Assistant
@@ -1373,17 +1456,17 @@ ${sampleRows.join('\n')}`;
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 relative z-20">
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="h-8 w-8 no-drag" 
+                className="h-8 w-8 no-drag hover:bg-accent" 
                 onClick={toggleFixedMode}
                 title={isFixed ? "Make Movable" : "Fix Position"}
               >
                 {isFixed ? <PinOff className="h-4 w-4 text-foreground" /> : <Pin className="h-4 w-4 text-foreground" />}
               </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 no-drag" onClick={() => { setMinimized(true); onToggleMinimize(); }} title="Close">
+              <Button variant="ghost" size="icon" className="h-8 w-8 no-drag hover:bg-accent" onClick={() => { setMinimized(true); onToggleMinimize(); }} title="Close">
                 <X className="h-4 w-4 text-foreground" />
               </Button>
             </div>
@@ -1421,11 +1504,9 @@ ${sampleRows.join('\n')}`;
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              const detail = {
-                                data: msg.chartData?.data,
-                                chartSpec: msg.chartData?.chartSpec
-                              };
-                              window.dispatchEvent(new CustomEvent('embedChartFromChat', { detail }));
+                              if (onEmbedChart && msg.chartData) {
+                                onEmbedChart(msg.chartData.data, msg.chartData.chartSpec);
+                              }
                             }}
                           >
                             Embed on Canvas
@@ -1477,6 +1558,31 @@ ${sampleRows.join('\n')}`;
             </div>
           </ScrollArea>
           <div className="p-4 border-t border-border space-y-4">
+            {/* Selection Context Indicator */}
+            {selectionContext && (
+              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-300">
+                    <Target className="h-4 w-4" />
+                    <span className="font-medium">
+                      {selectionContext.selection_type === 'single' ? 'Cell Selected' : 
+                       selectionContext.selection_type === 'range' ? 'Range Selected' : 
+                       'Multiple Cells Selected'}
+                    </span>
+                  </div>
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedCells.length} cell{selectedCells.length !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
+                <div className="text-xs text-green-600 dark:text-green-400 mt-1">
+                  {selectionContext.selected_range} • {selectionContext.columns.join(', ')} • {selectionContext.row_count} rows
+                </div>
+                <div className="text-xs text-green-500 dark:text-green-300 mt-1 font-medium">
+                  💡 I'll focus on your selected cells for any questions you ask
+                </div>
+              </div>
+            )}
+            
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0"><FileUp className="h-5 w-5" /></Button>
               <Tooltip>
@@ -1487,6 +1593,8 @@ ${sampleRows.join('\n')}`;
                         ? "Processing data..." 
                         : !isSchemaReady 
                         ? "Waiting for schema..." 
+                        : selectionContext
+                        ? `Ask about selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'}...`
                         : "Ask the AI to do something..."
                     }
                     value={message}
