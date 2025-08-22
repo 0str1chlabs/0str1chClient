@@ -49,16 +49,38 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
       chartInstance.current?.resize();
     };
 
+    // Add resize observer for container size changes
+    const resizeObserver = new ResizeObserver(() => {
+      if (chartInstance.current) {
+        chartInstance.current.resize();
+      }
+    });
+
+    if (chartRef.current) {
+      resizeObserver.observe(chartRef.current);
+    }
+
     window.addEventListener('resize', handleResize);
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       if (chartInstance.current) {
         chartInstance.current.dispose();
         chartInstance.current = null;
       }
     };
-  }, [data, chartSpec]);
+  }, [data, chartSpec, width, height]);
+
+  // Force resize when dimensions change
+  useEffect(() => {
+    if (chartInstance.current) {
+      // Small delay to ensure DOM has updated
+      setTimeout(() => {
+        chartInstance.current?.resize();
+      }, 50);
+    }
+  }, [width, height]);
 
   const generateEChartsOption = (data: any[], spec: ChartSpec) => {
     const { type, title, x, y, color, sort } = spec;

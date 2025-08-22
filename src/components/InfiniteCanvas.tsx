@@ -27,6 +27,8 @@ interface InfiniteCanvasProps {
     size: { width: number; height: number };
   }>;
   onRemoveChart?: (chartId: string) => void;
+  onExpandChart?: (chartId: string) => void;
+  onShrinkChart?: (chartId: string) => void;
 }
 
 export interface InfiniteCanvasHandle {
@@ -38,9 +40,11 @@ export interface InfiniteCanvasHandle {
 }
 
 export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
-  ({ children, onAddSheet, uploadButton, zoom, onZoomChange, embeddedCharts = [], onRemoveChart }, ref) => {
+  ({ children, onAddSheet, uploadButton, zoom, onZoomChange, embeddedCharts = [], onRemoveChart, onExpandChart, onShrinkChart }, ref) => {
     const [blocks, setBlocks] = useState<CanvasBlock[]>([]);
     const [isPanning, setIsPanning] = useState(false);
+    const [draggedChart, setDraggedChart] = useState<string | null>(null);
+    const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
     const transformRef = useRef<any>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const spreadsheetRef = useRef<HTMLDivElement>(null);
@@ -71,6 +75,52 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
       onAddSheet();
     };
 
+    // Chart dragging handlers
+    const handleChartMouseDown = (e: React.MouseEvent, chartId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const chart = embeddedCharts.find(c => c.id === chartId);
+      if (!chart) return;
+      
+      const rect = e.currentTarget.getBoundingClientRect();
+      const offsetX = e.clientX - rect.left;
+      const offsetY = e.clientY - rect.top;
+      
+      setDraggedChart(chartId);
+      setDragOffset({ x: offsetX, y: offsetY });
+    };
+
+    const handleChartMouseMove = (e: React.MouseEvent) => {
+      if (!draggedChart) return;
+      
+      e.preventDefault();
+      
+      const chart = embeddedCharts.find(c => c.id === draggedChart);
+      if (!chart) return;
+      
+      // Calculate new position based on mouse position and offset
+      const newX = e.clientX - dragOffset.x;
+      const newY = e.clientY - dragOffset.y;
+      
+      // Update chart position
+      const updatedCharts = embeddedCharts.map(c => 
+        c.id === draggedChart 
+          ? { ...c, position: { x: newX, y: newY } }
+          : c
+      );
+      
+      // Dispatch custom event to notify parent of chart movement
+      window.dispatchEvent(new CustomEvent('chartMoved', {
+        detail: { chartId: draggedChart, newPosition: { x: newX, y: newY }, updatedCharts }
+      }));
+    };
+
+    const handleChartMouseUp = () => {
+      setDraggedChart(null);
+      setDragOffset({ x: 0, y: 0 });
+    };
+
     // Handlers for cursor change
     useEffect(() => {
       const wrapper = wrapperRef.current;
@@ -96,6 +146,49 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
         }
       }
     }, [zoom]);
+
+    // Effect to handle chart dragging
+    useEffect(() => {
+      if (draggedChart) {
+        const handleGlobalMouseMove = (e: MouseEvent) => {
+          if (!draggedChart) return;
+          
+          e.preventDefault();
+          
+          const chart = embeddedCharts.find(c => c.id === draggedChart);
+          if (!chart) return;
+          
+          // Calculate new position based on mouse position and offset
+          const newX = e.clientX - dragOffset.x;
+          const newY = e.clientY - dragOffset.y;
+          
+          // Update chart position
+          const updatedCharts = embeddedCharts.map(c => 
+            c.id === draggedChart 
+              ? { ...c, position: { x: newX, y: newY } }
+              : c
+          );
+          
+          // Dispatch custom event to notify parent of chart movement
+          window.dispatchEvent(new CustomEvent('chartMoved', {
+            detail: { chartId: draggedChart, newPosition: { x: newX, y: newY }, updatedCharts }
+          }));
+        };
+
+        const handleGlobalMouseUp = () => {
+          setDraggedChart(null);
+          setDragOffset({ x: 0, y: 0 });
+        };
+
+        document.addEventListener('mousemove', handleGlobalMouseMove);
+        document.addEventListener('mouseup', handleGlobalMouseUp);
+
+        return () => {
+          document.removeEventListener('mousemove', handleGlobalMouseMove);
+          document.removeEventListener('mouseup', handleGlobalMouseUp);
+        };
+      }
+    }, [draggedChart, dragOffset, embeddedCharts]);
 
     // Expose transform methods to parent via ref
     useImperativeHandle(ref, () => ({
@@ -200,13 +293,14 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
         style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       >
         {/* Infinite Canvas Container */}
-        <div className=""
+        <div className="infinite-canvas"
         style={{
           width: '8000px',
           height: '6000px',
-          backgroundColor: 'hsl(var(--background))',
-          backgroundImage: 'radial-gradient(hsla(var(--foreground), 0.1) 2px, transparent 2px)',
-          backgroundSize: '24px 24px',
+          backgroundColor: '#fafafa',
+          backgroundImage: 'radial-gradient(circle, #e5e7eb 1px, transparent 1px)',
+          backgroundSize: '20px 20px',
+          backgroundPosition: '0 0',
         }}>
           <TransformWrapper
             ref={transformRef}
@@ -233,17 +327,18 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
             }}
           >
             <TransformComponent
-              wrapperClass="!w-full !h-full"
-              contentClass="!w-full !h-full"
+              wrapperClass="!w-full !h-full infinite-canvas"
+              contentClass="!w-full !h-full infinite-canvas"
             >
               <div
                 className={"relative transition-shadow duration-200"}
                 style={{
                   width: '8000px',
                   height: '6000px',
-                  backgroundColor: 'hsl(var(--background))',
-                  backgroundImage: 'radial-gradient(hsla(var(--foreground), 0.1) 2px, transparent 2px)',
-                  backgroundSize: '24px 24px',
+                  backgroundColor: '#fafafa',
+                  backgroundImage: 'radial-gradient(circle, #e5e7eb 1px, transparent 1px)',
+                  backgroundSize: '20px 20px',
+                  backgroundPosition: '0 0',
                 }}
               >
                 {/* Main content positioned in the top left of the large canvas */}
@@ -263,40 +358,83 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 {embeddedCharts.map((chart) => (
                   <div
                     key={chart.id}
-                    className="absolute chart-block bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700"
+                    className="absolute chart-block bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 cursor-move select-none flex flex-col"
                     style={{
                       left: chart.position.x,
                       top: chart.position.y,
                       width: chart.size.width,
                       height: chart.size.height,
-                      zIndex: 20
+                      zIndex: 20,
+                      background: 'white',
+                      backgroundColor: 'white',
+                      userSelect: 'none',
                     }}
+                    onMouseDown={(e) => handleChartMouseDown(e, chart.id)}
                   >
-                    <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                    <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-700 rounded-t-lg">
                       <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                         {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
                       </span>
-                      <button
-                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                        onClick={() => {
-                          if (onRemoveChart) {
-                            onRemoveChart(chart.id);
-                          }
-                        }}
-                      >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {/* Expand Button */}
+                        <button
+                          className="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent chart dragging
+                            if (onExpandChart) {
+                              onExpandChart(chart.id);
+                            }
+                          }}
+                          title="Expand chart by 25%"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                          </svg>
+                        </button>
+
+                        {/* Shrink Button */}
+                        <button
+                          className="text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 p-1 rounded hover:bg-orange-100 dark:hover:bg-orange-900/30 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent chart dragging
+                            if (onShrinkChart) {
+                              onShrinkChart(chart.id);
+                            }
+                          }}
+                          title="Shrink chart by 20%"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 16v4m0 0h-4m4 0l-5-5M4 8V4m0 0h4M4 4l5 5m11 1v4m0 0h-4m4 0l-5-5M4 16v-4m0 0h4m-4 0l5 5" />
+                          </svg>
+                        </button>
+                        
+                        {/* Close Button */}
+                        <button
+                          className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent chart dragging
+                            if (onRemoveChart) {
+                              onRemoveChart(chart.id);
+                            }
+                          }}
+                          title="Remove chart"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                    <div className="p-3">
-                      <ChartRenderer
-                        data={chart.data}
-                        chartSpec={chart.chartSpec}
-                        width={chart.size.width - 20}
-                        height={chart.size.height - 80}
-                        className="w-full h-full"
-                      />
+                    <div className="bg-white dark:bg-gray-800 flex-1 flex items-center justify-center overflow-hidden" style={{ padding: '12px', minHeight: 0 }}>
+                      <div className="w-full h-full" style={{ minHeight: 0 }}>
+                        <ChartRenderer
+                          data={chart.data}
+                          chartSpec={chart.chartSpec}
+                          width={chart.size.width - 24}
+                          height={chart.size.height - 84}
+                          className="w-full h-full"
+                        />
+                      </div>
                     </div>
                   </div>
                 ))}

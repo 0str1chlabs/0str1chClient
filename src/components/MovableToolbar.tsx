@@ -123,10 +123,10 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   // Fixed position styles
   const fixedStyles = isFixed ? {
     position: 'fixed' as const,
-    left: 0,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    zIndex: 50,
+    left: '20px',
+    top: '300px',
+    transform: 'none',
+    zIndex: 90,
   } : {
     position: 'fixed' as const,
     left: position.x,
@@ -139,7 +139,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   return (
     <div
       ref={toolbarRef}
-      className="select-none"
+      className="movable-toolbar select-none"
       style={fixedStyles}
       onMouseDown={handleMouseDown}
       data-toolbar-handle="true"

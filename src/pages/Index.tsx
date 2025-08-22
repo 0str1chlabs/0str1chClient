@@ -5,9 +5,11 @@ import { MovableToolbar } from '@/components/MovableToolbar';
 import { ModernSpreadsheet } from '@/components/ModernSpreadsheet';
 import { PivotTableModal } from '@/components/PivotTableModal';
 import { InfiniteCanvas } from '@/components/InfiniteCanvas';
+import { StatisticalSummary } from '@/components/StatisticalSummary';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle } from 'lucide-react';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database } from 'lucide-react';
+import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 
 const Index: React.FC = () => {
   const { user, logout } = useAuth();
@@ -34,7 +36,122 @@ const Index: React.FC = () => {
     size: { width: number; height: number };
   }>>([]);
 
+  // State to track CSV processing and upload flag
+  const [isProcessingCSV, setIsProcessingCSV] = useState(false);
+  const [csvUploaded, setCsvUploaded] = useState(false);
+
   const activeSheet = sheets[activeSheetIndex];
+
+  // Hook for efficient DuckDB updates
+  const { updateCell: updateDuckDBCell, batchUpdateCells: batchUpdateDuckDBCells } = useDuckDBUpdates();
+
+  // Add global click handler to deselect cells when clicking on sheet/canvas area
+  useEffect(() => {
+    const handleGlobalClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      
+      // Check if click is on a spreadsheet cell (should NOT deselect - cell selection will handle this)
+      const isOnSpreadsheetCell = target.closest('.spreadsheet-cell') ||
+                                  target.closest('.cell-input');
+      
+      // Check if click is on elements that should NOT deselect cells (preserve selection)
+      const isOnUIElement = target.closest('.ai-assistant') ||
+                            target.closest('.ai-chatbot') ||
+                            target.closest('[data-ai-component]') ||
+                            target.closest('[data-ai-chatbox]') ||
+                            target.closest('.movable-toolbar') ||
+                            target.closest('.toolbar-component') ||
+                            target.closest('.statistical-summary') ||
+                            target.closest('.MuiMenu-root') ||
+                            target.closest('.MuiMenuItem-root') ||
+                            target.closest('[role="menu"]') ||
+                            target.closest('[role="menuitem"]') ||
+                            target.closest('.embedded-chart') || // Embedded charts on canvas
+                            target.closest('.chart-renderer') || // Chart components
+                            target.tagName === 'INPUT' ||
+                            target.tagName === 'TEXTAREA' ||
+                            target.closest('input') ||
+                            target.closest('textarea') ||
+                            target.closest('.no-drag') ||
+                            target.closest('button') ||
+                            target.closest('.card') ||
+                            target.closest('.dialog') ||
+                            target.closest('.modal');
+      
+      // Check if click is on sheet/canvas background areas (should deselect)
+      const isOnSheetBackground = target.closest('.modern-spreadsheet') && !isOnSpreadsheetCell;
+      const isOnCanvasBackground = target.closest('.infinite-canvas') && !target.closest('.modern-spreadsheet');
+      
+      // Also check for main canvas container clicks (empty areas)
+      const isOnMainCanvasArea = !isOnUIElement && !isOnSpreadsheetCell && 
+                                 (target.classList.contains('main-canvas-area') || 
+                                  target.closest('.main-canvas-area'));
+      
+      // Only deselect if clicking on sheet/canvas background, not on cells or UI elements
+      if ((isOnSheetBackground || isOnCanvasBackground || isOnMainCanvasArea) && !isOnUIElement && selectedCells.length > 0) {
+        console.log('Clicked on sheet/canvas background - deselecting cells');
+        setSelectedCells([]);
+      }
+    };
+
+    // Add event listener to document with capture phase to handle it early
+    document.addEventListener('click', handleGlobalClick, true);
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('click', handleGlobalClick, true);
+    };
+  }, [selectedCells]);
+
+  // Function to manually trigger full DuckDB reload
+  const triggerDuckDBReload = useCallback(async () => {
+    if (!activeSheet) return;
+    
+    try {
+      // Import the DuckDB utilities
+      const { loadSheetToDuckDB } = await import('@/lib/utils');
+      
+      // Convert sheet data to 2D array format for DuckDB
+      const { colCount, rowCount } = activeSheet;
+      const sheetData: string[][] = [];
+      
+      // Create header row
+      const headerRow: string[] = [];
+      for (let col = 0; col < colCount; col++) {
+        const colLetter = String.fromCharCode(65 + col);
+        const cellId = `${colLetter}1`;
+        const cell = activeSheet.cells[cellId];
+        const headerValue = cell && cell.value ? String(cell.value) : colLetter;
+        headerRow.push(headerValue);
+      }
+      sheetData.push(headerRow);
+      
+      // Create data rows
+      for (let row = 2; row <= rowCount; row++) {
+        const dataRow: string[] = [];
+        for (let col = 0; col < colCount; col++) {
+          const colLetter = String.fromCharCode(65 + col);
+          const cellId = `${colLetter}${row}`;
+          const cell = activeSheet.cells[cellId];
+          const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
+          dataRow.push(cellValue);
+        }
+        sheetData.push(dataRow);
+      }
+      
+      // Load data into DuckDB
+      await loadSheetToDuckDB('sheet_data', sheetData);
+      console.log('Manual DuckDB reload completed');
+    } catch (error) {
+      console.error('Error in manual DuckDB reload:', error);
+    }
+      }, [activeSheet]);
+
+  // Function to reset CSV upload flag after DuckDB reload
+  const resetCsvUploadFlag = useCallback(() => {
+    setCsvUploaded(false);
+    setIsProcessingCSV(false);
+  }, []);
 
   // Initialize first sheet - start completely empty
   useEffect(() => {
@@ -47,12 +164,34 @@ const Index: React.FC = () => {
     }
   }, []); // Empty dependency array - only run once on mount
 
-  const handleUpdateCell = useCallback((cellId: string, value: string | number) => {
+  const handleUpdateCell = useCallback(async (cellId: string, value: string | number) => {
+    // Update local state immediately
     setSheets(prev => prev.map((sheet, index) => 
       index === activeSheetIndex 
         ? { ...sheet, cells: { ...sheet.cells, [cellId]: { value } } }
         : sheet
     ));
+
+    // Skip individual DuckDB updates for now - they will be handled on next full reload
+    // This keeps things simple and avoids the rowid() error
+    console.log(`Cell ${cellId} updated locally - DuckDB will be updated on next full reload`);
+  }, [activeSheetIndex]);
+
+  const handleBulkUpdateCells = useCallback(async (updates: { cellId: string, value: any }[]) => {
+    // Update local state immediately
+    setSheets(prev => prev.map((sheet, index) => {
+      if (index === activeSheetIndex) {
+        const updatedCells = { ...sheet.cells };
+        updates.forEach(({ cellId, value }) => {
+          updatedCells[cellId] = { value };
+        });
+        return { ...sheet, cells: updatedCells };
+      }
+      return sheet;
+    }));
+
+    // Skip DuckDB batch updates for now - they will be handled on next full reload
+    console.log(`${updates.length} cells updated locally - DuckDB will be updated on next full reload`);
   }, [activeSheetIndex]);
 
   const handleAddSheet = useCallback(() => {
@@ -94,7 +233,7 @@ const Index: React.FC = () => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
         const reader = new FileReader();
-        reader.onload = (event) => {
+        reader.onload = async (event) => {
           const csv = event.target?.result as string;
           const lines = csv.split('\n');
           const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
@@ -144,6 +283,10 @@ const Index: React.FC = () => {
                 }
               : sheet
           ));
+
+          // Use the original working logic - just trigger a flag for AIAssistant to handle
+          console.log('CSV uploaded - triggering DuckDB reload via AIAssistant');
+          setCsvUploaded(true);
         };
         reader.readAsText(file);
       }
@@ -188,25 +331,25 @@ const Index: React.FC = () => {
             // Initialize style object if it doesn't exist
             if (!updatedCell.style) {
               updatedCell.style = {};
-            }
-            
-            switch (action) {
-              case 'bold-toggle':
+    }
+
+    switch (action) {
+      case 'bold-toggle':
                 updatedCell.style.bold = value === 'true';
-                break;
-              case 'italic-toggle':
+        break;
+      case 'italic-toggle':
                 updatedCell.style.italic = value === 'true';
-                break;
-              case 'underline-toggle':
+        break;
+      case 'underline-toggle':
                 updatedCell.style.underline = value === 'true';
-                break;
-              case 'align-left':
+        break;
+      case 'align-left':
                 updatedCell.style.textAlign = 'left';
-                break;
-              case 'align-center':
+        break;
+      case 'align-center':
                 updatedCell.style.textAlign = 'center';
-                break;
-              case 'align-right':
+        break;
+      case 'align-right':
                 updatedCell.style.textAlign = 'right';
                 break;
               case 'fill-color':
@@ -224,8 +367,8 @@ const Index: React.FC = () => {
                 break;
               case 'font-family':
                 updatedCell.style.fontFamily = value;
-                break;
-              default:
+        break;
+      default:
                 console.log('Unknown format action:', action);
                 return sheet;
             }
@@ -267,7 +410,7 @@ const Index: React.FC = () => {
       canvasRef.current.zoomTo(0.6, 1000);
       
       // After zoom animation, adjust the view to show everything
-      setTimeout(() => {
+        setTimeout(() => {
         if (canvasRef.current) {
           canvasRef.current.fitToView(500);
         }
@@ -276,18 +419,23 @@ const Index: React.FC = () => {
     
     // Reposition AI chatbox to left side if not pinned
     const aiChatbox = document.querySelector('.ai-chatbox') as HTMLElement;
-    if (aiChatbox && !aiChatbox.classList.contains('pinned')) {
-      aiChatbox.style.left = '20px';
-      aiChatbox.style.right = 'auto';
-      aiChatbox.style.top = '100px';
-    }
     
     // Reposition toolbar to left side
     const toolbar = document.querySelector('.movable-toolbar') as HTMLElement;
     if (toolbar) {
+      // Ensure proper positioning without creating white blocks
+      toolbar.style.position = 'fixed';
       toolbar.style.left = '20px';
       toolbar.style.right = 'auto';
       toolbar.style.top = '300px';
+      toolbar.style.zIndex = '90';
+      // Remove any conflicting styles
+      toolbar.style.transform = 'none';
+      toolbar.style.margin = '0';
+      toolbar.style.padding = '0';
+      // Ensure no background conflicts
+      toolbar.style.background = 'transparent';
+      toolbar.style.backgroundColor = 'transparent';
     }
     
     // Reposition embedded charts below the sheet
@@ -302,6 +450,11 @@ const Index: React.FC = () => {
         height: 250
       }
     })));
+    
+    // Force a re-render to ensure proper positioning
+    setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 100);
     
     console.log('Layout rearrangement completed');
   }, []);
@@ -323,6 +476,50 @@ const Index: React.FC = () => {
     setEmbeddedCharts(prev => prev.filter(chart => chart.id !== chartId));
   }, []);
 
+  const handleExpandChart = useCallback((chartId: string) => {
+    setEmbeddedCharts(prev => prev.map(chart => 
+      chart.id === chartId 
+        ? {
+            ...chart,
+            size: {
+              width: Math.round(chart.size.width * 1.25),
+              height: Math.round(chart.size.height * 1.25)
+            }
+          }
+        : chart
+    ));
+    console.log('Chart expanded by 25%:', chartId);
+  }, []);
+
+  const handleShrinkChart = useCallback((chartId: string) => {
+    setEmbeddedCharts(prev => prev.map(chart => 
+      chart.id === chartId 
+        ? {
+            ...chart,
+            size: {
+              width: Math.max(200, Math.round(chart.size.width * 0.8)), // Minimum width of 200px
+              height: Math.max(150, Math.round(chart.size.height * 0.8)) // Minimum height of 150px
+            }
+          }
+        : chart
+    ));
+    console.log('Chart shrunk by 20%:', chartId);
+  }, []);
+
+  // Handle chart movement events from InfiniteCanvas
+  useEffect(() => {
+    const handleChartMoved = (event: CustomEvent) => {
+      const { chartId, newPosition, updatedCharts } = event.detail;
+      setEmbeddedCharts(updatedCharts);
+    };
+
+    window.addEventListener('chartMoved', handleChartMoved as EventListener);
+    
+    return () => {
+      window.removeEventListener('chartMoved', handleChartMoved as EventListener);
+    };
+  }, []);
+
   if (!user) {
     return <div>Loading...</div>;
   }
@@ -332,7 +529,7 @@ const Index: React.FC = () => {
       {/* Top Navigation Bar */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold text-gray-900 dark:text-white">Ostr1ch</h1>
             <div className="h-6 w-px bg-gray-300 dark:bg-gray-600"></div>
             <span className="text-sm text-gray-600 dark:text-gray-400">Welcome, {user.email}</span>
@@ -340,46 +537,50 @@ const Index: React.FC = () => {
           
           <div className="flex items-center gap-3">
             {/* Canvas Controls */}
-            <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-800 rounded-lg px-3 py-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  canvasRef.current?.zoomIn();
-                }}
-                className="h-8 w-8 p-0 hover:bg-gray-200 dark:hover:bg-gray-700"
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => canvasRef.current?.zoomIn()}
+                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Zoom In"
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 1 1 14 0zM10 7v6m3-3H7" />
-                </svg>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  canvasRef.current?.zoomOut();
-                }}
-                className="h-8 w-8 p-0 hover:bg-gray-200 dark:hover:bg-gray-700"
+                <ZoomIn className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => canvasRef.current?.zoomOut()}
+                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Zoom Out"
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 1 1 14 0zM10 7v6m3-3H7" />
-                </svg>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  canvasRef.current?.fitToView();
-                }}
-                className="h-8 w-8 p-0 hover:bg-gray-200 dark:hover:bg-gray-700"
-                title="Reset View"
+                <ZoomOut className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => canvasRef.current?.resetTransform()}
+                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Reset Zoom"
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </Button>
+                <RotateCcw className="h-4 w-4" />
+              </button>
+              <button
+                onClick={handleRearrangeLayout}
+                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Rearrange Layout"
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </button>
+              <button
+                onClick={triggerDuckDBReload}
+                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Reload DuckDB"
+              >
+                <Database className="h-4 w-4" />
+              </button>
+              
+              {/* CSV Processing Loader */}
+              {isProcessingCSV && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-lg">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  <span className="text-sm font-medium">Processing CSV...</span>
+                </div>
+              )}
             </div>
             
             {/* Rearrange Layout Button */}
@@ -397,10 +598,10 @@ const Index: React.FC = () => {
             {/* Upload CSV Button */}
             <Button
               onClick={handleUploadCSV}
-              variant="outline"
-              className="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
+              disabled={isProcessingCSV}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
             >
-              <Upload className="h-4 w-4 mr-2" />
+              <Upload className="h-4 w-4" />
               Upload CSV
             </Button>
             
@@ -470,64 +671,89 @@ const Index: React.FC = () => {
           </button>
         </div>
       </div>
-
+      
       {/* Main Content */}
-      <div className="relative h-[calc(100vh-120px)] mt-20">
+      <div className="relative h-[calc(100vh-120px)] mt-20 main-canvas-area">
+        {/* CSV Processing Overlay */}
+        {isProcessingCSV && (
+          <div className="absolute inset-0 bg-white/80 dark:bg-gray-900/80 z-50 flex items-center justify-center">
+            <div className="text-center">
+              <LoaderCircle className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                Processing CSV Data
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400">
+                Loading data into DuckDB... Please wait.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Infinite Canvas with Zoom and Pan */}
         <InfiniteCanvas 
           onAddSheet={handleAddSheet} 
           ref={canvasRef} 
           embeddedCharts={embeddedCharts}
           onRemoveChart={handleRemoveChart}
+          onExpandChart={handleExpandChart}
+          onShrinkChart={handleShrinkChart}
         >
           {/* Spreadsheet Area - Allow free movement */}
           <div className="absolute inset-0 z-10">
-            <ModernSpreadsheet
-              sheet={activeSheet}
-              updateCell={handleUpdateCell}
-              onSelectionChange={setSelectedCells}
-              selectedCells={selectedCells}
-              onAddMoreRows={() => {
-                setSheets(prev => prev.map((sheet, index) => 
-                  index === activeSheetIndex 
-                    ? { ...sheet, rowCount: sheet.rowCount + 1000 }
-                    : sheet
-                ));
-              }}
-              onSheetNameChange={(newName) => handleSheetNameChange(activeSheetIndex, newName)}
-            />
+                  <ModernSpreadsheet
+                    sheet={activeSheet}
+                    updateCell={handleUpdateCell}
+                    bulkUpdateCells={handleBulkUpdateCells}
+                    onSelectionChange={setSelectedCells}
+                    selectedCells={selectedCells}
+                    onAddMoreRows={() => {
+                      setSheets(prev => prev.map((sheet, index) => 
+                        index === activeSheetIndex 
+                          ? { ...sheet, rowCount: sheet.rowCount + 1000 }
+                          : sheet
+                      ));
+                    }}
+                    onSheetNameChange={(newName) => handleSheetNameChange(activeSheetIndex, newName)}
+                  />
           </div>
         </InfiniteCanvas>
-
+        
         {/* AI Chatbox - Positioned outside canvas with higher z-index */}
         {!isAIMinimized && (
-          <div className="ai-chatbox fixed right-0 top-20 w-80 h-[calc(100vh-120px)] bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 z-[100] shadow-lg">
-            <AIAssistant
-              onGenerateChart={handleGenerateChart}
-              onCalculate={handleCalculate}
-              activeSheet={activeSheet}
-              selectedCells={selectedCells}
-              isMinimized={isAIMinimized}
-              onToggleMinimize={() => setIsAIMinimized(!isAIMinimized)}
-              onUploadCSV={handleUploadCSV}
-              onCreateCustom={handleCreateCustom}
-              updateCell={handleUpdateCell}
-              onEmbedChart={handleEmbedChart}
-            />
-          </div>
+        <AIAssistant
+          onGenerateChart={handleGenerateChart}
+          onCalculate={handleCalculate}
+          activeSheet={activeSheet}
+          selectedCells={selectedCells}
+          isMinimized={isAIMinimized}
+          onToggleMinimize={() => setIsAIMinimized(!isAIMinimized)}
+          onUploadCSV={handleUploadCSV}
+          onCreateCustom={handleCreateCustom}
+          updateCell={handleUpdateCell}
+                      bulkUpdateCells={handleBulkUpdateCells}
+            onEmbedChart={handleEmbedChart}
+            csvUploaded={csvUploaded}
+            resetCsvUploadFlag={resetCsvUploadFlag}
+            setIsProcessingCSV={setIsProcessingCSV}
+          />
         )}
 
         {/* Movable Toolbar - Positioned outside canvas with higher z-index */}
-        <div className="movable-toolbar fixed left-0 top-20 z-[90]">
-          <MovableToolbar
-            onFormat={handleFormat}
-            selectedCells={selectedCells}
-            activeSheet={activeSheet}
-            onCellSelect={(cellId) => setSelectedCells([cellId])}
-            onAddSheet={handleAddSheet}
-            onRearrange={handleRearrangeLayout}
-          />
-        </div>
+        <MovableToolbar
+          onFormat={handleFormat}
+          selectedCells={selectedCells}
+          activeSheet={activeSheet}
+          onCellSelect={(cellId) => setSelectedCells([cellId])}
+          onAddSheet={handleAddSheet}
+          onRearrange={handleRearrangeLayout}
+        />
+
+        {/* Statistical Summary - Shows stats for selected cells */}
+        <StatisticalSummary
+          selectedCells={selectedCells}
+          activeSheet={activeSheet}
+          isVisible={selectedCells && selectedCells.length > 0}
+        />
       </div>
 
       {/* Pivot Table Modal */}

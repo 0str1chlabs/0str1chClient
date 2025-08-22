@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff, History, ChevronUp } from 'lucide-react';
+import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,21 +13,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
 import { ChartRenderer } from './ChartRenderer';
-import { useSessionStorage } from '@/hooks/useSessionStorage';
-import { MessageShimmer } from '@/components/ui/shimmer';
-import axios from 'axios';
+import { createCellSelectionContext, formatSelectionContextForAI, CellSelectionContext } from '@/lib/cellSelectionUtils';
+import axios from 'axios'; // Added axios import
 
 interface Message {
-  _id: string; // Changed from id to _id for MongoDB
   type: 'ai' | 'user';
   content: string;
   chartData?: {
     data: any[];
     chartSpec: any;
   };
-  timestamp: Date;
-  sessionId?: string;
-  messageOrder: number;
 }
 
 interface AIAssistantProps {
@@ -42,6 +37,9 @@ interface AIAssistantProps {
   updateCell: (cellId: string, value: string | number) => void;
   bulkUpdateCells?: (updates: { cellId: string, value: any }[]) => void;
   onEmbedChart?: (chartData: any, chartSpec: any) => void;
+  csvUploaded?: boolean;
+  resetCsvUploadFlag?: () => void;
+  setIsProcessingCSV?: (processing: boolean) => void;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -56,9 +54,18 @@ export const AIAssistant = ({
   onCreateCustom,
   updateCell,
   bulkUpdateCells,
-  onEmbedChart
+  onEmbedChart,
+  csvUploaded,
+  resetCsvUploadFlag,
+  setIsProcessingCSV
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      type: 'ai',
+      content: "✨ Welcome to your AI-powered infinite canvas! Upload some data and I'll help you analyze it, create stunning visualizations, and perform complex calculations."
+    }
+  ]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDuckDBProcessing, setIsDuckDBProcessing] = useState(false);
   const [isSchemaReady, setIsSchemaReady] = useState(false);
@@ -78,92 +85,28 @@ export const AIAssistant = ({
   const [pendingActionReason, setPendingActionReason] = useState<string | null>(null);
   const [pendingReplyResult, setPendingReplyResult] = useState<string | null>(null);
   const [currentSchema, setCurrentSchema] = useState<string | null>(null);
+  const [selectionContext, setSelectionContext] = useState<CellSelectionContext | null>(null);
 
-  // Session storage for messages
-  const {
-    recentMessages: messages,
-    addMessage,
-    clearMessages,
-    getRecentMessages
-  } = useSessionStorage();
-
-  // State for older messages
-  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
-  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | undefined>();
-  const [showOlderButton, setShowOlderButton] = useState(false);
-  const [hasOlderMessages, setHasOlderMessages] = useState(false);
-
-  // Initialize with welcome message if no messages exist
+  // Update selection context when selectedCells changes
   useEffect(() => {
-    // Check if welcome message already exists in current messages
-    const hasWelcomeMessage = messages.some(msg => 
-      msg.sessionId === 'welcome' && 
-      msg.content.includes('Welcome to your AI-powered infinite canvas')
-    );
-    
-    if (messages.length === 0 && !hasWelcomeMessage) {
-      addMessageToSession({
-        type: 'ai',
-        content: "✨ Welcome to your AI-powered infinite canvas! Upload some data and I'll help you analyze it, create stunning visualizations, and perform complex calculations.",
-        sessionId: 'welcome'
-      });
-    }
-  }, [messages]); // Only run when messages change
-
-  // Check if we should show the older messages button
-  useEffect(() => {
-    if (messages.length >= 4 && hasOlderMessages) {
-      setShowOlderButton(true);
+    if (selectedCells.length > 0 && activeSheet) {
+      const context = createCellSelectionContext(selectedCells, activeSheet);
+      setSelectionContext(context);
+      
+      // Show helpful message when cells are first selected (only if schema is ready)
+      if (isSchemaReady && !isDuckDBProcessing && context && messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        // Only add message if the last message isn't already about selection
+        if (!lastMessage.content.includes('selected') && !lastMessage.content.includes('selection')) {
+          setTimeout(() => {
+            addMessage('ai', `🎯 I see you've selected ${context.selection_type === 'single' ? 'a cell' : context.selection_type === 'range' ? 'a range' : 'multiple cells'} (${context.selected_range}). I can help you analyze, update, or create charts from your selected data. Try asking: "What's the average?" or "Update these values" or "Create a chart".`);
+          }, 1000);
+        }
+      }
     } else {
-      setShowOlderButton(false);
+      setSelectionContext(null);
     }
-  }, [messages.length, hasOlderMessages]);
-
-  // Load older messages from database
-  const loadOlderMessages = async () => {
-    if (!user?.email) return;
-
-    setIsLoadingOlder(true);
-    try {
-      const response = await axios.get(`/api/ai/messages/older?cursor=${nextCursor || ''}&limit=20`);
-      const { messages: newMessages, hasMore, nextCursor: newCursor } = response.data;
-
-      setOlderMessages(prev => [...prev, ...newMessages]);
-      setNextCursor(newCursor);
-      setHasOlderMessages(hasMore);
-    } catch (error) {
-      console.error('Failed to load older messages:', error);
-    } finally {
-      setIsLoadingOlder(false);
-    }
-  };
-
-  // Store message in database
-  const storeMessageInDB = async (message: Omit<Message, '_id' | 'timestamp' | 'messageOrder'>) => {
-    if (!user?.email) return;
-
-    try {
-      await axios.post('/api/ai/messages/store', {
-        type: message.type,
-        content: message.content,
-        chartData: message.chartData,
-        sessionId: message.sessionId
-      });
-    } catch (error) {
-      console.error('Failed to store message in DB:', error);
-    }
-  };
-
-  // Enhanced add message function
-  const addMessageToSession = (message: Omit<Message, '_id' | 'timestamp' | 'messageOrder'>) => {
-    const messageWithOrder = {
-      ...message,
-      messageOrder: Date.now() // Generate a simple order based on timestamp
-    };
-    addMessage(messageWithOrder);
-    storeMessageInDB(message); // Pass original message without messageOrder
-  };
+  }, [selectedCells, activeSheet, isSchemaReady, isDuckDBProcessing]);
 
   const mainPrompts = [
     {
@@ -182,69 +125,55 @@ export const AIAssistant = ({
     }
   ];
 
-  const quickActions = [
-    {
-      icon: Calculator,
-      label: 'Sum Selected',
-      action: () => handleCalculationSuggestion('sum-selected'),
-      color: 'bg-yellow-500 text-black',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-    {
-      icon: TrendingUp,
-      label: 'Average',
-      action: () => handleCalculationSuggestion('average-selected'),
-      color: 'bg-black text-yellow-400',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-    {
-      icon: BarChart3,
-      label: 'Bar Chart',
-      action: () => onGenerateChart('bar'),
-      color: 'bg-yellow-400 text-black',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-    {
-      icon: Lightbulb,
-      label: 'Analyze',
-      action: () => handleSuggestion('analyze trends'),
-      color: 'bg-black text-yellow-400',
-      disabled: isDuckDBProcessing || !isSchemaReady
-    },
-  ];
+  const quickActions = useMemo(() => {
+    return [
+      {
+        icon: Calculator,
+        label: 'Calculate',
+        action: () => handleCalculationSuggestion('sum-selected'),
+        color: 'bg-yellow-500 text-black',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+      {
+        icon: TrendingUp,
+        label: 'Average',
+        action: () => handleCalculationSuggestion('average-selected'),
+        color: 'bg-black text-yellow-400',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+      {
+        icon: BarChart3,
+        label: 'Chart',
+        action: () => onGenerateChart('bar'),
+        color: 'bg-yellow-400 text-black',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+      {
+        icon: Lightbulb,
+        label: 'Analyze',
+        action: () => handleSuggestion('analyze data'),
+        color: 'bg-black text-yellow-400',
+        disabled: isDuckDBProcessing || !isSchemaReady
+      },
+    ];
+  }, [isDuckDBProcessing, isSchemaReady]);
 
   const handleCalculationSuggestion = async (operation: string) => {
     // Check if DuckDB is still processing or schema is not ready
     if (isDuckDBProcessing) {
-      addMessageToSession({
-        type: 'ai',
-        content: '⏳ Please wait while I process your data and generate the schema...',
-        sessionId: 'current'
-      });
+      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
       return;
     }
 
     if (!isSchemaReady) {
-      addMessageToSession({
-        type: 'ai',
-        content: '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before performing calculations.',
-        sessionId: 'current'
-      });
+      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before performing calculations.');
       return;
     }
 
     if (selectedCells.length > 0 && activeSheet) {
       setIsLoading(true);
-      addMessageToSession({
-        type: 'user',
-        content: `${operation === 'sum-selected' ? 'Sum' : 'Average'} Selected`,
-        sessionId: 'current'
-      });
-      addMessageToSession({
-        type: 'ai',
-        content: `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`,
-        sessionId: 'current'
-      });
+      addMessage('user', `${operation === 'sum-selected' ? 'Sum' : 'Average'} Selected`);
+      addMessage('ai', `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`);
       try {
         const token = localStorage.getItem('auth_token');
         const response = await fetch('http://localhost:8090/api/ai', {
@@ -290,45 +219,29 @@ export const AIAssistant = ({
           }));
           result = fn(allCells);
         } catch (e) {
-          addMessageToSession({
-            type: 'ai',
-            content: `❌ Error executing AI function: ${e}`,
-            sessionId: 'current'
-          });
+          addMessage('ai', `❌ Error executing AI function: ${e}`);
           setIsLoading(false);
           return;
         }
         // Show result
         if (Array.isArray(result)) {
-          addMessageToSession({
-            type: 'ai',
-            content: `Result: ${JSON.stringify(result)}`,
-            sessionId: 'current'
-          });
+          addMessage('ai', `Result: ${JSON.stringify(result)}`);
         } else {
-          addMessageToSession({
-            type: 'ai',
-            content: `Result: ${result}`,
-            sessionId: 'current'
-          });
+          addMessage('ai', `Result: ${result}`);
         }
       } catch (err) {
-        addMessageToSession({
-          type: 'ai',
-          content: `❌ Error calculating ${operation === 'sum-selected' ? 'sum' : 'average'}`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `❌ Error calculating ${operation === 'sum-selected' ? 'sum' : 'average'}`);
         console.error(err);
       }
       setIsLoading(false);
       return;
     }
     onCalculate(operation);
-    addMessageToSession({
-      type: 'user',
-      content: `Calculate ${operation}`,
-      sessionId: 'current'
-    });
+    addMessage('user', `Calculate ${operation}`);
+  };
+
+  const addMessage = (type: 'ai' | 'user', content: string, chartData?: { data: any[]; chartSpec: any }) => {
+    setMessages(prev => [...prev, { type, content, chartData }]);
   };
 
   const createSheetSummary = async () => {
@@ -454,7 +367,7 @@ ${sampleRows.join('\n')}`;
     try {
       setIsDuckDBProcessing(true);
       const { extractDuckDBSchemaSummary } = await import('../lib/utils');
-      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'data', 3);
+      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'sheet_data', 3);
 
       setCurrentSchema(schema);
       setIsDuckDBProcessing(false);
@@ -475,7 +388,7 @@ ${sampleRows.join('\n')}`;
       
       // Query all data from DuckDB
       const { queryDuckDB } = await import('../lib/utils');
-      const result = await queryDuckDB('SELECT * FROM data');
+      const result = await queryDuckDB('SELECT * FROM sheet_data');
       
       if (result && result.length > 0) {
         // Convert DuckDB result to spreadsheet format
@@ -511,31 +424,19 @@ ${sampleRows.join('\n')}`;
           // Update the spreadsheet state
           if (bulkUpdateCells) {
             bulkUpdateCells(updates);
-            addMessageToSession({
-              type: 'ai',
-              content: `🔄 Spreadsheet refreshed with updated data from database.`,
-              sessionId: 'current'
-            });
+            addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
           } else {
             // Fallback: update cells one by one
             Object.entries(updatedCells).forEach(([cellId, cell]) => {
               updateCell(cellId, cell.value);
             });
-            addMessageToSession({
-              type: 'ai',
-              content: `🔄 Spreadsheet refreshed with updated data from database.`,
-              sessionId: 'current'
-            });
+            addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
           }
         }
       }
     } catch (error) {
       console.error('Error refreshing spreadsheet from DuckDB:', error);
-      addMessageToSession({
-        type: 'ai',
-        content: `⚠️ Could not refresh spreadsheet data: ${error}`,
-        sessionId: 'current'
-      });
+      addMessage('ai', `⚠️ Could not refresh spreadsheet data: ${error}`);
     }
   };
 
@@ -569,9 +470,19 @@ ${sampleRows.join('\n')}`;
 
   };
 
-  // Auto-load sheet into DuckDB and generate schema when activeSheet changes
+  // Show message when CSV is uploaded
   useEffect(() => {
-    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0) {
+    if (csvUploaded) {
+      // Don't show automatic messages, just set processing state
+      setIsProcessingCSV?.(true);
+    }
+  }, [csvUploaded, setIsProcessingCSV]);
+
+  // Auto-load sheet into DuckDB and generate schema when activeSheet changes or CSV is uploaded
+  useEffect(() => {
+    // Load DuckDB if this is a new sheet, no schema yet, or CSV was uploaded
+    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0 && 
+        (!currentSchema || csvUploaded)) {
       // Check if we have actual data (not just empty cells)
       const hasActualData = Object.values(activeSheet.cells).some(cell => {
         if (cell && typeof cell === 'object' && cell !== null && 'value' in cell) {
@@ -581,101 +492,105 @@ ${sampleRows.join('\n')}`;
       });
 
       if (hasActualData) {
-    
+        if (csvUploaded) {
+          console.log('CSV upload detected - forcing DuckDB reload...');
+        } else {
+          console.log('Initial sheet detected - loading into DuckDB...');
+        }
+        
         verifySheetData();
         
         // Set DuckDB processing state
         setIsDuckDBProcessing(true);
         setIsSchemaReady(false);
         
-        // Add a small delay to ensure state is fully updated
-        setTimeout(async () => {
-      
-          
+        // Process immediately without delay
+        (async () => {
           try {
             // First, load data into DuckDB
             const { headerRow, schema } = await ensureSheetLoadedInDuckDB();
             
-            // Verify that data was actually loaded
-            const { queryDuckDB } = await import('../lib/utils');
-            const verifyResult = await queryDuckDB('SELECT COUNT(*) as count FROM "data"');
-            
-            // Also try to get a sample of data
-            const sampleResult = await queryDuckDB('SELECT * FROM "data" LIMIT 3');
-            
+            // Only verify if we have a schema (meaning the table was created successfully)
             if (schema) {
+              try {
+                // Use the same DuckDB instance and connection pattern as loadSheetToDuckDB
+                console.log('=== CHECKING WHAT TABLES EXIST ===');
+                if (!window.duckDB) {
+                  throw new Error('DuckDB not initialized for verification');
+                }
+                
+                const conn = await window.duckDB.connect();
+                try {
+                  // First, let's see what tables actually exist
+                  const tablesResult = await conn.query('SHOW TABLES');
+                  console.log('Available tables:', tablesResult.toArray());
+                  
+                  // Now try to verify the specific table
+                  console.log('=== VERIFYING "sheet_data" TABLE ===');
+                  const verifyResult = await conn.query('SELECT COUNT(*) as count FROM "sheet_data"');
+                  console.log('Table verification successful:', verifyResult.toArray());
+                  
+                  // Also try to get a sample of data
+                  const sampleResult = await conn.query('SELECT * FROM "sheet_data" LIMIT 3');
+                  console.log('Sample data retrieved successfully:', sampleResult.toArray());
+                } finally {
+                  await conn.close();
+                }
+              } catch (verifyError) {
+                console.error('Error verifying table (but schema exists):', verifyError);
+                // Don't fail completely if verification fails but schema exists
+              }
               
               setIsSchemaReady(true);
-              addMessageToSession({
-                type: 'ai',
-                content: '✅ Data processed and schema generated! I\'m ready to help you analyze your data.',
-                sessionId: 'current'
-              });
+              if (csvUploaded) {
+                // Reset the CSV upload flag and processing state
+                resetCsvUploadFlag?.();
+              } else {
+                addMessage('ai', '✅ Data processed and schema generated! I\'m ready to help you analyze your data.');
+              }
             } else {
               console.warn('No schema generated, this might cause issues with AI processing');
-              addMessageToSession({
-                type: 'ai',
-                content: '⚠️ Data loaded but schema generation failed. Some AI features may be limited.',
-                sessionId: 'current'
-              });
+              addMessage('ai', '⚠️ Data loaded but schema generation failed. Some AI features may be limited.');
             }
           } catch (error) {
             console.error('Error loading sheet into DuckDB:', error);
-            addMessageToSession({
-              type: 'ai',
-              content: '❌ Error processing data. Please try uploading your data again.',
-              sessionId: 'current'
-            });
+            addMessage('ai', '❌ Error processing data. Please try uploading your data again.');
           } finally {
             setIsDuckDBProcessing(false);
           }
-        }, 200); // Increased delay to ensure CSV upload is complete
+        })();
       } else {
-    
         setIsDuckDBProcessing(false);
         setIsSchemaReady(false);
       }
-    } else if (activeSheet) {
+    } else if (activeSheet && !currentSchema) {
+      // Sheet exists but no schema - this might be a new empty sheet
       setIsDuckDBProcessing(false);
       setIsSchemaReady(false);
-      setIsDuckDBProcessing(false);
-      setIsSchemaReady(false);
-    } else {
+    } else if (!activeSheet) {
       // No active sheet
       setIsDuckDBProcessing(false);
       setIsSchemaReady(false);
     }
-  }, [activeSheet]);
+  }, [activeSheet?.id, currentSchema, csvUploaded, resetCsvUploadFlag]); // Added csvUploaded dependency back
 
   const handleSendMessage = async () => {
     if (!message.trim() || !activeSheet) return;
 
     // Check if DuckDB is still processing or schema is not ready
     if (isDuckDBProcessing) {
-      addMessageToSession({
-        type: 'ai',
-        content: '⏳ Please wait while I process your data and generate the schema...',
-        sessionId: 'current'
-      });
+      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
       return;
     }
 
     if (!isSchemaReady) {
-      addMessageToSession({
-        type: 'ai',
-        content: '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.',
-        sessionId: 'current'
-      });
+      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.');
       return;
     }
 
     const userMessage = message.trim();
     setMessage(''); // Clear input immediately
-    addMessageToSession({
-      type: 'user',
-      content: userMessage,
-      sessionId: 'current'
-    });
+    addMessage('user', userMessage);
 
     setIsLoading(true);
 
@@ -689,21 +604,20 @@ ${sampleRows.join('\n')}`;
           message: userMessage,
         schema,
         userEmail: user?.email || '',
+        selectionContext: selectionContext ? formatSelectionContextForAI(selectionContext) : null,
         sheetInfo: {
           totalRows: activeSheet.rowCount - 1,
           totalColumns: activeSheet.colCount,
-          columnAnalysis: [] // Will be derived from schema
+          columnAnalysis: [], // Will be derived from schema
+          hasSelection: selectionContext !== null,
+          selectionDetails: selectionContext
         }
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
       if (ai1Response.data.error) {
-        addMessageToSession({
-          type: 'ai',
-          content: `❌ Error: ${ai1Response.data.error}`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `❌ Error: ${ai1Response.data.error}`);
         return;
       }
 
@@ -711,11 +625,7 @@ ${sampleRows.join('\n')}`;
       
       // Display the response to user from AI1
       if (ai1Data.response_to_user) {
-        addMessageToSession({
-          type: 'ai',
-          content: ai1Data.response_to_user,
-          sessionId: 'current'
-        });
+        addMessage('ai', ai1Data.response_to_user);
       }
       
       // If the query is not sheet-related, stop here
@@ -726,11 +636,7 @@ ${sampleRows.join('\n')}`;
       
       // If sheet-related, show explanation and proceed to AI2
       if (ai1Data.explanation) {
-        addMessageToSession({
-          type: 'ai',
-          content: ai1Data.explanation,
-          sessionId: 'current'
-        });
+        addMessage('ai', ai1Data.explanation);
       }
 
       // Then, get AI2 code generation (only for sheet-related queries)
@@ -742,21 +648,20 @@ ${sampleRows.join('\n')}`;
         explanation: ai1Data.explanation,
         isUpdate: ai1Data.isUpdate,
         isChart: ai1Data.isChart || false,
+        selectionContext: selectionContext ? formatSelectionContextForAI(selectionContext) : null,
         sheetInfo: {
           totalRows: activeSheet.rowCount - 1,
           totalColumns: activeSheet.colCount,
-          columnAnalysis: [] // Will be derived from schema
+          columnAnalysis: [], // Will be derived from schema
+          hasSelection: selectionContext !== null,
+          selectionDetails: selectionContext
         }
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
       if (ai2Response.data.error) {
-        addMessageToSession({
-          type: 'ai',
-          content: `❌ Error: ${ai2Response.data.error}`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `❌ Error: ${ai2Response.data.error}`);
         return;
       }
 
@@ -793,28 +698,15 @@ ${sampleRows.join('\n')}`;
             );
             if (chartData && chartData.length > 0) {
               // Add chart message with data
-              addMessageToSession({
-                type: 'ai',
-                content: `📊 Here's your ${masterResponse.chart_spec.type} chart:`,
-                chartData: {
-                  data: chartData,
-                  chartSpec: masterResponse.chart_spec
-                },
-                sessionId: 'current'
+              addMessage('ai', `📊 Here's your ${masterResponse.chart_spec.type} chart:`, {
+                data: chartData,
+                chartSpec: masterResponse.chart_spec
               });
             } else {
-              addMessageToSession({
-                type: 'ai',
-                content: '❌ No data found for the chart.',
-                sessionId: 'current'
-              });
+              addMessage('ai', '❌ No data found for the chart.');
             }
           } catch (error) {
-            addMessageToSession({
-              type: 'ai',
-              content: `❌ Error generating chart: ${error instanceof Error ? error.message : 'Unknown error'}`,
-              sessionId: 'current'
-            });
+            addMessage('ai', `❌ Error generating chart: ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
         } else if (masterResponse.requires_update) {
           // For update operations, show confirmation buttons instead of executing immediately
@@ -829,19 +721,11 @@ ${sampleRows.join('\n')}`;
           await executeAI2Code(masterResponse.ai2_generated_code, masterResponse.tool, masterResponse.requires_update, columnAnalysis);
         }
       } else if (ai2Data.stage === 'ai2_failed') {
-        addMessageToSession({
-          type: 'ai',
-          content: `❌ AI2 processing failed: ${ai2Data.ai2_error?.error || 'Unknown error'}`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `❌ AI2 processing failed: ${ai2Data.ai2_error?.error || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error in handleSendMessage:', error);
-      addMessageToSession({
-        type: 'ai',
-        content: `❌ Error: ${error instanceof Error ? error.message : 'Something went wrong'}`,
-        sessionId: 'current'
-      });
+      addMessage('ai', `❌ Error: ${error instanceof Error ? error.message : 'Something went wrong'}`);
     } finally {
       setIsLoading(false);
     }
@@ -878,11 +762,7 @@ ${sampleRows.join('\n')}`;
         }));
         updates = fn(allCells);
       } catch (e) {
-        addMessageToSession({
-          type: 'ai',
-          content: `❌ Error executing AI function: ${e}`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `❌ Error executing AI function: ${e}`);
         setPendingAction(null);
         setPendingType(null);
         setPendingReasoning([]);
@@ -897,17 +777,9 @@ ${sampleRows.join('\n')}`;
             applied++;
           }
         });
-        addMessageToSession({
-          type: 'ai',
-          content: `Applied ${applied} cell update${applied !== 1 ? 's' : ''} to the spreadsheet.`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `Applied ${applied} cell update${applied !== 1 ? 's' : ''} to the spreadsheet.`);
       } else {
-        addMessageToSession({
-          type: 'ai',
-          content: `AI function did not return an updates array.`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `AI function did not return an updates array.`);
       }
     } else if (pendingType === 'sql' || pendingActionType === 'update') {
       // Execute the SQL query
@@ -916,11 +788,7 @@ ${sampleRows.join('\n')}`;
         const result = await queryDuckDB(pendingAction as string);
         
         if (result && result.length > 0) {
-          addMessageToSession({
-            type: 'ai',
-            content: `✅ SQL executed successfully! Modified ${result.length} rows.`,
-            sessionId: 'current'
-          });
+          addMessage('ai', `✅ SQL executed successfully! Modified ${result.length} rows.`);
           
           // Refresh spreadsheet data from DuckDB to show updated values
           await refreshSpreadsheetFromDuckDB();
@@ -928,18 +796,10 @@ ${sampleRows.join('\n')}`;
           // Update schema after modification
           await updateSchemaAfterModification();
         } else {
-          addMessageToSession({
-            type: 'ai',
-            content: `✅ SQL executed successfully, but no rows were modified.`,
-            sessionId: 'current'
-        });
+          addMessage('ai', `✅ SQL executed successfully, but no rows were modified.`);
         }
       } catch (error) {
-        addMessageToSession({
-          type: 'ai',
-          content: `❌ Error executing SQL: ${error}`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `❌ Error executing SQL: ${error}`);
         console.error('SQL execution error:', error);
       }
     }
@@ -952,11 +812,7 @@ ${sampleRows.join('\n')}`;
 
   // Handler for Reject button
   const handleReject = () => {
-    addMessageToSession({
-      type: 'ai',
-      content: `Seems like 0str1ch messed up. I am ashamed! Let's give it another go.`,
-      sessionId: 'current'
-    });
+    addMessage('ai', `Seems like 0str1ch messed up. I am ashamed! Let's give it another go.`);
     setPendingAction(null);
     setPendingType(null);
     setPendingActionType(null);
@@ -967,33 +823,23 @@ ${sampleRows.join('\n')}`;
   const handleSuggestion = (suggestion: string) => {
     // Check if DuckDB is still processing or schema is not ready
     if (isDuckDBProcessing) {
-      addMessageToSession({
-        type: 'ai',
-        content: '⏳ Please wait while I process your data and generate the schema...',
-        sessionId: 'current'
-      });
+      addMessage('ai', '⏳ Please wait while I process your data and generate the schema...');
       return;
     }
 
     if (!isSchemaReady) {
-      addMessageToSession({
-        type: 'ai',
-        content: '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.',
-        sessionId: 'current'
-      });
+      addMessage('ai', '⚠️ Data processing is not complete yet. Please wait for the schema to be generated before asking questions.');
       return;
     }
 
-    addMessageToSession({
-      type: 'user',
-      content: suggestion,
-      sessionId: 'current'
-    });
-    addMessageToSession({
-      type: 'ai',
-      content: `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`,
-      sessionId: 'current'
-    });
+    addMessage('user', suggestion);
+    
+    // Add context-aware response
+    if (selectionContext) {
+      addMessage('ai', `🎯 I'll ${suggestion.toLowerCase()} for your selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'} (${selectionContext.selected_range}).`);
+    } else {
+      addMessage('ai', `🚀 Great choice! I'll help you ${suggestion.toLowerCase()}.`);
+    }
   };
 
   // Auto-expand textarea height
@@ -1186,13 +1032,13 @@ ${sampleRows.join('\n')}`;
 
     // Load data into DuckDB
     console.log('Calling loadSheetToDuckDB...');
-    await loadSheetToDuckDB('data', sheetData);
+    await loadSheetToDuckDB('sheet_data', sheetData);
     console.log('loadSheetToDuckDB completed successfully');
     
     // Generate and log schema immediately after loading
     try {
       console.log('Calling extractDuckDBSchemaSummary...');
-      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'data', 3);
+      const schema = await extractDuckDBSchemaSummary(window.duckDB, 'sheet_data', 3);
       console.log('=== DUCKDB SCHEMA GENERATED ===');
       console.log(schema);
       console.log('=== END SCHEMA ===');
@@ -1239,19 +1085,11 @@ ${sampleRows.join('\n')}`;
           await updateSchemaAfterModification();
           
           if (!options?.suppressOutput) {
-            addMessageToSession({
-              type: 'ai',
-              content: `✅ Sheet updated successfully! Modified ${result.length} rows.`,
-              sessionId: 'current'
-            });
+            addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);
           }
         } else {
           if (!options?.suppressOutput) {
-            addMessageToSession({
-              type: 'ai',
-              content: `✅ Query executed successfully, but no rows were modified.`,
-              sessionId: 'current'
-            });
+            addMessage('ai', `✅ Query executed successfully, but no rows were modified.`);
           }
         }
       } else {
@@ -1261,17 +1099,9 @@ ${sampleRows.join('\n')}`;
             const resultText = result.map((row: any) => 
               Object.values(row).join(', ')
             ).join('\n');
-            addMessageToSession({
-              type: 'ai',
-              content: `📊 Query Results:\n${resultText}`,
-              sessionId: 'current'
-            });
+            addMessage('ai', `📊 Query Results:\n${resultText}`);
           } else {
-            addMessageToSession({
-              type: 'ai',
-              content: `📊 Query executed successfully. No results returned.`,
-              sessionId: 'current'
-            });
+            addMessage('ai', `📊 Query executed successfully. No results returned.`);
           }
         }
       }
@@ -1279,11 +1109,7 @@ ${sampleRows.join('\n')}`;
     } catch (error) {
       console.error('Error executing SQL query:', error);
       if (!options?.suppressOutput) {
-        addMessageToSession({
-          type: 'ai',
-          content: `❌ Error executing SQL query: ${error}`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `❌ Error executing SQL query: ${error}`);
       }
       return null;
     }
@@ -1417,21 +1243,13 @@ ${sampleRows.join('\n')}`;
         resultText = `Result: ${result}`;
       }
       
-      addMessageToSession({
-        type: 'ai',
-        content: `✅ Danfo Query Result:\n${resultText}`,
-        sessionId: 'current'
-      });
+      addMessage('ai', `✅ Danfo Query Result:\n${resultText}`);
       
       return result;
       
     } catch (error) {
       console.error('Danfo execution error:', error);
-      addMessageToSession({
-        type: 'ai',
-        content: `❌ Error executing Danfo query: ${error}`,
-        sessionId: 'current'
-      });
+      addMessage('ai', `❌ Error executing Danfo query: ${error}`);
       throw error;
     }
   };
@@ -1539,11 +1357,7 @@ ${sampleRows.join('\n')}`;
       const convertedCode = convertExcelToColumnNames(generatedCode, columnAnalysis);
       
       if (convertedCode !== generatedCode) {
-        addMessageToSession({
-          type: 'ai',
-          content: `Note: Converted Excel column references to actual column names in SQL query.`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `Note: Converted Excel column references to actual column names in SQL query.`);
       }
       
       // Fix SQL column quoting
@@ -1551,11 +1365,7 @@ ${sampleRows.join('\n')}`;
       if (fixedSql !== convertedCode) {
         console.log('Original SQL:', convertedCode);
         console.log('Fixed SQL:', fixedSql);
-        addMessageToSession({
-          type: 'ai',
-          content: `Note: Fixed unquoted column names in SQL query.`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `Note: Fixed unquoted column names in SQL query.`);
       }
       
       // Fix underscore column names
@@ -1563,11 +1373,7 @@ ${sampleRows.join('\n')}`;
       if (finalSql !== fixedSql) {
         console.log('SQL with underscores:', fixedSql);
         console.log('SQL with original names:', finalSql);
-        addMessageToSession({
-          type: 'ai',
-          content: `Note: Fixed underscore column names to original names.`,
-          sessionId: 'current'
-        });
+        addMessage('ai', `Note: Fixed underscore column names to original names.`);
       }
       
       console.log('Final SQL to execute:', finalSql);
@@ -1575,11 +1381,7 @@ ${sampleRows.join('\n')}`;
       // Execute the converted SQL query
       await executeSQLQuery(finalSql, requiresUpdate);
     } catch (error) {
-      addMessageToSession({
-        type: 'ai',
-        content: `❌ Error executing AI2 code: ${error}`,
-        sessionId: 'current'
-      });
+      addMessage('ai', `❌ Error executing AI2 code: ${error}`);
       console.error('AI2 execution error:', error);
     }
   };
@@ -1595,7 +1397,7 @@ ${sampleRows.join('\n')}`;
           zIndex: 9999, // Very high z-index to stay on top
           borderRadius: '9999px 0 0 9999px',
           background: 'hsl(var(--background))',
-          boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12), 0 1.5px 4px 0 rgba(0,0,0,0.10)',
+          boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12), 0 1.5px 4px 0 rgba(0, 0, 0, 0.10)',
           border: '1px solid hsl(var(--border))',
           padding: '12px 16px',
           display: 'flex',
@@ -1671,85 +1473,6 @@ ${sampleRows.join('\n')}`;
           </div>
           <ScrollArea className="flex-1 p-4 custom-blue-scrollbar" style={{ maxHeight: 'calc(100% - 100px)' }}>
             <div className="space-y-6">
-              {/* Older Messages Button */}
-              {showOlderButton && (
-                <div className="flex justify-center">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={loadOlderMessages}
-                    disabled={isLoadingOlder}
-                    className="flex items-center gap-2"
-                  >
-                    {isLoadingOlder ? (
-                      <>
-                        <LoaderCircle className="h-4 w-4 animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      <>
-                        <History className="h-4 w-4" />
-                        Load Older Messages
-                      </>
-                    )}
-                  </Button>
-                </div>
-              )}
-
-              {/* Loading Shimmer for Older Messages */}
-              {isLoadingOlder && (
-                <div className="space-y-4">
-                  <MessageShimmer count={4} />
-                </div>
-              )}
-
-              {/* Older Messages */}
-              {olderMessages.map((msg, index) => (
-                <div
-                  key={`older-${msg._id}`}
-                  className={`flex items-start gap-3 ${msg.type === 'user' ? 'flex-row-reverse' : ''}`}
-                >
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={`https://placehold.co/40x40.png`} data-ai-hint={msg.type === 'user' ? 'person user' : 'robot'} />
-                    <AvatarFallback>{msg.type === 'user' ? 'ME' : 'AI'}</AvatarFallback>
-                  </Avatar>
-                  <div
-                    className={`max-w-md rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
-                      msg.type === 'user'
-                        ? 'bg-[hsl(205.91,68.04%,61.96%)] text-white'
-                        : 'bg-muted text-foreground'
-                    }`}
-                  >
-                    {msg.content}
-                    {msg.chartData && (
-                      <div className="mt-4">
-                        <ChartRenderer
-                          data={msg.chartData.data}
-                          chartSpec={msg.chartData.chartSpec}
-                          width={500}
-                          height={300}
-                          className="border rounded-lg"
-                        />
-                        <div className="mt-2 flex justify-center">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              if (onEmbedChart && msg.chartData) {
-                                onEmbedChart(msg.chartData.data, msg.chartData.chartSpec);
-                              }
-                            }}
-                          >
-                            Embed on Canvas
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              {/* Current Session Messages */}
               {messages.map((msg, index) => (
                 <div
                   key={index}
@@ -1835,6 +1558,31 @@ ${sampleRows.join('\n')}`;
             </div>
           </ScrollArea>
           <div className="p-4 border-t border-border space-y-4">
+            {/* Selection Context Indicator */}
+            {selectionContext && (
+              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-300">
+                    <Target className="h-4 w-4" />
+                    <span className="font-medium">
+                      {selectionContext.selection_type === 'single' ? 'Cell Selected' : 
+                       selectionContext.selection_type === 'range' ? 'Range Selected' : 
+                       'Multiple Cells Selected'}
+                    </span>
+                  </div>
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedCells.length} cell{selectedCells.length !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
+                <div className="text-xs text-green-600 dark:text-green-400 mt-1">
+                  {selectionContext.selected_range} • {selectionContext.columns.join(', ')} • {selectionContext.row_count} rows
+                </div>
+                <div className="text-xs text-green-500 dark:text-green-300 mt-1 font-medium">
+                  💡 I'll focus on your selected cells for any questions you ask
+                </div>
+              </div>
+            )}
+            
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0"><FileUp className="h-5 w-5" /></Button>
               <Tooltip>
@@ -1845,6 +1593,8 @@ ${sampleRows.join('\n')}`;
                         ? "Processing data..." 
                         : !isSchemaReady 
                         ? "Waiting for schema..." 
+                        : selectionContext
+                        ? `Ask about selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'}...`
                         : "Ask the AI to do something..."
                     }
                     value={message}

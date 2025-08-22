@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface Message {
-  _id: string; // Changed from id to _id for MongoDB
+  id: string;
   type: 'ai' | 'user';
   content: string;
   chartData?: any;
@@ -10,56 +10,75 @@ interface Message {
   messageOrder: number;
 }
 
-const MAX_MESSAGES = 4;
+interface UseSessionStorageReturn {
+  messages: Message[];
+  addMessage: (message: Omit<Message, 'id' | 'timestamp' | 'messageOrder'>) => void;
+  clearMessages: () => void;
+  loadMessagesFromStorage: () => void;
+  hasOlderMessages: boolean;
+  setHasOlderMessages: (hasMore: boolean) => void;
+}
 
-export const useSessionStorage = () => {
-  const [recentMessages, setRecentMessages] = useState<Message[]>([]);
+const SESSION_STORAGE_KEY = 'ai_chat_messages';
+const MAX_SESSION_MESSAGES = 4;
+
+export function useSessionStorage(): UseSessionStorageReturn {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
 
   // Load messages from session storage on mount
   useEffect(() => {
-    const stored = sessionStorage.getItem('recentMessages');
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        setRecentMessages(parsed);
-      } catch (error) {
-        console.error('Error parsing stored messages:', error);
-        sessionStorage.removeItem('recentMessages');
+    loadMessagesFromStorage();
+  }, []);
+
+  // Save messages to session storage whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(messages));
+    }
+  }, [messages]);
+
+  const loadMessagesFromStorage = useCallback(() => {
+    try {
+      const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (stored) {
+        const parsedMessages = JSON.parse(stored);
+        // Ensure we only keep the most recent 4 messages in session
+        const recentMessages = parsedMessages.slice(-MAX_SESSION_MESSAGES);
+        setMessages(recentMessages);
       }
+    } catch (error) {
+      console.error('Error loading messages from session storage:', error);
+      setMessages([]);
     }
   }, []);
 
-  // Save messages to session storage whenever they change
-  useEffect(() => {
-    sessionStorage.setItem('recentMessages', JSON.stringify(recentMessages));
-  }, [recentMessages]);
-
-  const addMessage = (message: Omit<Message, '_id' | 'timestamp'>) => {
+  const addMessage = useCallback((message: Omit<Message, 'id' | 'timestamp' | 'messageOrder'>) => {
     const newMessage: Message = {
       ...message,
-      _id: Date.now().toString(), // Generate a temporary ID for session storage
-      timestamp: new Date()
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      messageOrder: messages.length + 1,
     };
 
-    setRecentMessages(prev => {
-      const updated = [newMessage, ...prev];
-      return updated.slice(0, MAX_MESSAGES);
+    setMessages(prev => {
+      const updated = [...prev, newMessage];
+      // Keep only the most recent 4 messages in session
+      return updated.slice(-MAX_SESSION_MESSAGES);
     });
-  };
+  }, [messages.length]);
 
-  const clearMessages = () => {
-    setRecentMessages([]);
-    sessionStorage.removeItem('recentMessages');
-  };
-
-  const getRecentMessages = () => {
-    return [...recentMessages].reverse(); // Return in chronological order
-  };
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  }, []);
 
   return {
-    recentMessages,
+    messages,
     addMessage,
     clearMessages,
-    getRecentMessages
+    loadMessagesFromStorage,
+    hasOlderMessages,
+    setHasOlderMessages,
   };
-};
+}
