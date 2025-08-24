@@ -6,9 +6,10 @@ import { ModernSpreadsheet } from '@/components/ModernSpreadsheet';
 import { PivotTableModal } from '@/components/PivotTableModal';
 import { InfiniteCanvas } from '@/components/InfiniteCanvas';
 import { StatisticalSummary } from '@/components/StatisticalSummary';
+import { ReportGenerator } from '@/components/ReportGenerator';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database } from 'lucide-react';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 
 const Index: React.FC = () => {
@@ -25,6 +26,7 @@ const Index: React.FC = () => {
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [isAIMinimized, setIsAIMinimized] = useState(false);
   const [showPivotTable, setShowPivotTable] = useState(false);
+  const [showReportGenerator, setShowReportGenerator] = useState(false);
   const [selectedCells, setSelectedCells] = useState<string[]>([]);
   const canvasRef = useRef<any>(null);
   const [embeddedCharts, setEmbeddedCharts] = useState<Array<{
@@ -617,6 +619,18 @@ const Index: React.FC = () => {
               Pivot Table
             </Button>
             
+            {/* Report Generator Button */}
+            <Button
+              onClick={() => {
+                setShowReportGenerator(true);
+                setIsAIMinimized(true);
+              }}
+              className="bg-green-600 hover:bg-green-700 text-white transition-all duration-200 hover:scale-105"
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              Generate Report
+            </Button>
+            
             {/* AI Chatbox Toggle */}
             <Button
               variant="ghost"
@@ -762,11 +776,20 @@ const Index: React.FC = () => {
         isVisible={showPivotTable}
         onClose={() => {
           setShowPivotTable(false);
-          setIsAIMinimized(false);
         }}
         onGenerateChart={handleGenerateChart}
         onExportCSV={handleExportPivot}
         onSavePivot={handleSavePivot}
+      />
+
+      {/* Report Generator Modal */}
+      <ReportGenerator
+        activeSheet={activeSheet}
+        existingCharts={embeddedCharts}
+        isOpen={showReportGenerator}
+        onClose={() => {
+          setShowReportGenerator(false);
+        }}
       />
     </div>
   );
