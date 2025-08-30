@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useImperativeHandle, forwardRef, 
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { Plus, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ChartRenderer } from './ChartRenderer';
+import { Chart } from '@/components/ui/chart';
 
 interface CanvasBlock {
   id: string;
@@ -293,15 +293,15 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
         style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       >
         {/* Infinite Canvas Container */}
-        <div className="infinite-canvas"
-        style={{
-          width: '8000px',
-          height: '6000px',
-          backgroundColor: '#fafafa',
-          backgroundImage: 'radial-gradient(circle, #e5e7eb 1px, transparent 1px)',
-          backgroundSize: '20px 20px',
-          backgroundPosition: '0 0',
-        }}>
+                 <div className="infinite-canvas"
+         style={{
+           width: '8000px',
+           height: '6000px',
+           backgroundColor: '#1a1a1a',
+           backgroundImage: 'radial-gradient(circle, #333333 1px, transparent 1px)',
+           backgroundSize: '20px 20px',
+           backgroundPosition: '0 0',
+         }}>
           <TransformWrapper
             ref={transformRef}
             initialScale={1}
@@ -330,17 +330,17 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
               wrapperClass="!w-full !h-full infinite-canvas"
               contentClass="!w-full !h-full infinite-canvas"
             >
-              <div
-                className={"relative transition-shadow duration-200"}
-                style={{
-                  width: '8000px',
-                  height: '6000px',
-                  backgroundColor: '#fafafa',
-                  backgroundImage: 'radial-gradient(circle, #e5e7eb 1px, transparent 1px)',
-                  backgroundSize: '20px 20px',
-                  backgroundPosition: '0 0',
-                }}
-              >
+                             <div
+                 className={"relative transition-shadow duration-200"}
+                 style={{
+                   width: '8000px',
+                   height: '6000px',
+                   backgroundColor: '#1a1a1a',
+                   backgroundImage: 'radial-gradient(circle, #333333 1px, transparent 1px)',
+                   backgroundSize: '20px 20px',
+                   backgroundPosition: '0 0',
+                 }}
+               >
                 {/* Main content positioned in the top left of the large canvas */}
                 <div 
                   className="absolute modern-spreadsheet"
@@ -356,25 +356,25 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 
                 {/* Embedded Charts */}
                 {embeddedCharts.map((chart) => (
-                  <div
-                    key={chart.id}
-                    className="absolute chart-block bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 cursor-move select-none flex flex-col"
-                    style={{
-                      left: chart.position.x,
-                      top: chart.position.y,
-                      width: chart.size.width,
-                      height: chart.size.height,
-                      zIndex: 20,
-                      background: 'white',
-                      backgroundColor: 'white',
-                      userSelect: 'none',
-                    }}
+                                     <div
+                     key={chart.id}
+                     className="absolute chart-block bg-gray-900 dark:bg-gray-950 rounded-xl shadow-2xl border border-gray-700 dark:border-gray-600 cursor-move select-none flex flex-col backdrop-blur-sm"
+                     style={{
+                       left: chart.position.x,
+                       top: chart.position.y,
+                       width: chart.size.width * 1.6,
+                       height: chart.size.height * 1.6,
+                       zIndex: 20,
+                       background: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)',
+                       backgroundColor: '#1f2937',
+                       userSelect: 'none',
+                     }}
                     onMouseDown={(e) => handleChartMouseDown(e, chart.id)}
                   >
-                    <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-700 rounded-t-lg">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
-                      </span>
+                                         <div className="p-3 border-b border-gray-600 dark:border-gray-500 flex items-center justify-between bg-gradient-to-r from-gray-800 to-gray-900 dark:from-gray-800 dark:to-gray-900 rounded-t-xl">
+                       <span className="text-sm font-medium text-gray-200 dark:text-gray-100">
+                         {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
+                       </span>
                       <div className="flex items-center gap-1">
                         {/* Expand Button */}
                         <button
@@ -425,13 +425,43 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                         </button>
                       </div>
                     </div>
-                    <div className="bg-white dark:bg-gray-800 flex-1 flex items-center justify-center overflow-hidden" style={{ padding: '12px', minHeight: 0 }}>
-                      <div className="w-full h-full" style={{ minHeight: 0 }}>
-                        <ChartRenderer
+                                         <div className="bg-gray-900 dark:bg-gray-950 flex-1 flex items-center justify-center overflow-hidden" style={{ padding: '12px', minHeight: 0 }}>
+                       <div className="w-full h-full" style={{ minHeight: 0 }}>
+                         {/* Debug info - only show in development */}
+                         {process.env.NODE_ENV === 'development' && (
+                           <div className="absolute top-2 left-2 text-xs text-gray-300 bg-gray-800/90 p-2 rounded-lg z-10 border border-gray-600">
+                             <div className="text-gray-200">Data keys: {Object.keys(chart.data[0] || {}).join(', ')}</div>
+                             <div className="text-gray-300">Chart spec: {JSON.stringify(chart.chartSpec?.x?.field)} → {JSON.stringify(chart.chartSpec?.y?.field)}</div>
+                           </div>
+                         )}
+                        <Chart
                           data={chart.data}
-                          chartSpec={chart.chartSpec}
-                          width={chart.size.width - 24}
-                          height={chart.size.height - 84}
+                          type={chart.chartSpec?.type || 'bar'}
+                          xKey={(() => {
+                            const xField = chart.chartSpec?.x?.field;
+                            if (xField && xField in chart.data[0]) {
+                              return xField;
+                            }
+                            // Fallback: use the first available key that's not the yKey
+                            const availableKeys = Object.keys(chart.data[0] || {});
+                            const yField = chart.chartSpec?.y?.field;
+                            const fallbackKey = availableKeys.find(key => key !== yField) || availableKeys[0] || 'name';
+                            return fallbackKey;
+                          })()}
+                          yKey={(() => {
+                            const yField = chart.chartSpec?.y?.field;
+                            if (yField && yField in chart.data[0]) {
+                              return yField;
+                            }
+                            // Fallback: use the second available key or first if only one exists
+                            const availableKeys = Object.keys(chart.data[0] || {});
+                            const fallbackKey = availableKeys.length > 1 ? availableKeys[1] : availableKeys[0] || 'value';
+                            return fallbackKey;
+                          })()}
+                                                     height={(chart.size.height * 1.6) - 24}
+                          showGrid={true}
+                          showLegend={true}
+                          showTooltip={true}
                           className="w-full h-full"
                         />
                       </div>
@@ -440,12 +470,12 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 ))}
                 
                 {/* Placeholder if no children */}
-                {(!children || (Array.isArray(children) && children.length === 0)) && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
-                    <FileSpreadsheet size={64} className="text-muted-foreground mb-4 opacity-60" />
-                    <div className="text-lg font-semibold text-muted-foreground opacity-70">Drag sheets or charts here</div>
-                  </div>
-                )}
+                                 {(!children || (Array.isArray(children) && children.length === 0)) && (
+                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+                     <FileSpreadsheet size={64} className="text-gray-400 mb-4 opacity-60" />
+                     <div className="text-lg font-semibold text-gray-400 opacity-70">Drag sheets or charts here</div>
+                   </div>
+                 )}
               </div>
             </TransformComponent>
           </TransformWrapper>

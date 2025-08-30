@@ -1,9 +1,29 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { ArrowLeft, Save, Download, BarChart3, Eye, EyeOff, Settings, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Chart } from '@/components/ui/chart';
+import { 
+  BarChart3, 
+  TrendingUp, 
+  PieChart, 
+  Activity, 
+  Download, 
+  Save,
+  X,
+  Plus,
+  Minus,
+  Settings,
+  RefreshCw,
+  Eye,
+  EyeOff,
+  ArrowLeft,
+  Info,
+  HelpCircle,
+  MousePointer,
+  ArrowRight,
+  Table2
+} from 'lucide-react';
 import { SheetData } from '@/types/spreadsheet';
-import { ChartRenderer } from './ChartRenderer';
 
 // Import react-pivottable
 import PivotTableUI from 'react-pivottable/PivotTableUI';
@@ -361,15 +381,19 @@ export const EnhancedPivotTableFullScreen: React.FC<EnhancedPivotTableFullScreen
               <div className="text-center mb-6">
                 <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Pivot Table Chart</h2>
                 <p className="text-lg text-gray-600 dark:text-gray-400">
-                  Generated from pivot table data using Apache ECharts
+                  Generated from pivot table data using Shadcn Charts
                 </p>
               </div>
               <div className="h-[500px] flex items-center justify-center">
-                <ChartRenderer
+                <Chart
                   data={chartData}
-                  chartSpec={chartSpec}
-                  width={800}
+                  type="bar"
+                  xKey={pivotState.rows?.[0] || 'category'}
+                  yKey={pivotState.vals?.[0] || 'value'}
                   height={500}
+                  showGrid={true}
+                  showLegend={true}
+                  showTooltip={true}
                   className="w-full h-full"
                 />
               </div>

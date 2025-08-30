@@ -22,6 +22,15 @@ import { spreadsheetFunctions } from '../../../AIServer/formulation';
 import Skeleton from '@mui/material/Skeleton';
 import { Move, Maximize2, Minimize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { 
+  parseCellIdOptimized, 
+  getCellsInRangeOptimized, 
+  createDebouncedSelectionUpdater,
+  createCellStyleCalculator,
+  SelectionDirtyTracker,
+  SelectionPerformanceMonitor,
+  getVisibleRange
+} from '@/lib/cellSelectionUtils';
 
 interface ModernSpreadsheetProps {
   sheet: SheetData;
@@ -36,7 +45,7 @@ interface ModernSpreadsheetProps {
   setSheetLoading?: (loading: boolean) => void;
 }
 
-// Memoized Cell component
+// Optimized Cell component with performance improvements
 const SpreadsheetCell = React.memo(({
   cellId,
   cell,
@@ -55,20 +64,53 @@ const SpreadsheetCell = React.memo(({
   style,
   isSheetLoading
 }: any) => {
+  // Memoized style calculation to prevent unnecessary re-renders
+  const cellStyle = useMemo(() => {
+    const baseStyle: React.CSSProperties = {
+      fontWeight: cell?.style?.bold ? 'bold' : 'normal',
+      fontStyle: cell?.style?.italic ? 'italic' : 'normal',
+      textDecoration: cell?.style?.underline ? 'underline' : 'none',
+      color: cell?.style?.textColor || undefined,
+      fontSize: cell?.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
+      fontFamily: cell?.style?.fontFamily || undefined,
+      textAlign: cell?.style?.textAlign || 'left',
+    };
+    
+    return baseStyle;
+  }, [cell?.style]);
+
+  // Memoized background color to avoid style recalculations
+  const backgroundColor = useMemo(() => {
+    return cell?.style?.backgroundColor || (cell?.value ? 'white' : 'white');
+  }, [cell?.style?.backgroundColor, cell?.value]);
+
+  // Memoized cell content to prevent unnecessary re-renders
+  const cellContent = useMemo(() => {
+    if (typeof cell?.value === 'object' && cell?.value !== null) {
+      return cell?.value.message || cell?.value.value || JSON.stringify(cell.value);
+    }
+    return cell?.value || '';
+  }, [cell?.value]);
+
+  // Memoized selection styling to avoid DOM manipulation
+  const selectionStyle = useMemo(() => {
+    if (isSelected) {
+      return 'ring-2 ring-green-500 bg-green-100 dark:bg-green-800/50 z-10 shadow-sm selected';
+    } else if (isInRange) {
+      return 'bg-green-100/70 dark:bg-green-800/30';
+    }
+    return 'hover:bg-green-50 dark:hover:bg-green-700/50';
+  }, [isSelected, isInRange]);
+
   return (
     <div
       key={cellId}
       className={`
         spreadsheet-cell w-32 h-12 border-r border-b border-green-200 dark:border-green-600 relative cursor-pointer transition-all duration-150 text-sm
-        ${isSelected 
-          ? 'ring-2 ring-green-500 bg-green-100 dark:bg-green-800/50 z-10 shadow-sm' 
-          : isInRange
-          ? 'bg-green-100/70 dark:bg-green-800/30'
-          : 'hover:bg-green-50 dark:hover:bg-green-700/50'
-        }
+        ${selectionStyle}
       `}
       style={{
-        backgroundColor: cell?.style?.backgroundColor || (cell?.value ? 'white' : 'white'),
+        backgroundColor,
         ...style
       }}
       onClick={onClick}
@@ -98,23 +140,13 @@ const SpreadsheetCell = React.memo(({
             cell?.style?.textAlign === 'center' ? 'justify-center' :
             cell?.style?.textAlign === 'right' ? 'justify-end' : 'justify-start'
           }`}
-          style={{
-            fontWeight: cell?.style?.bold ? 'bold' : 'normal',
-            fontStyle: cell?.style?.italic ? 'italic' : 'normal',
-            textDecoration: cell?.style?.underline ? 'underline' : 'none',
-            color: cell?.style?.textColor || undefined,
-            backgroundColor: cell?.style?.backgroundColor || undefined,
-            fontSize: cell?.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
-            fontFamily: cell?.style?.fontFamily || undefined,
-            textAlign: cell?.style?.textAlign || 'left',
-          }}
+          style={cellStyle}
         >
-          {typeof cell?.value === 'object' && cell?.value !== null
-            ? cell?.value.message || cell?.value.value || JSON.stringify(cell.value)
-            : cell?.value || ''}
+          {cellContent}
         </div>
       )}
-      {/* Selection corners for selected cell */}
+      
+      {/* Selection corners for selected cell - only render when needed */}
       {isSelected && !isEditing && (
         <>
           <div className="absolute -top-1 -left-1 w-2 h-2 bg-green-500 border border-white rounded-full z-20"></div>
@@ -124,20 +156,31 @@ const SpreadsheetCell = React.memo(({
         </>
       )}
       
-      {/* Edit indicator on hover and for selected cells */}
+      {/* Edit indicator on hover and for selected cells - simplified rendering */}
       <div className={`absolute top-1 right-1 transition-opacity duration-200 pointer-events-none ${
         isSelected ? 'opacity-100' : 'opacity-0 hover:opacity-100'
       }`}>
         <div className="w-2 h-2 bg-green-400 rounded-full"></div>
       </div>
       
-      {/* Edit hint for selected cells */}
+      {/* Edit hint for selected cells - only render when needed */}
       {isSelected && !isEditing && (
         <div className="absolute bottom-1 right-1 opacity-60 pointer-events-none">
           <div className="text-xs text-green-600 dark:text-green-400 font-mono">✏️</div>
         </div>
       )}
     </div>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison function for React.memo to prevent unnecessary re-renders
+  return (
+    prevProps.cellId === nextProps.cellId &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.isInRange === nextProps.isInRange &&
+    prevProps.isEditing === nextProps.isEditing &&
+    prevProps.isSheetLoading === nextProps.isSheetLoading &&
+    JSON.stringify(prevProps.cell) === JSON.stringify(nextProps.cell) &&
+    prevProps.editValue === nextProps.editValue
   );
 });
 
@@ -165,6 +208,7 @@ export const ModernSpreadsheet = ({
   const [isShiftPressed, setIsShiftPressed] = useState(false);
   const [anchorCell, setAnchorCell] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [showAddRowsButton, setShowAddRowsButton] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -178,6 +222,33 @@ export const ModernSpreadsheet = ({
     width: window.innerWidth * 0.75,
     height: window.innerHeight * 0.8
   });
+
+  // Selection box state for Windows-style drag selection
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+    isVisible: boolean;
+  } | null>(null);
+
+  // Performance optimization instances
+  const dirtyTracker = useRef(new SelectionDirtyTracker());
+  const performanceMonitor = useRef(new SelectionPerformanceMonitor());
+  const styleCalculator = useRef(createCellStyleCalculator());
+  
+  // Debounced selection updater to prevent excessive re-renders
+  const debouncedSelectionUpdater = useRef(
+    createDebouncedSelectionUpdater((selection: string[]) => {
+      const stopTimer = performanceMonitor.current.startTimer('selection-update');
+      onSelectionChange?.(selection);
+      stopTimer();
+    }, 16) // 60fps
+  );
+
+  // Throttle for drag operations to prevent excessive updates
+  const dragThrottleRef = useRef<NodeJS.Timeout | null>(null);
+  const lastDragUpdateRef = useRef<string>('');
 
   // Set initial dimensions and handle window resize
   useEffect(() => {
@@ -241,6 +312,55 @@ export const ModernSpreadsheet = ({
     return cells;
   }, [getCellId, parseCellId]);
 
+  // Helper function to get cells covered by selection box
+  const getCellsInSelectionBox = useCallback((
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    scrollContainer: HTMLElement,
+    sheet: SheetData
+  ): string[] => {
+    // Constants for cell dimensions
+    const ROW_HEADER_WIDTH = 64; // w-16 = 64px
+    const COL_HEADER_HEIGHT = 48; // h-12 = 48px
+    const CELL_WIDTH = 128; // w-32 = 128px
+    const CELL_HEIGHT = 48; // h-12 = 48px
+    
+    // Calculate the bounds of the selection box
+    const minX = Math.min(startX, endX);
+    const maxX = Math.max(startX, endX);
+    const minY = Math.min(startY, endY);
+    const maxY = Math.max(startY, endY);
+    
+    // Adjust for headers
+    const adjustedMinX = Math.max(0, minX - ROW_HEADER_WIDTH);
+    const adjustedMinY = Math.max(0, minY - COL_HEADER_HEIGHT);
+    
+    // Calculate row and column ranges
+    const startRow = Math.floor(adjustedMinY / CELL_HEIGHT);
+    const endRow = Math.floor(maxY / CELL_HEIGHT);
+    const startCol = Math.floor(adjustedMinX / CELL_WIDTH);
+    const endCol = Math.floor(maxX / CELL_WIDTH);
+    
+    // Clamp to sheet boundaries
+    const clampedStartRow = Math.max(0, Math.min(startRow, sheet.rowCount - 1));
+    const clampedEndRow = Math.max(0, Math.min(endRow, sheet.rowCount - 1));
+    const clampedStartCol = Math.max(0, Math.min(startCol, sheet.colCount - 1));
+    const clampedEndCol = Math.max(0, Math.min(endCol, sheet.colCount - 1));
+    
+    // Generate cell IDs for the selected range
+    const selectedCells: string[] = [];
+    for (let row = clampedStartRow; row <= clampedEndRow; row++) {
+      for (let col = clampedStartCol; col <= clampedEndCol; col++) {
+        const cellId = getCellId(row, col);
+        selectedCells.push(cellId);
+      }
+    }
+    
+    return selectedCells;
+  }, [getCellId]);
+
   // Track shift key state and handle keyboard events for the entire spreadsheet
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -289,7 +409,7 @@ export const ModernSpreadsheet = ({
     };
 
     document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
+    // document.addEventListener('keyup', handleKeyUp);
     
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
@@ -297,9 +417,11 @@ export const ModernSpreadsheet = ({
     };
   }, [selectedCell, editingCell, sheet.cells]);
 
-  // Cell handling functions
+  // Cell handling functions with Windows-style drag selection
   const handleCellClick = useCallback((cellId: string, event: React.MouseEvent) => {
     event.preventDefault();
+    
+    const stopTimer = performanceMonitor.current.startTimer('cell-click');
     
     // If we were editing a cell, save its value first
     if (editingCell && editingCell !== cellId) {
@@ -308,11 +430,13 @@ export const ModernSpreadsheet = ({
     }
     
     if (selectedCell !== cellId) {
+      // Use debounced updater for better performance
+      debouncedSelectionUpdater.current([cellId]);
+      // Also call the parent callback immediately for responsive UI
       onSelectionChange?.([cellId]);
     }
     
-    // Only select the cell, don't start editing
-    // Editing will be triggered by double-click or typing
+    stopTimer();
   }, [editingCell, editValue, updateCell, selectedCell, onSelectionChange]);
 
   const handleCellDoubleClick = useCallback((cellId: string, event: React.MouseEvent) => {
@@ -325,21 +449,120 @@ export const ModernSpreadsheet = ({
 
   const handleCellMouseDown = useCallback((cellId: string, event: React.MouseEvent) => {
     event.preventDefault();
+    
+    // Get the scroll container's position
+    const scrollContainer = scrollAreaRef.current;
+    if (!scrollContainer) return;
+    
+    const rect = scrollContainer.getBoundingClientRect();
+    const scrollLeft = scrollContainer.scrollLeft;
+    const scrollTop = scrollContainer.scrollTop;
+    
+    // Calculate position relative to the scroll container
+    const startX = event.clientX - rect.left + scrollLeft;
+    const startY = event.clientY - rect.top + scrollTop;
+    
+    console.log('Starting drag selection:', {
+      cellId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      rectLeft: rect.left,
+      rectTop: rect.top,
+      scrollLeft,
+      scrollTop,
+      startX,
+      startY
+    });
+    
+    // Start the selection box
+    setSelectionBox({
+      startX,
+      startY,
+      endX: startX,
+      endY: startY,
+      isVisible: true
+    });
+    
     setDragStart(cellId);
-    onSelectionChange?.([cellId]);
     setIsDragging(true);
+    
+    // Select the initial cell
+    onSelectionChange?.([cellId]);
   }, [onSelectionChange]);
 
   const handleCellMouseEnter = useCallback((cellId: string) => {
-    if (isDragging && dragStart) {
-      const range = getCellsInRange(dragStart, cellId);
-      onSelectionChange?.(range);
+    // This is now handled by the global mouse move for selection box
+  }, []);
+
+  const handleMouseMove = useCallback((event: React.MouseEvent) => {
+    if (!isDragging || !selectionBox || !scrollAreaRef.current) return;
+    
+    const scrollContainer = scrollAreaRef.current;
+    const rect = scrollContainer.getBoundingClientRect();
+    const scrollLeft = scrollContainer.scrollLeft;
+    const scrollTop = scrollContainer.scrollTop;
+    
+    // Calculate current position relative to the scroll container
+    const currentX = event.clientX - rect.left + scrollLeft;
+    const currentY = event.clientY - rect.top + scrollTop;
+    
+    // Update selection box
+    setSelectionBox(prev => prev ? {
+      ...prev,
+      endX: currentX,
+      endY: currentY
+    } : null);
+    
+    // Throttle the selection update
+    if (dragThrottleRef.current) {
+      clearTimeout(dragThrottleRef.current);
     }
-  }, [isDragging, dragStart, getCellsInRange, onSelectionChange]);
+    
+    dragThrottleRef.current = setTimeout(() => {
+      if (!selectionBox || !dragStart) return;
+      
+      const stopTimer = performanceMonitor.current.startTimer('drag-selection');
+      
+      // Calculate which cells are covered by the selection box
+      const selectedCells = getCellsInSelectionBox(
+        selectionBox.startX,
+        selectionBox.startY,
+        currentX,
+        currentY,
+        scrollContainer,
+        sheet
+      );
+      
+      console.log('Drag selection update:', {
+        startX: selectionBox.startX,
+        startY: selectionBox.startY,
+        currentX,
+        currentY,
+        selectedCellsCount: selectedCells.length,
+        selectedCells: selectedCells.slice(0, 10) // Show first 10 cells
+      });
+      
+      // Update selection
+      onSelectionChange?.(selectedCells);
+      debouncedSelectionUpdater.current(selectedCells);
+      
+      stopTimer();
+    }, 16); // 60fps throttling
+  }, [isDragging, selectionBox, dragStart, sheet, onSelectionChange]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
     setDragStart(null);
+    
+    // Hide selection box
+    setSelectionBox(null);
+    
+    // Clean up drag throttle
+    if (dragThrottleRef.current) {
+      clearTimeout(dragThrottleRef.current);
+      dragThrottleRef.current = null;
+    }
+    lastDragUpdateRef.current = '';
   }, []);
 
   const handleEditSubmit = useCallback((cellId: string) => {
@@ -366,7 +589,7 @@ export const ModernSpreadsheet = ({
         }
         
         // For single cell, move to next row, same column (traditional behavior)
-        const { row, col } = parseCellId(editingCell);
+        const { row, col } = parseCellIdOptimized(editingCell);
         const nextCellId = getCellId(row + 1, col);
         onSelectionChange?.([nextCellId]);
       }
@@ -386,7 +609,7 @@ export const ModernSpreadsheet = ({
         }
         
         // For single cell, move to next column, same row (traditional behavior)
-        const { row, col } = parseCellId(editingCell);
+        const { row, col } = parseCellIdOptimized(editingCell);
         const nextCellId = getCellId(row, col + 1);
         onSelectionChange?.([nextCellId]);
       }
@@ -396,7 +619,7 @@ export const ModernSpreadsheet = ({
         handleEditSubmit(editingCell);
         
         // Move to previous row, same column
-        const { row, col } = parseCellId(editingCell);
+        const { row, col } = parseCellIdOptimized(editingCell);
         const prevCellId = getCellId(Math.max(0, row - 1), col);
         onSelectionChange?.([prevCellId]);
         setEditingCell(prevCellId);
@@ -409,7 +632,7 @@ export const ModernSpreadsheet = ({
         handleEditSubmit(editingCell);
         
         // Move to next row, same column
-        const { row, col } = parseCellId(editingCell);
+        const { row, col } = parseCellIdOptimized(editingCell);
         const nextCellId = getCellId(row + 1, col);
         onSelectionChange?.([nextCellId]);
         setEditingCell(nextCellId);
@@ -417,7 +640,7 @@ export const ModernSpreadsheet = ({
         setTimeout(() => inputRef.current?.focus(), 0);
       }
     }
-  }, [editingCell, handleEditSubmit, parseCellId, getCellId, onSelectionChange, sheet.cells]);
+  }, [editingCell, handleEditSubmit, parseCellIdOptimized, getCellId, onSelectionChange, sheet.cells]);
 
   // Zoom functionality
   const handleZoomIn = useCallback(() => {
@@ -437,22 +660,34 @@ export const ModernSpreadsheet = ({
     const scrollArea = scrollAreaRef.current;
     if (!scrollArea) return;
 
+    let ticking = false;
+
     const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = scrollArea;
-      setScrollTop(scrollTop);
-      
-      // Show button when we're at the bottom (within 50px)
-      const isAtBottom = scrollTop + clientHeight >= scrollHeight - 50;
-      setShowAddRowsButton(isAtBottom);
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          const { scrollTop, scrollLeft, scrollHeight, clientHeight } = scrollArea;
+          setScrollTop(scrollTop);
+          setScrollLeft(scrollLeft);
+          
+          // Show button when we're at the bottom (within 50px)
+          const isAtBottom = scrollTop + clientHeight >= scrollHeight - 50;
+          setShowAddRowsButton(isAtBottom);
+          
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
 
     const handleWheel = (e: WheelEvent) => {
       // Prevent the event from bubbling up to the zoom wrapper
       e.stopPropagation();
       
-      // Allow normal scrolling in the sheet area
-      scrollArea.scrollLeft += e.deltaX;
-      scrollArea.scrollTop += e.deltaY;
+      // Use requestAnimationFrame for smooth scrolling
+      requestAnimationFrame(() => {
+        scrollArea.scrollLeft += e.deltaX;
+        scrollArea.scrollTop += e.deltaY;
+      });
     };
 
     scrollArea.addEventListener('scroll', handleScroll, { passive: true });
@@ -470,6 +705,16 @@ export const ModernSpreadsheet = ({
       if (isDragging) {
         setIsDragging(false);
         setDragStart(null);
+        
+        // Hide selection box
+        setSelectionBox(null);
+        
+        // Clean up drag throttle
+        if (dragThrottleRef.current) {
+          clearTimeout(dragThrottleRef.current);
+          dragThrottleRef.current = null;
+        }
+        lastDragUpdateRef.current = '';
       }
     };
 
@@ -477,32 +722,50 @@ export const ModernSpreadsheet = ({
     return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
   }, [isDragging]);
 
-  // Calculate visible rows for virtual scrolling
-  const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_ROWS_BUFFER);
-  const endRow = Math.min(sheet.rowCount, Math.ceil((scrollTop + 800) / ROW_HEIGHT) + VISIBLE_ROWS_BUFFER);
+  // Calculate visible rows for virtual scrolling with performance optimization
+  const visibleRange = useMemo(() => {
+    const viewportHeight = 800; // Approximate viewport height
+    const viewportWidth = dimensions.width;
+    const rowHeight = ROW_HEIGHT;
+    const colWidth = 128; // w-32 = 128px
+    
+    return getVisibleRange(
+      scrollTop,
+      scrollLeft,
+      viewportHeight,
+      viewportWidth,
+      rowHeight,
+      colWidth,
+      sheet.rowCount,
+      sheet.colCount,
+      VISIBLE_ROWS_BUFFER
+    );
+  }, [scrollTop, scrollLeft, dimensions.width, sheet.rowCount, sheet.colCount]);
 
-  // Generate row data for virtual scrolling
+  const { startRow, endRow, startCol, endCol } = visibleRange;
+
+  // Generate row data for virtual scrolling with performance optimization
   const rowData = useMemo(() => {
     const rows = [];
     for (let row = startRow; row < endRow; row++) {
       const cells = [];
-      for (let col = 0; col < sheet.colCount; col++) {
+      for (let col = startCol; col < endCol; col++) {
         const cellId = getCellId(row, col);
         cells.push({ cellId, cell: sheet.cells[cellId] });
       }
       rows.push({ row, cells });
     }
     return rows;
-  }, [startRow, endRow, sheet.rowCount, sheet.colCount, sheet.cells, getCellId]);
+  }, [startRow, endRow, startCol, endCol, sheet.cells, getCellId]);
 
-  // Generate column headers for virtual scrolling
+  // Generate column headers for virtual scrolling with performance optimization
   const columnHeaders = useMemo(() => {
     const headers = [];
-    for (let col = 0; col < sheet.colCount; col++) {
+    for (let col = startCol; col < endCol; col++) {
       headers.push({ col, header: getColHeader(col) });
     }
     return headers;
-  }, [sheet.colCount, getColHeader]);
+  }, [startCol, endCol, getColHeader]);
 
   // Create a set for faster lookups
   const selectedCellsSet = useMemo(() => new Set(selectedRange), [selectedRange]);
@@ -556,6 +819,7 @@ export const ModernSpreadsheet = ({
       }}
     >
       <div className="bg-green-50 dark:bg-green-900 rounded-2xl border border-green-200 dark:border-green-700 overflow-hidden spreadsheet-container modern-spreadsheet" style={{ backgroundImage: 'radial-gradient(circle, #10b981 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
+
         {/* Control Bar */}
         <div className="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 flex items-center justify-between cursor-move">
           <div className="flex items-center gap-2">
@@ -606,7 +870,7 @@ export const ModernSpreadsheet = ({
 
         {/* Spreadsheet Content */}
         {!isMinimized && (
-          <div className="overflow-auto" style={{ height: 'calc(100% - 40px)' }}>
+          <div className="overflow-auto zoom-wrapper" style={{ height: 'calc(100% - 40px)' }}>
             {/* Sheet Name Header - Editable */}
             <div className="bg-gradient-to-r from-green-100 to-green-200 dark:from-green-800 dark:to-green-700 border-b border-green-300 dark:border-green-600 p-3">
               <div className="flex items-center justify-between">
@@ -653,15 +917,15 @@ export const ModernSpreadsheet = ({
       {/* Spreadsheet Grid */}
       <div 
         ref={scrollAreaRef}
-              className="overflow-auto select-none relative" 
+        className={`overflow-auto select-none relative spreadsheet-grid ${isDragging ? 'dragging' : ''}`} 
         style={{ 
           cursor: isDragging ? 'crosshair' : 'default',
           scrollbarWidth: 'auto',
-                scrollbarGutter: 'stable',
-                transform: `scale(${zoomLevel / 100})`,
-                transformOrigin: 'top left',
-                height: 'calc(100vh - 300px)', // Fixed height for proper scrolling
-                minHeight: '400px'
+          scrollbarGutter: 'stable',
+          transform: `scale(${zoomLevel / 100})`,
+          transformOrigin: 'top left',
+          height: 'calc(100vh - 300px)', // Fixed height for proper scrolling
+          minHeight: '400px'
         }}
         onMouseDown={e => {
           // Check if click is on scrollbar area
@@ -672,7 +936,8 @@ export const ModernSpreadsheet = ({
             e.stopPropagation();
           }
         }}
-        onMouseMove={e => isDragging && e.stopPropagation()}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
       >
         <div className="min-w-fit relative">
           {/* Column Headers */}
@@ -682,14 +947,17 @@ export const ModernSpreadsheet = ({
             {columnHeaders.map(({ col, header }) => (
               <div
                 key={col}
-                className={`w-32 h-12 border-r border-green-300 dark:border-green-500 bg-gradient-to-b from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 flex items-center justify-center text-xs font-semibold text-green-700 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-600 transition-colors cursor-pointer relative ${sortedCol === header ? 'animate-flash' : ''}`}
+                className={`w-32 h-12 border-r border-green-300 dark:border-green-500 bg-gradient-to-b from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 flex items-center justify-center text-xs font-semibold text-green-700 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-600 transition-colors cursor-pointer relative column-header ${sortedCol === header ? 'animate-flash' : ''}`}
                 onClick={e => {
                   // Select all cells in this column
                   const cellIds = [];
                   for (let row = 1; row < sheet.rowCount; row++) {
                     cellIds.push(`${header}${row + 1}`);
                   }
+                  // Update selection immediately for responsive feel
                   onSelectionChange?.(cellIds);
+                  // Also use debounced updater for performance optimization
+                  debouncedSelectionUpdater.current(cellIds);
                   setMenuAnchor(e.currentTarget);
                   setMenuCol(header);
                 }}
@@ -706,10 +974,27 @@ export const ModernSpreadsheet = ({
 
           {/* Virtual scrolling container */}
           <div style={{ height: sheet.rowCount * ROW_HEIGHT, position: 'relative' }}>
+          
+          {/* Windows-style Selection Box Overlay */}
+          {selectionBox && selectionBox.isVisible && (
+            <div
+              className={`selection-box-overlay ${isDragging ? 'dragging' : ''}`}
+              style={{
+                position: 'absolute',
+                left: Math.min(selectionBox.startX, selectionBox.endX),
+                top: Math.min(selectionBox.startY, selectionBox.endY),
+                width: Math.abs(selectionBox.endX - selectionBox.startX),
+                height: Math.abs(selectionBox.endY - selectionBox.startY),
+                pointerEvents: 'none',
+                zIndex: 40,
+              }}
+            />
+          )}
+
           {/* Dotted border overlay for selected range */}
           {selectedRange.length > 1 && (() => {
             // Calculate min/max row/col from selectedRange
-            const positions = selectedRange.map(parseCellId);
+            const positions = selectedRange.map(parseCellIdOptimized);
             const minRow = Math.min(...positions.map(p => p.row));
             const maxRow = Math.max(...positions.map(p => p.row));
             const minCol = Math.min(...positions.map(p => p.col));
@@ -721,17 +1006,13 @@ export const ModernSpreadsheet = ({
             const colHeaderHeight = 48; // h-12 = 4*12px
             return (
               <div
+                className="selection-range-overlay"
                 style={{
                   position: 'absolute',
                   left: rowHeaderWidth + minCol * cellWidth - 2, // -2 for border width
                   top: colHeaderHeight + minRow * cellHeight - 2,
                   width: (maxCol - minCol + 1) * cellWidth + 3, // +3 for border width
                   height: (maxRow - minRow + 1) * cellHeight + 3,
-                  pointerEvents: 'none',
-                  zIndex: 30,
-                  border: '2px dotted #059669', // green-600
-                  borderRadius: 4,
-                  boxSizing: 'border-box',
                 }}
               />
             );
@@ -742,7 +1023,7 @@ export const ModernSpreadsheet = ({
           {rowData.map(({ row, cells }) => (
             <div key={row} className="flex hover:bg-green-100/30 dark:hover:bg-green-800/10 transition-colors">
               {/* Row Header */}
-              <div className="w-16 h-12 bg-gradient-to-r from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 border-r border-b border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-semibold text-green-600 dark:text-green-300 sticky left-0 z-10">
+              <div className="w-16 h-12 bg-gradient-to-r from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 border-r border-b border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-semibold text-green-600 dark:text-green-300 sticky left-0 z-10 row-header">
                 {row + 1}
               </div>
               
@@ -773,6 +1054,7 @@ export const ModernSpreadsheet = ({
                       ...(sortedCol === colLetter ? { animation: 'flash 0.5s' } : {})
                     }}
                     isSheetLoading={isSheetLoading}
+                    className={isDragging ? 'dragging' : ''}
                   />
                 );
               })}
@@ -916,13 +1198,167 @@ export const ModernSpreadsheet = ({
           background-size: 20px 20px;
         }
         
+        /* Performance-optimized animations using CSS custom properties */
+        .spreadsheet-cell {
+          will-change: transform, opacity, background-color;
+          transform: translateZ(0); /* Force hardware acceleration */
+          backface-visibility: hidden; /* Optimize for transforms */
+        }
+        
+        .spreadsheet-cell:hover {
+          transform: translateZ(0) scale(1.02);
+          transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .spreadsheet-cell.selected {
+          transform: translateZ(0) scale(1.01);
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* Optimized selection transitions */
+        .spreadsheet-cell.ring-2 {
+          transition: box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+                      background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* Smooth background color transitions */
+        .spreadsheet-cell {
+          transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+                      border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* Optimized flash animation */
         @keyframes flash {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
+          0%, 100% { 
+            opacity: 1; 
+            transform: translateZ(0);
+          }
+          50% { 
+            opacity: 0.7; 
+            transform: translateZ(0) scale(1.05);
+          }
         }
         
         .animate-flash {
-          animation: flash 0.5s ease-in-out;
+          animation: flash 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          will-change: opacity, transform;
+        }
+        
+        /* Optimized scrollbar styling */
+        .overflow-auto::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        
+        .overflow-auto::-webkit-scrollbar-track {
+          background: rgba(16, 185, 129, 0.1);
+          border-radius: 4px;
+        }
+        
+        .overflow-auto::-webkit-scrollbar-thumb {
+          background: rgba(16, 185, 129, 0.3);
+          border-radius: 4px;
+          transition: background-color 0.2s ease;
+        }
+        
+        .overflow-auto::-webkit-scrollbar-thumb:hover {
+          background: rgba(16, 185, 129, 0.5);
+        }
+        
+        /* Performance optimizations for large grids */
+        .spreadsheet-grid {
+          contain: layout style paint;
+          will-change: scroll-position;
+        }
+        
+        /* Optimized column and row headers */
+        .column-header, .row-header {
+          will-change: background-color;
+          transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* Smooth zoom transitions */
+        .zoom-wrapper {
+          transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          will-change: transform;
+        }
+        
+        /* Drag selection styling */
+        .spreadsheet-grid.dragging {
+          cursor: crosshair !important;
+        }
+        
+        /* Selection range visual feedback */
+        .selection-range-overlay {
+          pointer-events: none;
+          z-index: 30;
+          border: 2px dotted #059669;
+          border-radius: 4px;
+          box-sizing: border-box;
+          background: rgba(5, 150, 105, 0.05);
+          animation: selection-pulse 0.3s ease-out;
+        }
+        
+        @keyframes selection-pulse {
+          0% {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        
+        /* Performance optimizations for drag operations */
+        .spreadsheet-cell:active {
+          transform: translateZ(0) scale(0.98);
+          transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* Enhanced drag feedback */
+        .spreadsheet-cell.dragging {
+          transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .spreadsheet-cell.dragging:hover {
+          transform: translateZ(0) scale(1.01);
+          box-shadow: 0 2px 8px rgba(5, 150, 105, 0.2);
+        }
+        
+        /* Windows-style selection box */
+        .selection-box-overlay {
+          border: 2px dashed #3b82f6;
+          background: rgba(59, 130, 246, 0.1);
+          border-radius: 2px;
+          box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+          animation: selection-box-appear 0.1s ease-out;
+          pointer-events: none;
+          z-index: 40;
+        }
+        
+        @keyframes selection-box-appear {
+          0% {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        
+        /* Selection box during drag */
+        .selection-box-overlay.dragging {
+          border-color: #1d4ed8;
+          background: rgba(29, 78, 216, 0.15);
+          box-shadow: 0 4px 12px rgba(29, 78, 216, 0.3);
+        }
+        
+        /* Ensure selection box is always visible */
+        .selection-box-overlay {
+          min-width: 1px;
+          min-height: 1px;
         }
       `}</style>
     </Rnd>

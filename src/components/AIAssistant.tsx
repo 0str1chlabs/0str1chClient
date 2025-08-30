@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
-import { ChartRenderer } from './ChartRenderer';
+import { Chart } from '@/components/ui/chart';
 import { createCellSelectionContext, formatSelectionContextForAI, CellSelectionContext } from '@/lib/cellSelectionUtils';
 import axios from 'axios'; // Added axios import
 
@@ -99,7 +99,7 @@ export const AIAssistant = ({
         // Only add message if the last message isn't already about selection
         if (!lastMessage.content.includes('selected') && !lastMessage.content.includes('selection')) {
           setTimeout(() => {
-            addMessage('ai', `🎯 I see you've selected ${context.selection_type === 'single' ? 'a cell' : context.selection_type === 'range' ? 'a range' : 'multiple cells'} (${context.selected_range}). I can help you analyze, update, or create charts from your selected data. Try asking: "What's the average?" or "Update these values" or "Create a chart".`);
+            addMessage('ai', `🎯 I see you've selected ${context.selection_type === 'single' ? 'a cell' : context.selection_type === 'range' ? 'a range' : 'multiple cells'} (${context.selected_range}). I can help you analyze, update, or create charts from your selected data. Try asking: "What's the average?" or "Create a chart".`);
           }, 1000);
         }
       }
@@ -107,6 +107,17 @@ export const AIAssistant = ({
       setSelectionContext(null);
     }
   }, [selectedCells, activeSheet, isSchemaReady, isDuckDBProcessing]);
+
+  // Debug chart data changes
+  useEffect(() => {
+    const chartMessages = messages.filter(msg => msg.chartData);
+    if (chartMessages.length > 0) {
+      const lastChartMessage = chartMessages[chartMessages.length - 1];
+      console.log('Chart message detected:', lastChartMessage);
+      console.log('Chart data:', lastChartMessage.chartData?.data);
+      console.log('Chart spec:', lastChartMessage.chartData?.chartSpec);
+    }
+  }, [messages]);
 
   const mainPrompts = [
     {
@@ -697,12 +708,33 @@ ${sampleRows.join('\n')}`;
               { suppressOutput: true }
             );
             if (chartData && chartData.length > 0) {
+              console.log('Chart data received from SQL:', chartData);
+              console.log('Chart spec:', masterResponse.chart_spec);
+              
+              // Ensure data is in the correct format for charts
+              const processedData = chartData.map((row: any) => {
+                // Convert row to plain object if it's not already
+                if (row && typeof row === 'object') {
+                  return { ...row };
+                }
+                return row;
+              });
+              
+              console.log('Processed chart data:', processedData);
+              console.log('First row structure:', processedData[0]);
+              console.log('Available keys in first row:', Object.keys(processedData[0] || {}));
+              console.log('Chart spec fields:', {
+                x: masterResponse.chart_spec?.x?.field,
+                y: masterResponse.chart_spec?.y?.field
+              });
+              
               // Add chart message with data
               addMessage('ai', `📊 Here's your ${masterResponse.chart_spec.type} chart:`, {
-                data: chartData,
+                data: processedData,
                 chartSpec: masterResponse.chart_spec
               });
             } else {
+              console.log('No chart data received from SQL query');
               addMessage('ai', '❌ No data found for the chart.');
             }
           } catch (error) {
@@ -1492,13 +1524,74 @@ ${sampleRows.join('\n')}`;
                     {msg.content}
                     {msg.chartData && (
                       <div className="mt-4">
-                        <ChartRenderer
-                          data={msg.chartData.data}
-                          chartSpec={msg.chartData.chartSpec}
-                          width={500}
-                          height={300}
-                          className="border rounded-lg"
-                        />
+                        {(() => { console.log('Rendering chart with data:', msg.chartData.data, 'chartSpec:', msg.chartData.chartSpec); return null; })()}
+                        {msg.chartData.data && msg.chartData.data.length > 0 ? (
+                          <div>
+                            <div className="text-xs text-muted-foreground mb-2">
+                              Chart Type: {msg.chartData.chartSpec?.type || 'unknown'} | 
+                              X Field: {msg.chartData.chartSpec?.x?.field || 'name'} | 
+                              Y Field: {msg.chartData.chartSpec?.y?.field || 'value'}
+                            </div>
+                            <div className="text-xs text-muted-foreground mb-2">
+                              Data Structure: {JSON.stringify(msg.chartData.data[0])}
+                            </div>
+                            <div className="text-xs text-muted-foreground mb-2">
+                              Data Length: {msg.chartData.data.length} | 
+                              First Row Keys: {Object.keys(msg.chartData.data[0] || {}).join(', ')}
+                            </div>
+                            <div className="text-xs text-muted-foreground mb-2">
+                              Chart Spec X Field: {msg.chartData.chartSpec?.x?.field || 'undefined'} | 
+                              Chart Spec Y Field: {msg.chartData.chartSpec?.y?.field || 'undefined'}
+                            </div>
+                                                          <Chart
+                                data={msg.chartData.data}
+                                type={(() => {
+                                  const chartType = msg.chartData.chartSpec?.type;
+                                  if (chartType === "heatmap" || chartType === "scatter") {
+                                    return "bar";
+                                  }
+                                  if (chartType === "bar" || chartType === "line" || chartType === "pie" || chartType === "area") {
+                                    return chartType;
+                                  }
+                                  return "bar";
+                                })()}
+                                xKey={(() => {
+                                  const xField = msg.chartData.chartSpec?.x?.field;
+                                  if (xField && xField in msg.chartData.data[0]) {
+                                    return xField;
+                                  }
+                                  // Fallback: use the first available key that's not the yKey
+                                  const availableKeys = Object.keys(msg.chartData.data[0] || {});
+                                  const yField = msg.chartData.chartSpec?.y?.field;
+                                  const fallbackKey = availableKeys.find(key => key !== yField) || availableKeys[0] || 'name';
+                                  console.log('X key fallback:', { original: xField, available: availableKeys, fallback: fallbackKey });
+                                  return fallbackKey;
+                                })()}
+                                yKey={(() => {
+                                  const yField = msg.chartData.chartSpec?.y?.field;
+                                  if (yField && yField in msg.chartData.data[0]) {
+                                    return yField;
+                                  }
+                                  // Fallback: use the second available key or first if only one exists
+                                  const availableKeys = Object.keys(msg.chartData.data[0] || {});
+                                  const fallbackKey = availableKeys.length > 1 ? availableKeys[1] : availableKeys[0] || 'value';
+                                  console.log('Y key fallback:', { original: yField, available: availableKeys, fallback: fallbackKey });
+                                  return fallbackKey;
+                                })()}
+                                height={300}
+                                showGrid={true}
+                                showLegend={true}
+                                showTooltip={true}
+                                className="border rounded-lg"
+                              />
+                          </div>
+                        ) : (
+                          <div className="text-center text-muted-foreground py-8">
+                            <BarChart3 className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                            <p>No data available for chart</p>
+                            <p className="text-sm">Data: {JSON.stringify(msg.chartData.data)}</p>
+                          </div>
+                        )}
                         <div className="mt-2 flex justify-center">
                           <Button
                             size="sm"

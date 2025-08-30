@@ -41,6 +41,13 @@
     --ostrich-brown: 0 0% 0%;
     --ostrich-cream: 48 100% 95%;
     --ostrich-tan: 48 100% 80%;
+
+    /* Chart colors */
+    --chart-1: 48 100% 60%;
+    --chart-2: 0 0% 0%;
+    --chart-3: 48 100% 80%;
+    --chart-4: 48 100% 40%;
+    --chart-5: 48 100% 20%;
   }
 
   .dark {
@@ -77,6 +84,13 @@
     --ostrich-brown: 48 100% 88%;
     --ostrich-cream: 0 0% 3%;
     --ostrich-tan: 0 0% 25%;
+
+    /* Dark mode chart colors */
+    --chart-1: 48 100% 70%;
+    --chart-2: 48 100% 88%;
+    --chart-3: 48 100% 90%;
+    --chart-4: 48 100% 60%;
+    --chart-5: 48 100% 50%;
   }
 }
 
@@ -225,9 +239,7 @@
 /* Ensure no unwanted backgrounds */
 .relative,
 .absolute,
-.fixed {
-  background: transparent;
-}
+
 
 /* Specific positioning fixes */
 .ai-chatbox {

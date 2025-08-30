@@ -18,7 +18,7 @@ import {
   PieChart,
   Activity
 } from 'lucide-react';
-import { ChartRenderer } from './ChartRenderer';
+import { Chart } from '@/components/ui/chart';
 
 interface DashboardWidget {
   id: string;
@@ -155,16 +155,15 @@ export const InteractiveDashboard: React.FC<InteractiveDashboardProps> = ({
         if (chart) {
           return (
             <div className="h-full">
-              <ChartRenderer
+              <Chart
                 data={chart.data || []}
-                chartSpec={{
-                  type: chart.type,
-                  title: chart.name,
-                  x: { field: 'category', type: 'category' },
-                  y: { field: 'value', type: 'numeric', format: 'number' }
-                }}
-                width={widget.size.width - 40}
+                type={chart.type === "heatmap" || chart.type === "scatter" ? "bar" : chart.type}
+                xKey="category"
+                yKey="value"
                 height={widget.size.height - 80}
+                showGrid={true}
+                showLegend={true}
+                showTooltip={true}
               />
             </div>
           );

@@ -11,6 +11,7 @@ import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
 import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
+import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 
 const Index: React.FC = () => {
   const { user, logout } = useAuth();
@@ -47,6 +48,18 @@ const Index: React.FC = () => {
   // Hook for efficient DuckDB updates
   const { updateCell: updateDuckDBCell, batchUpdateCells: batchUpdateDuckDBCells } = useDuckDBUpdates();
 
+  // Performance monitoring for selections
+  const performanceMonitor = useRef(new SelectionPerformanceMonitor());
+  
+  // Debounced selection updater to prevent excessive re-renders
+  const debouncedSelectionUpdater = useRef(
+    createDebouncedSelectionUpdater((selection: string[]) => {
+      const stopTimer = performanceMonitor.current.startTimer('selection-update');
+      setSelectedCells(selection);
+      stopTimer();
+    }, 16) // 60fps
+  );
+
   // Add global click handler to deselect cells when clicking on sheet/canvas area
   useEffect(() => {
     const handleGlobalClick = (event: MouseEvent) => {
@@ -82,17 +95,18 @@ const Index: React.FC = () => {
       
       // Check if click is on sheet/canvas background areas (should deselect)
       const isOnSheetBackground = target.closest('.modern-spreadsheet') && !isOnSpreadsheetCell;
-      const isOnCanvasBackground = target.closest('.infinite-canvas') && !target.closest('.modern-spreadsheet');
-      
+      const isOnCanvasBackground = target.closest('.infinite-canvas') && !target.closest('.react-draggable');
+      const isSpreadsheet = target.closest('.z-10 react-draggable');
       // Also check for main canvas container clicks (empty areas)
       const isOnMainCanvasArea = !isOnUIElement && !isOnSpreadsheetCell && 
                                  (target.classList.contains('main-canvas-area') || 
                                   target.closest('.main-canvas-area'));
       
       // Only deselect if clicking on sheet/canvas background, not on cells or UI elements
-      if ((isOnSheetBackground || isOnCanvasBackground || isOnMainCanvasArea) && !isOnUIElement && selectedCells.length > 0) {
+      if (( isOnCanvasBackground ) && selectedCells.length > 0) {
         console.log('Clicked on sheet/canvas background - deselecting cells');
-        setSelectedCells([]);
+        // Use debounced updater for better performance
+        debouncedSelectionUpdater.current([]);
       }
     };
 
@@ -164,6 +178,35 @@ const Index: React.FC = () => {
         index === 0 ? { ...sheet, cells: {}, rowCount: 1000, colCount: 26 } : sheet
       ));
     }
+  }, []); // Empty dependency array - only run once on mount
+
+  // Initial sheet positioning effect
+  useEffect(() => {
+    // Wait for DOM to be ready
+    const timer = setTimeout(() => {
+      const sheetContainer = document.getElementById('spreadsheet-container') as HTMLElement;
+      if (sheetContainer) {
+        // Set initial positioning based on toolbar and header
+        const toolbar = document.querySelector('.movable-toolbar') as HTMLElement;
+        const header = document.querySelector('header') as HTMLElement;
+        
+        const leftGap = 20;
+        const topGap = header ? header.offsetHeight + 20 : 100;
+        const toolbarWidth = toolbar ? toolbar.offsetWidth : 200;
+        
+        const sheetStartX = leftGap + toolbarWidth + 20;
+        const sheetStartY = topGap;
+        
+        sheetContainer.style.left = `${sheetStartX}px`;
+        sheetContainer.style.top = `${sheetStartY}px`;
+        sheetContainer.style.right = '20px';
+        sheetContainer.style.bottom = '20px';
+        
+        console.log('Initial sheet positioning:', { left: sheetStartX, top: sheetStartY });
+      }
+    }, 100); // Small delay to ensure DOM elements are rendered
+    
+    return () => clearTimeout(timer);
   }, []); // Empty dependency array - only run once on mount
 
   const handleUpdateCell = useCallback(async (cellId: string, value: string | number) => {
@@ -405,14 +448,43 @@ const Index: React.FC = () => {
     
     // Get the canvas reference
     if (canvasRef.current) {
-      // Center the view on the sheet
-      canvasRef.current.centerView(0, 0, 1000);
+      // Dynamically calculate proper positioning based on actual elements
+      const toolbar = document.querySelector('.movable-toolbar') as HTMLElement;
+      const header = document.querySelector('header') as HTMLElement;
+      
+      // Calculate gaps and positioning
+      const leftGap = 20; // Gap from left edge
+      const topGap = header ? header.offsetHeight + 20 : 100; // Gap below header
+      const toolbarWidth = toolbar ? toolbar.offsetWidth : 200; // Actual toolbar width
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      
+      // Position the sheet to start after the toolbar with proper spacing
+      const sheetStartX = leftGap + toolbarWidth + 20; // 20px gap after toolbar
+      const sheetStartY = topGap;
+      
+      // Calculate sheet dimensions to fit viewport
+      const sheetWidth = viewportWidth - sheetStartX - 20; // 20px right margin
+      const sheetHeight = viewportHeight - topGap - 20; // 20px bottom margin
+      
+      // Center the view on the properly positioned sheet
+      canvasRef.current.centerView(sheetStartX + (sheetWidth / 2), sheetStartY + (sheetHeight / 2), 1000);
+      
+      // Update the sheet container positioning to match the calculated values
+      const sheetContainer = document.getElementById('spreadsheet-container') as HTMLElement;
+      if (sheetContainer) {
+        sheetContainer.style.left = `${sheetStartX}px`;
+        sheetContainer.style.top = `${sheetStartY}px`;
+        sheetContainer.style.right = '20px';
+        sheetContainer.style.bottom = '20px';
+        console.log('Sheet container repositioned to:', { left: sheetStartX, top: sheetStartY });
+      }
       
       // Zoom out to fit everything in view
       canvasRef.current.zoomTo(0.6, 1000);
       
       // After zoom animation, adjust the view to show everything
-        setTimeout(() => {
+      setTimeout(() => {
         if (canvasRef.current) {
           canvasRef.current.fitToView(500);
         }
@@ -422,36 +494,29 @@ const Index: React.FC = () => {
     // Reposition AI chatbox to left side if not pinned
     const aiChatbox = document.querySelector('.ai-chatbox') as HTMLElement;
     
-    // Reposition toolbar to left side
-    const toolbar = document.querySelector('.movable-toolbar') as HTMLElement;
-    if (toolbar) {
-      // Ensure proper positioning without creating white blocks
-      toolbar.style.position = 'fixed';
-      toolbar.style.left = '20px';
-      toolbar.style.right = 'auto';
-      toolbar.style.top = '300px';
-      toolbar.style.zIndex = '90';
-      // Remove any conflicting styles
-      toolbar.style.transform = 'none';
-      toolbar.style.margin = '0';
-      toolbar.style.padding = '0';
-      // Ensure no background conflicts
-      toolbar.style.background = 'transparent';
-      toolbar.style.backgroundColor = 'transparent';
-    }
+    // Note: Toolbar positioning is now handled by the MovableToolbar component itself
+    // The toolbar will maintain its current position (fixed or movable) based on user preference
     
-    // Reposition embedded charts below the sheet
-    setEmbeddedCharts(prev => prev.map((chart, index) => ({
-      ...chart,
-      position: {
-        x: 100 + (index * 50),
-        y: 800 + (index * 100)
-      },
-      size: {
-        width: 350,
-        height: 250
-      }
-    })));
+    // Reposition embedded charts below the sheet with proper spacing
+    // Calculate chart positions based on actual sheet positioning
+    const sheetContainer = document.getElementById('spreadsheet-container') as HTMLElement;
+    if (sheetContainer) {
+      const sheetRect = sheetContainer.getBoundingClientRect();
+      const chartStartX = sheetRect.left + 20; // 20px gap from sheet left edge
+      const chartStartY = sheetRect.bottom + 20; // 20px gap below sheet
+      
+      setEmbeddedCharts(prev => prev.map((chart, index) => ({
+        ...chart,
+        position: {
+          x: chartStartX + (index * 50), // Spread charts horizontally
+          y: chartStartY + (index * 100) // Stack charts vertically
+        },
+        size: {
+          width: 350,
+          height: 250
+        }
+      })));
+    }
     
     // Force a re-render to ensure proper positioning
     setTimeout(() => {
@@ -519,6 +584,43 @@ const Index: React.FC = () => {
     
     return () => {
       window.removeEventListener('chartMoved', handleChartMoved as EventListener);
+    };
+  }, []);
+
+  // Handle window resize to maintain proper sheet positioning
+  useEffect(() => {
+    const handleResize = () => {
+      // Only adjust if we have a canvas reference and the sheet is positioned
+      if (canvasRef.current) {
+        const sheetContainer = document.getElementById('spreadsheet-container') as HTMLElement;
+        if (sheetContainer && sheetContainer.style.left !== '') {
+          // Recalculate positioning based on new viewport size
+          const toolbar = document.querySelector('.movable-toolbar') as HTMLElement;
+          const header = document.querySelector('header') as HTMLElement;
+          
+          const leftGap = 20;
+          const topGap = header ? header.offsetHeight + 20 : 100;
+          const toolbarWidth = toolbar ? toolbar.offsetWidth : 200;
+          const viewportWidth = window.innerWidth;
+          
+          const sheetStartX = leftGap + toolbarWidth + 20;
+          const sheetStartY = topGap;
+          
+          // Update sheet container positioning
+          sheetContainer.style.left = `${sheetStartX}px`;
+          sheetContainer.style.top = `${sheetStartY}px`;
+          sheetContainer.style.right = '20px';
+          sheetContainer.style.bottom = '20px';
+          
+          console.log('Sheet repositioned on resize:', { left: sheetStartX, top: sheetStartY });
+        }
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
     };
   }, []);
 
@@ -712,23 +814,32 @@ const Index: React.FC = () => {
           onExpandChart={handleExpandChart}
           onShrinkChart={handleShrinkChart}
         >
-          {/* Spreadsheet Area - Allow free movement */}
-          <div className="absolute inset-0 z-10">
-                  <ModernSpreadsheet
-                    sheet={activeSheet}
-                    updateCell={handleUpdateCell}
-                    bulkUpdateCells={handleBulkUpdateCells}
-                    onSelectionChange={setSelectedCells}
-                    selectedCells={selectedCells}
-                    onAddMoreRows={() => {
-                      setSheets(prev => prev.map((sheet, index) => 
-                        index === activeSheetIndex 
-                          ? { ...sheet, rowCount: sheet.rowCount + 1000 }
-                          : sheet
-                      ));
-                    }}
-                    onSheetNameChange={(newName) => handleSheetNameChange(activeSheetIndex, newName)}
-                  />
+          {/* Spreadsheet Area - Positioned with proper spacing from toolbar and header */}
+          <div 
+            className="absolute z-10"
+            style={{
+              left: '280px', // Start after toolbar (20px + 200px toolbar + 20px gap)
+              top: '100px',  // Start below header with gap
+              right: '20px',  // Right margin
+              bottom: '20px'  // Bottom margin
+            }}
+            id="spreadsheet-container"
+          >
+            <ModernSpreadsheet
+              sheet={activeSheet}
+              updateCell={handleUpdateCell}
+              bulkUpdateCells={handleBulkUpdateCells}
+              onSelectionChange={setSelectedCells}
+              selectedCells={selectedCells}
+              onAddMoreRows={() => {
+                setSheets(prev => prev.map((sheet, index) => 
+                  index === activeSheetIndex 
+                    ? { ...sheet, rowCount: sheet.rowCount + 1000 }
+                    : sheet
+                ));
+              }}
+              onSheetNameChange={(newName) => handleSheetNameChange(activeSheetIndex, newName)}
+            />
           </div>
         </InfiniteCanvas>
         

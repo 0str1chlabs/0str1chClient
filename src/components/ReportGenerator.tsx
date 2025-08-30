@@ -31,11 +31,11 @@ import {
   PieChart as PieChartIcon,
   X
 } from 'lucide-react';
-import { ChartRenderer } from './ChartRenderer';
 import { useAuth } from '@/components/auth/AuthContext';
 import { toast } from '@/hooks/use-toast';
 import { InteractiveDashboard } from './InteractiveDashboard';
 import { generateLocalReport, saveReportToStorage, ReportData } from '@/lib/reportUtils';
+import { Chart, MultiSeriesChart, MetricCard, ChartContainer } from '@/components/ui/chart';
 
 interface ReportGeneratorProps {
   activeSheet: any;
@@ -63,46 +63,60 @@ export const ReportGenerator: React.FC<ReportGeneratorProps> = ({
   // Report categories with descriptions and icons
   const reportCategories = [
     {
-      id: 'financial',
-      name: 'Financial Performance',
-      description: 'Universal business need for profit/loss analysis',
+      id: 'finance',
+      name: 'Finance / Accounting',
+      description: 'Financial performance, profit/loss analysis, budgeting, and accounting metrics',
       icon: DollarSign,
       color: 'text-green-600'
     },
     {
       id: 'sales',
-      name: 'Sales Analytics',
-      description: 'Critical for revenue optimization and forecasting',
+      name: 'Sales & Marketing',
+      description: 'Sales analytics, revenue optimization, marketing ROI, and campaign performance',
       icon: TrendingUp,
       color: 'text-blue-600'
     },
     {
-      id: 'marketing',
-      name: 'Marketing ROI',
-      description: 'Essential for budget allocation and campaign optimization',
-      icon: Target,
+      id: 'hr',
+      name: 'Human Resources (HR)',
+      description: 'Employee performance, recruitment metrics, retention rates, and workforce analytics',
+      icon: Users,
       color: 'text-purple-600'
     },
     {
-      id: 'operational',
-      name: 'Operational Efficiency',
-      description: 'Key for cost management and productivity',
+      id: 'operations',
+      name: 'Operations / Supply Chain',
+      description: 'Operational efficiency, supply chain metrics, cost management, and productivity analysis',
       icon: Activity,
       color: 'text-orange-600'
     },
     {
-      id: 'customer',
-      name: 'Customer Analytics',
-      description: 'Vital for retention and growth strategies',
-      icon: Users,
+      id: 'project',
+      name: 'Project Management',
+      description: 'Project timelines, resource allocation, milestone tracking, and delivery performance',
+      icon: Target,
       color: 'text-indigo-600'
     },
     {
-      id: 'employee',
-      name: 'Employee Performance',
-      description: 'Important for organizational development',
+      id: 'customer',
+      name: 'Customer Support / CRM',
+      description: 'Customer satisfaction, support metrics, CRM performance, and customer retention',
       icon: BarChart,
       color: 'text-red-600'
+    },
+    {
+      id: 'education',
+      name: 'Education',
+      description: 'Learning outcomes, student performance, course effectiveness, and educational metrics',
+      icon: FileText,
+      color: 'text-teal-600'
+    },
+    {
+      id: 'research',
+      name: 'Research / Analytics',
+      description: 'Data analysis, research findings, statistical insights, and analytical reporting',
+      icon: BarChart3,
+      color: 'text-cyan-600'
     }
   ];
 
@@ -211,7 +225,7 @@ export const ReportGenerator: React.FC<ReportGeneratorProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-[95vw] h-[95vh] max-w-7xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
@@ -444,6 +458,25 @@ export const ReportGenerator: React.FC<ReportGeneratorProps> = ({
                                   </div>
                                 )}
                               </div>
+                              
+                              {/* Mini Chart for Data Distribution */}
+                              {range.data && range.data.length > 0 && (
+                                <div className="mt-4">
+                                  <h4 className="text-sm font-medium mb-2">Data Distribution</h4>
+                                  <div className="h-32">
+                                    <Chart
+                                      data={range.data.slice(0, 10)} // Show first 10 data points
+                                      type="bar"
+                                      xKey="category"
+                                      yKey="value"
+                                      height={120}
+                                      showGrid={false}
+                                      showLegend={false}
+                                      showTooltip={true}
+                                    />
+                                  </div>
+                                </div>
+                              )}
                             </CardContent>
                           </Card>
                         ))}
@@ -467,16 +500,16 @@ export const ReportGenerator: React.FC<ReportGeneratorProps> = ({
                             <CardContent>
                               <div className="space-y-4">
                                 <div className="h-64">
-                                  <ChartRenderer
+                                  <Chart
                                     data={chart.data}
-                                    chartSpec={{
-                                      type: chart.type === "heatmap" ? "bar" : chart.type,
-                                      title: chart.name,
-                                      x: { field: 'category', type: 'category' },
-                                      y: { field: 'value', type: 'numeric', format: 'number' }
-                                    }}
-                                    width={600}
+                                    type={(chart.type === "heatmap" || chart.type === "scatter") ? "bar" : (chart.type as 'bar' | 'line' | 'pie' | 'area')}
+                                    xKey="category"
+                                    yKey="value"
+                                    title={chart.name}
                                     height={250}
+                                    showGrid={true}
+                                    showLegend={true}
+                                    showTooltip={true}
                                   />
                                 </div>
                                 
@@ -523,6 +556,29 @@ export const ReportGenerator: React.FC<ReportGeneratorProps> = ({
                                 <p className="text-xs text-gray-500 mt-1">Confidence: {(trend.confidence * 100).toFixed(1)}%</p>
                               </div>
                             ))}
+                            
+                            {/* Trend Visualization Chart */}
+                            {report.analysis.trends.length > 0 && (
+                              <div className="mt-4">
+                                <h4 className="text-sm font-medium mb-2">Trend Overview</h4>
+                                <div className="h-48">
+                                  <Chart
+                                    data={report.analysis.trends.map((trend, index) => ({
+                                      field: trend.field,
+                                      confidence: trend.confidence * 100,
+                                      trend: trend.trend === 'increasing' ? 1 : -1
+                                    }))}
+                                    type="bar"
+                                    xKey="field"
+                                    yKey="confidence"
+                                    height={180}
+                                    showGrid={true}
+                                    showLegend={false}
+                                    showTooltip={true}
+                                  />
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </CardContent>
                       </Card>
@@ -608,10 +664,44 @@ export const ReportGenerator: React.FC<ReportGeneratorProps> = ({
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <h3 className="text-lg font-semibold">Interactive Dashboard</h3>
-                        <Button variant="outline" size="sm">
-                          <RefreshCw className="h-4 w-4 mr-2" />
-                          Refresh
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => window.open('/chart-showcase', '_blank')}
+                          >
+                            <BarChart3 className="h-4 w-4 mr-2" />
+                            View Chart Types
+                          </Button>
+                          <Button variant="outline" size="sm">
+                            <RefreshCw className="h-4 w-4 mr-2" />
+                            Refresh
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {/* Key Metrics Overview */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                        <MetricCard
+                          title="Total Data Points"
+                          value={report.dataRanges.reduce((sum, range) => sum + (range.summary?.count || 0), 0)}
+                          icon={<Database className="h-5 w-5 text-blue-600" />}
+                        />
+                        <MetricCard
+                          title="Charts Generated"
+                          value={report.charts.length}
+                          icon={<BarChart3 className="h-5 w-5 text-green-600" />}
+                        />
+                        <MetricCard
+                          title="Trends Identified"
+                          value={report.analysis.trends.length}
+                          icon={<TrendingUp className="h-5 w-5 text-purple-600" />}
+                        />
+                        <MetricCard
+                          title="Data Quality"
+                          value={`${Math.round((report.dataRanges.reduce((sum, range) => sum + (range.summary?.uniqueValues || 0), 0) / Math.max(report.dataRanges.length, 1)) * 100)}%`}
+                          icon={<CheckCircle className="h-5 w-5 text-orange-600" />}
+                        />
                       </div>
                       
                       <InteractiveDashboard
@@ -655,7 +745,7 @@ export const ReportGenerator: React.FC<ReportGeneratorProps> = ({
 
           <div className="space-y-6">
             {/* High-Value Report Categories */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {reportCategories.map((category) => {
                 const IconComponent = category.icon;
                 return (

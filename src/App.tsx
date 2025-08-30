@@ -8,6 +8,7 @@ import { AuthWrapper } from "@/components/auth/AuthWrapper";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import { ChartShowcase } from "@/components/ChartShowcase";
 import { useState, useCallback } from "react";
 
 const queryClient = new QueryClient();
@@ -30,6 +31,7 @@ const App = () => {
               <AuthWrapper>
                 <Routes>
                   <Route path="/" element={<Index />} />
+                  <Route path="/chart-showcase" element={<ChartShowcase />} />
                   {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                   <Route path="*" element={<NotFound />} />
                 </Routes>

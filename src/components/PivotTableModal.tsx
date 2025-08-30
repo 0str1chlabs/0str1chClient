@@ -1,15 +1,30 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Chart } from '@/components/ui/chart';
+import { 
+  BarChart3, 
+  TrendingUp, 
+  PieChart, 
+  Activity, 
+  Download, 
+  Save,
+  X,
+  Plus,
+  Minus,
+  Settings,
+  RefreshCw
+} from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { motion, AnimatePresence } from 'framer-motion';
 import PivotTableUI from 'react-pivottable/PivotTableUI';
 import 'react-pivottable/pivottable.css';
 import { SheetData, PivotTableState } from '@/types/spreadsheet';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ChartRenderer } from './ChartRenderer';
-import { X, BarChart3, Download, Save, RefreshCw, Eye, EyeOff, ArrowLeft, Info, HelpCircle, MousePointer, ArrowRight, Table2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { MousePointer, ArrowRight, Info, HelpCircle } from 'lucide-react';
 
 interface PivotTableModalProps {
   sheet: SheetData;
@@ -80,7 +95,7 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
   }, [sheet]);
 
   // Generate chart data from pivot table
-  const generateChartData = useCallback((type: 'bar' | 'line' | 'pie' | 'area') => {
+  const generateChartData = useMemo(() => {
     if (!pivotData.length) {
       console.log('No pivot data available for chart generation');
       return;
@@ -169,14 +184,14 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
       
       // Create chart specification based on actual data
       chartSpec = {
-        title: `${type.charAt(0).toUpperCase() + type.slice(1)} Chart - ${pivotData.length} records`,
+        title: `${chartType.charAt(0).toUpperCase() + chartType.slice(1)} Chart - ${pivotData.length} records`,
         xAxis: { type: 'category', data: chartData.map(d => d.name) },
         yAxis: { type: 'value' },
         series: [{
-          type: type,
+          type: chartType,
           data: chartData.map(d => d.value),
           itemStyle: {
-            color: type === 'pie' ? ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'] : '#4ECDC4'
+            color: chartType === 'pie' ? ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'] : '#4ECDC4'
           }
         }]
       };
@@ -187,18 +202,18 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
       setActiveTab('chart');
       
       // Call the parent's chart generation function
-      onGenerateChart(type);
+      onGenerateChart(chartType);
       
       console.log('Chart generated with real data:', chartData);
       
     } catch (error) {
       console.error('Error generating chart:', error);
     }
-  }, [pivotData, pivotState, onGenerateChart]);
+  }, [pivotData, pivotState, chartType, onGenerateChart]);
 
   const handleChartTypeChange = (type: 'bar' | 'line' | 'pie' | 'area') => {
     setChartType(type);
-    generateChartData(type);
+    generateChartData();
   };
 
   const handleAggregatorChange = (aggregator: string) => {
@@ -560,7 +575,7 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
                         value="pivot" 
                         className="data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 data-[state=active]:shadow-sm transition-all duration-200"
                       >
-                        <Table2 className="h-4 w-4 mr-2" />
+                        <BarChart3 className="h-4 w-4 mr-2" />
                         Pivot Table
                       </TabsTrigger>
                       <TabsTrigger 
@@ -593,11 +608,15 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
                     <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700 h-full">
                       {showChart && chartData && chartSpec ? (
                         <div className="h-full flex items-center justify-center">
-                          <ChartRenderer 
-                            data={chartData} 
-                            chartSpec={chartSpec} 
-                            width={800} 
-                            height={500} 
+                          <Chart 
+                            data={chartData}
+                            type={chartType}
+                            xKey="name"
+                            yKey="value"
+                            height={500}
+                            showGrid={true}
+                            showLegend={true}
+                            showTooltip={true}
                             className="w-full h-full" 
                           />
                         </div>

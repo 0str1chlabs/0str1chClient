@@ -317,3 +317,220 @@ export const formatSelectionContextForAI = (context: CellSelectionContext): stri
 
   return lines.join('\n');
 };
+
+/**
+ * Performance-optimized selection utilities
+ */
+
+// Cache for parsed cell positions to avoid repeated parsing
+const cellPositionCache = new Map<string, { row: number; col: number; colIndex: number }>();
+
+/**
+ * Optimized cell position parsing with caching
+ */
+export const parseCellIdOptimized = (cellId: string): { row: number; col: number; colIndex: number } => {
+  if (cellPositionCache.has(cellId)) {
+    return cellPositionCache.get(cellId)!;
+  }
+  
+  const result = parseCellId(cellId);
+  const parsed = { row: result.row, col: result.colIndex, colIndex: result.colIndex };
+  cellPositionCache.set(cellId, parsed);
+  return parsed;
+};
+
+/**
+ * Dirty tracking for efficient updates
+ */
+export class SelectionDirtyTracker {
+  private dirtyCells = new Set<string>();
+  private lastSelection: string[] = [];
+  
+  /**
+   * Mark cells as dirty when selection changes
+   */
+  markDirty(previousSelection: string[], newSelection: string[]): string[] {
+    const dirty = new Set<string>();
+    
+    // Mark previously selected cells as dirty (to remove selection styling)
+    previousSelection.forEach(cellId => dirty.add(cellId));
+    
+    // Mark newly selected cells as dirty (to add selection styling)
+    newSelection.forEach(cellId => dirty.add(cellId));
+    
+    this.dirtyCells = dirty;
+    this.lastSelection = [...newSelection];
+    
+    return Array.from(dirty);
+  }
+  
+  /**
+   * Get only the cells that need to be re-rendered
+   */
+  getDirtyCells(): string[] {
+    return Array.from(this.dirtyCells);
+  }
+  
+  /**
+   * Clear dirty state after rendering
+   */
+  clearDirty(): void {
+    this.dirtyCells.clear();
+  }
+  
+  /**
+   * Check if a cell needs re-rendering
+   */
+  isDirty(cellId: string): boolean {
+    return this.dirtyCells.has(cellId);
+  }
+}
+
+/**
+ * Virtual rendering helpers for large grids
+ */
+export const getVisibleRange = (
+  scrollTop: number,
+  scrollLeft: number,
+  viewportHeight: number,
+  viewportWidth: number,
+  rowHeight: number,
+  colWidth: number,
+  totalRows: number,
+  totalCols: number,
+  buffer: number = 5
+): { startRow: number; endRow: number; startCol: number; endCol: number } => {
+  const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - buffer);
+  const endRow = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / rowHeight) + buffer);
+  const startCol = Math.max(0, Math.floor(scrollLeft / colWidth) - buffer);
+  const endCol = Math.min(totalCols, Math.ceil((scrollLeft + viewportWidth) / colWidth) + buffer);
+  
+  return { startRow, endRow, startCol, endCol };
+};
+
+/**
+ * Optimized range calculation using cached positions
+ */
+export const getCellsInRangeOptimized = (start: string, end: string): string[] => {
+  const startPos = parseCellIdOptimized(start);
+  const endPos = parseCellIdOptimized(end);
+  
+  const minRow = Math.min(startPos.row, endPos.row);
+  const maxRow = Math.max(startPos.row, endPos.row);
+  const minCol = Math.min(startPos.col, endPos.col);
+  const maxCol = Math.max(startPos.col, endPos.col);
+  
+  const cells: string[] = [];
+  const capacity = (maxRow - minRow + 1) * (maxCol - minCol + 1);
+  
+  // Pre-allocate array for better performance
+  cells.length = capacity;
+  let index = 0;
+  
+  for (let row = minRow; row <= maxRow; row++) {
+    for (let col = minCol; col <= maxCol; col++) {
+      const colLetter = String.fromCharCode(65 + col);
+      cells[index++] = `${colLetter}${row}`;
+    }
+  }
+  
+  return cells;
+};
+
+/**
+ * Debounced selection update to prevent excessive re-renders
+ */
+export const createDebouncedSelectionUpdater = (
+  callback: (selection: string[]) => void,
+  delay: number = 16 // ~60fps
+) => {
+  let timeoutId: NodeJS.Timeout | null = null;
+  let lastSelection: string[] = [];
+  
+  return (selection: string[]) => {
+    // Cancel previous timeout
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    
+    // Check if selection actually changed
+    if (JSON.stringify(selection) === JSON.stringify(lastSelection)) {
+      return;
+    }
+    
+    // Use requestAnimationFrame for smooth updates
+    timeoutId = setTimeout(() => {
+      requestAnimationFrame(() => {
+        callback(selection);
+        lastSelection = [...selection];
+      });
+    }, delay);
+  };
+};
+
+/**
+ * Optimized cell style calculation with memoization
+ */
+export const createCellStyleCalculator = () => {
+  const styleCache = new Map<string, React.CSSProperties>();
+  
+  return (cell: any, isSelected: boolean, isInRange: boolean): React.CSSProperties => {
+    const cacheKey = `${JSON.stringify(cell?.style)}-${isSelected}-${isInRange}`;
+    
+    if (styleCache.has(cacheKey)) {
+      return styleCache.get(cacheKey)!;
+    }
+    
+    const style: React.CSSProperties = {
+      fontWeight: cell?.style?.bold ? 'bold' : 'normal',
+      fontStyle: cell?.style?.italic ? 'italic' : 'normal',
+      textDecoration: cell?.style?.underline ? 'underline' : 'none',
+      color: cell?.style?.textColor || undefined,
+      backgroundColor: cell?.style?.backgroundColor || undefined,
+      fontSize: cell?.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
+      fontFamily: cell?.style?.fontFamily || undefined,
+      textAlign: cell?.style?.textAlign || 'left',
+    };
+    
+    styleCache.set(cacheKey, style);
+    return style;
+  };
+};
+
+/**
+ * Performance monitoring for selection operations
+ */
+export class SelectionPerformanceMonitor {
+  private timings: { [key: string]: number[] } = {};
+  
+  startTimer(operation: string): () => void {
+    const start = performance.now();
+    return () => {
+      const duration = performance.now() - start;
+      if (!this.timings[operation]) {
+        this.timings[operation] = [];
+      }
+      this.timings[operation].push(duration);
+      
+      // Keep only last 100 measurements
+      if (this.timings[operation].length > 100) {
+        this.timings[operation] = this.timings[operation].slice(-100);
+      }
+      
+      // Log slow operations
+      if (duration > 16) { // > 60fps threshold
+        console.warn(`Slow selection operation: ${operation} took ${duration.toFixed(2)}ms`);
+      }
+    };
+  }
+  
+  getAverageTime(operation: string): number {
+    const times = this.timings[operation];
+    if (!times || times.length === 0) return 0;
+    return times.reduce((a, b) => a + b, 0) / times.length;
+  }
+  
+  reset(): void {
+    this.timings = {};
+  }
+}
