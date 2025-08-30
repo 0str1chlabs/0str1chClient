@@ -7,9 +7,10 @@ import { PivotTableModal } from '@/components/PivotTableModal';
 import { InfiniteCanvas } from '@/components/InfiniteCanvas';
 import { StatisticalSummary } from '@/components/StatisticalSummary';
 import { ReportGenerator } from '@/components/ReportGenerator';
+import { AIReportGenerator } from '@/components/AIReportGenerator';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText } from 'lucide-react';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText, Brain } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 
@@ -28,6 +29,7 @@ const Index: React.FC = () => {
   const [isAIMinimized, setIsAIMinimized] = useState(false);
   const [showPivotTable, setShowPivotTable] = useState(false);
   const [showReportGenerator, setShowReportGenerator] = useState(false);
+  const [showAIReportGenerator, setShowAIReportGenerator] = useState(false);
   const [selectedCells, setSelectedCells] = useState<string[]>([]);
   const canvasRef = useRef<any>(null);
   const [embeddedCharts, setEmbeddedCharts] = useState<Array<{
@@ -329,6 +331,64 @@ const Index: React.FC = () => {
               : sheet
           ));
 
+          // Generate summary for AI processing
+          try {
+            console.log('Generating CSV summary for AI processing...');
+            
+            // Create a comprehensive summary
+            const summary = {
+              fileName: file.name,
+              totalRows: dataRows.length,
+              totalColumns: headers.length,
+              headers: headers,
+              sampleData: dataRows.slice(0, 3), // First 3 rows as sample
+              dataTypes: headers.map(header => {
+                const sampleValues = dataRows.slice(0, 10).map(row => {
+                  const values = row.split(',').map(v => v.trim().replace(/"/g, ''));
+                  const colIndex = headers.indexOf(header);
+                  return values[colIndex] || '';
+                }).filter(v => v !== '');
+                
+                // Determine data type
+                const hasNumbers = sampleValues.some(v => !isNaN(Number(v)) && v !== '');
+                const hasDates = sampleValues.some(v => !isNaN(Date.parse(v)) && v !== '');
+                
+                if (hasNumbers && !hasDates) return 'numeric';
+                if (hasDates) return 'date';
+                return 'text';
+              }),
+              timestamp: new Date().toISOString()
+            };
+            
+            console.log('Generated summary:', summary);
+            
+            // Send summary to backend for AI processing and Qdrant storage
+            const userEmail = user?.email || 'anonymous@example.com';
+            const resp = await fetch('/api/sheet-profile', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+              },
+              body: JSON.stringify({ 
+                summary: JSON.stringify(summary),
+                userEmail: userEmail
+              }),
+            });
+            
+            const result = await resp.json();
+            console.log('Backend AI processing response:', result);
+            
+            if (result.success) {
+              console.log('✅ CSV summary successfully processed and stored in Qdrant');
+            } else {
+              console.error('❌ Failed to process CSV summary:', result.error);
+            }
+            
+          } catch (err) {
+            console.error('❌ Error generating/sending CSV summary:', err);
+          }
+
           // Use the original working logic - just trigger a flag for AIAssistant to handle
           console.log('CSV uploaded - triggering DuckDB reload via AIAssistant');
           setCsvUploaded(true);
@@ -337,7 +397,7 @@ const Index: React.FC = () => {
       }
     };
     input.click();
-  }, [activeSheetIndex]);
+  }, [activeSheetIndex, user?.email]);
 
   const handleGenerateChart = useCallback((type: 'bar' | 'line' | 'pie' | 'area') => {
     console.log(`Generating ${type} chart from pivot table`);
@@ -733,6 +793,18 @@ const Index: React.FC = () => {
               Generate Report
             </Button>
             
+            {/* AI Report Generator Button */}
+            <Button
+              onClick={() => {
+                setShowAIReportGenerator(true);
+                setIsAIMinimized(true);
+              }}
+              className="bg-purple-600 hover:bg-purple-700 text-white transition-all duration-200 hover:scale-105"
+            >
+              <Brain className="h-4 w-4 mr-2" />
+              AI Report
+            </Button>
+            
             {/* AI Chatbox Toggle */}
             <Button
               variant="ghost"
@@ -900,6 +972,15 @@ const Index: React.FC = () => {
         isOpen={showReportGenerator}
         onClose={() => {
           setShowReportGenerator(false);
+        }}
+      />
+
+      {/* AI Report Generator Modal */}
+      <AIReportGenerator
+        activeSheet={activeSheet}
+        isOpen={showAIReportGenerator}
+        onClose={() => {
+          setShowAIReportGenerator(false);
         }}
       />
     </div>

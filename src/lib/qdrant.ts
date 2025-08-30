@@ -48,11 +48,101 @@ export async function getEmbedding(text: string): Promise<number[]> {
  * @param distance Distance metric (default: 'Cosine')
  */
 export async function createSheetProfileCollection(collectionName = 'sheet_row', vectorSize = VECTOR_SIZE, distance: 'Cosine' | 'Dot' | 'Euclid' = 'Cosine') {
-  await qdrant.createCollection(collectionName, {
-    vectors: {
-      size: vectorSize,
-      distance,
-    },
-  });
-  console.log(`✅ Created collection '${collectionName}' with vector size ${vectorSize} and distance '${distance}'`);
+  try {
+    await qdrant.createCollection(collectionName, {
+      vectors: {
+        size: vectorSize,
+        distance,
+      },
+    });
+    console.log(`✅ Created collection '${collectionName}' with vector size ${vectorSize} and distance '${distance}'`);
+  } catch (error: any) {
+    if (error.message?.includes('already exists')) {
+      console.log(`ℹ️ Collection '${collectionName}' already exists`);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Create the Qdrant collection for spreadsheet cells with the correct vector size and distance metric.
+ * @param collectionName Name of the collection (default: 'spreadsheet_cells')
+ * @param vectorSize Size of the embedding vector (default: 384 for all-minilm)
+ * @param distance Distance metric (default: 'Cosine')
+ */
+export async function createSpreadsheetCollection(collectionName = 'spreadsheet_cells', vectorSize = VECTOR_SIZE, distance: 'Cosine' | 'Dot' | 'Euclid' = 'Cosine') {
+  try {
+    await qdrant.createCollection(collectionName, {
+      vectors: {
+        size: vectorSize,
+        distance,
+      },
+    });
+    console.log(`✅ Created collection '${collectionName}' with vector size ${vectorSize} and distance '${distance}'`);
+  } catch (error: any) {
+    if (error.message?.includes('already exists')) {
+      console.log(`ℹ️ Collection '${collectionName}' already exists`);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Create the Qdrant collection for formulas with the correct vector size and distance metric.
+ * @param collectionName Name of the collection (default: 'formulas')
+ * @param vectorSize Size of the embedding vector (default: 384 for all-minilm)
+ * @param distance Distance metric (default: 'Cosine')
+ */
+export async function createFormulasCollection(collectionName = 'formulas', vectorSize = VECTOR_SIZE, distance: 'Cosine' | 'Dot' | 'Euclid' = 'Cosine') {
+  try {
+    await qdrant.createCollection(collectionName, {
+      vectors: {
+        size: vectorSize,
+        distance,
+      },
+    });
+    console.log(`✅ Created collection '${collectionName}' with vector size ${vectorSize} and distance '${distance}'`);
+  } catch (error: any) {
+    if (error.message?.includes('already exists')) {
+      console.log(`ℹ️ Collection '${collectionName}' already exists`);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Initialize all required Qdrant collections
+ */
+export async function initializeQdrantCollections() {
+  try {
+    console.log('🚀 Initializing Qdrant collections...');
+    
+    // Create all required collections
+    await createSheetProfileCollection('sheet_row', VECTOR_SIZE, 'Cosine');
+    await createSpreadsheetCollection('spreadsheet_cells', VECTOR_SIZE, 'Cosine');
+    await createFormulasCollection('formulas', VECTOR_SIZE, 'Cosine');
+    
+    console.log('✅ All Qdrant collections initialized successfully');
+  } catch (error) {
+    console.error('❌ Failed to initialize Qdrant collections:', error);
+    throw error;
+  }
+}
+
+/**
+ * Check if Qdrant is accessible and collections exist
+ */
+export async function checkQdrantHealth() {
+  try {
+    const collections = await qdrant.getCollections();
+    console.log('✅ Qdrant is accessible');
+    console.log('📊 Available collections:', collections.collections.map(c => c.name));
+    return true;
+  } catch (error) {
+    console.error('❌ Qdrant is not accessible:', error);
+    return false;
+  }
 } 

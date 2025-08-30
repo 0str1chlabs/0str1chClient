@@ -213,7 +213,8 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
 
   const handleChartTypeChange = (type: 'bar' | 'line' | 'pie' | 'area') => {
     setChartType(type);
-    generateChartData();
+    // generateChartData is a useCallback, so call it as a dependency, not as a function
+    // Instead, changing chartType will trigger generateChartData via useEffect/useCallback dependencies
   };
 
   const handleAggregatorChange = (aggregator: string) => {

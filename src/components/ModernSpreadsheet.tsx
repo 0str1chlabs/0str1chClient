@@ -250,16 +250,24 @@ export const ModernSpreadsheet = ({
   const dragThrottleRef = useRef<NodeJS.Timeout | null>(null);
   const lastDragUpdateRef = useRef<string>('');
 
+  // Track if dimensions have been manually modified
+  const [hasManualResize, setHasManualResize] = useState(false);
+
   // Set initial dimensions and handle window resize
   useEffect(() => {
     const updateDimensions = () => {
-      const newWidth = window.innerWidth * 0.75;
-      const newHeight = window.innerHeight * 0.8;
-      console.log('Updating dimensions:', { newWidth, newHeight, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight });
-      setDimensions({
-        width: newWidth,
-        height: newHeight
-      });
+      // Only update dimensions from window resize if user hasn't manually resized
+      if (!hasManualResize) {
+        const newWidth = window.innerWidth * 0.75;
+        const newHeight = window.innerHeight * 0.8;
+        console.log('Updating dimensions from window resize:', { newWidth, newHeight, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight });
+        setDimensions({
+          width: newWidth,
+          height: newHeight
+        });
+      } else {
+        console.log('Skipping window resize update - manual resize detected');
+      }
     };
 
     // Set initial dimensions immediately
@@ -271,7 +279,7 @@ export const ModernSpreadsheet = ({
     return () => {
       window.removeEventListener('resize', updateDimensions);
     };
-  }, []);
+  }, [hasManualResize]);
 
   // Virtual scrolling constants
   const ROW_HEIGHT = 48; // h-12 = 48px
@@ -812,6 +820,25 @@ export const ModernSpreadsheet = ({
         bottomLeft: true,
         topLeft: true,
       }}
+      onResize={(e, direction, ref, delta, position) => {
+        // Update dimensions during resize
+        setDimensions({
+          width: ref.offsetWidth,
+          height: ref.offsetHeight
+        });
+        // Mark that user has manually resized
+        setHasManualResize(true);
+      }}
+      onResizeStop={(e, direction, ref, delta, position) => {
+        // Finalize dimensions after resize
+        setDimensions({
+          width: ref.offsetWidth,
+          height: ref.offsetHeight
+        });
+        // Mark that user has manually resized
+        setHasManualResize(true);
+        console.log('Resize completed:', { width: ref.offsetWidth, height: ref.offsetHeight });
+      }}
       className="z-10"
       style={{
         background: 'transparent',
@@ -825,6 +852,7 @@ export const ModernSpreadsheet = ({
           <div className="flex items-center gap-2">
             <Move className="h-4 w-4" />
             <span className="font-medium text-sm">Sheet: {sheet.name}</span>
+            <span className="text-xs opacity-75">({Math.round(dimensions.width)} × {Math.round(dimensions.height)})</span>
           </div>
           <div className="flex items-center gap-2">
             {/* Zoom Controls */}
@@ -856,6 +884,25 @@ export const ModernSpreadsheet = ({
                 Reset
               </button>
             </div>
+            
+            {/* Size Reset Button */}
+            {hasManualResize && (
+              <button
+                onClick={() => {
+                  setHasManualResize(false);
+                  const newWidth = window.innerWidth * 0.75;
+                  const newHeight = window.innerHeight * 0.8;
+                  setDimensions({
+                    width: newWidth,
+                    height: newHeight
+                  });
+                }}
+                className="bg-green-600 hover:bg-green-700 text-white rounded px-2 py-1 text-xs transition-colors"
+                title="Reset to Auto Size"
+              >
+                Reset Size
+              </button>
+            )}
             
             <Button
               variant="ghost"

@@ -151,12 +151,17 @@ export const InteractiveDashboard: React.FC<InteractiveDashboardProps> = ({
 
     switch (widget.type) {
       case 'chart':
-        const chart = charts.find(c => c.id === widget.config.chartId);
-        if (chart) {
+        const chartId = widget.config?.chartId;
+        if (!chartId) {
+          return <div className="flex items-center justify-center h-full text-sm text-gray-500">Chart ID not configured</div>;
+        }
+        
+        const chart = charts.find(c => c.id === chartId);
+        if (chart && chart.data && chart.data.length > 0) {
           return (
             <div className="h-full">
               <Chart
-                data={chart.data || []}
+                data={chart.data}
                 type={chart.type === "heatmap" || chart.type === "scatter" ? "bar" : chart.type}
                 xKey="category"
                 yKey="value"
@@ -168,7 +173,7 @@ export const InteractiveDashboard: React.FC<InteractiveDashboardProps> = ({
             </div>
           );
         }
-        return <div className="flex items-center justify-center h-full text-sm text-gray-500">Chart not found</div>;
+        return <div className="flex items-center justify-center h-full text-sm text-gray-500">Chart not found or no data</div>;
 
       case 'metric':
         const metricData = widget.data;
