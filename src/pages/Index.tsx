@@ -10,9 +10,11 @@ import { ReportGenerator } from '@/components/ReportGenerator';
 import { AIReportGenerator } from '@/components/AIReportGenerator';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText, Brain } from 'lucide-react';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText, Brain, Cloud } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
+import MegaApiService from '../services/megaApiService';
+import { MegaAuthModal } from '../components/MegaAuthModal';
 
 const Index: React.FC = () => {
   const { user, logout } = useAuth();
@@ -44,6 +46,10 @@ const Index: React.FC = () => {
   // State to track CSV processing and upload flag
   const [isProcessingCSV, setIsProcessingCSV] = useState(false);
   const [csvUploaded, setCsvUploaded] = useState(false);
+  
+  // MEGA storage state
+  const [showMegaAuth, setShowMegaAuth] = useState(false);
+  const [isMegaAuthenticated, setIsMegaAuthenticated] = useState(false);
 
   const activeSheet = sheets[activeSheetIndex];
 
@@ -61,6 +67,42 @@ const Index: React.FC = () => {
       stopTimer();
     }, 16) // 60fps
   );
+
+  // Check for existing sheet data in MEGA cloud storage on page load
+  useEffect(() => {
+    const checkExistingSheetData = async () => {
+      if (user?.email) {
+        try {
+          console.log('🔍 Checking for existing sheet data in MEGA cloud storage...');
+          
+          // Check MEGA service status via backend
+          const megaStatus = await MegaApiService.checkMegaStatus();
+          if (!megaStatus.success) {
+            console.log('🔐 MEGA service not available, prompting for authentication...');
+            setShowMegaAuth(true);
+            return;
+          }
+          
+          const result = await MegaApiService.checkUserSheetData(user.email);
+          
+          if (result.success && result.hasData) {
+            console.log('📊 Found existing sheet data in MEGA cloud:', result.data);
+            
+            // Ask user if they want to load existing data
+            if (window.confirm('Found existing sheet data in MEGA cloud. Would you like to load it?')) {
+              await loadExistingSheetData(user.email);
+            }
+          } else {
+            console.log('📭 No existing sheet data found for user in MEGA cloud');
+          }
+        } catch (error) {
+          console.error('❌ Error checking for existing sheet data:', error);
+        }
+      }
+    };
+
+    checkExistingSheetData();
+  }, [user?.email]);
 
   // Add global click handler to deselect cells when clicking on sheet/canvas area
   useEffect(() => {
@@ -331,6 +373,57 @@ const Index: React.FC = () => {
               : sheet
           ));
 
+          // Store compressed sheet data in MEGA cloud storage
+          if (user?.email) {
+            try {
+              // Check MEGA service status via backend
+              const megaStatus = await MegaApiService.checkMegaStatus();
+              if (!megaStatus.success) {
+                console.log('🔐 MEGA service not available, prompting for authentication...');
+                setShowMegaAuth(true);
+                return;
+              }
+              
+              console.log('🔄 Storing compressed sheet data via backend MEGA API...');
+              
+              const metadata = {
+                totalRows: dataRows.length,
+                totalColumns: headers.length,
+                headers: headers,
+                dataTypes: headers.map(header => {
+                  const sampleValues = dataRows.slice(0, 10).map(row => {
+                    const values = row.split(',').map(v => v.trim().replace(/"/g, ''));
+                    const colIndex = headers.indexOf(header);
+                    return values[colIndex] || '';
+                  }).filter(v => v !== '');
+                  
+                  const hasNumbers = sampleValues.some(v => !isNaN(Number(v)) && v !== '');
+                  const hasDates = sampleValues.some(v => !isNaN(Date.parse(v)) && v !== '');
+                  
+                  if (hasNumbers && !hasDates) return 'numeric';
+                  if (hasDates) return 'date';
+                  return 'text';
+                })
+              };
+
+              const result = await MegaApiService.storeSheetData(
+                user.email,
+                file.name,
+                { cells, rowCount: maxRow, colCount: maxCol },
+                metadata
+              );
+
+              if (result.success) {
+                console.log('✅ Sheet data successfully stored in MEGA cloud storage with proper folder structure');
+                setIsMegaAuthenticated(true);
+              } else {
+                console.error('❌ Failed to store sheet data in MEGA cloud storage:', result.message);
+              }
+            } catch (error) {
+              console.error('❌ Error storing sheet data in MEGA cloud storage:', error);
+            }
+          }
+
           // Generate summary for AI processing
           try {
             console.log('Generating CSV summary for AI processing...');
@@ -413,6 +506,59 @@ const Index: React.FC = () => {
     console.log('Saving pivot table configuration:', pivotTable);
     // Save logic would go here
   }, []);
+
+  // Load existing sheet data from MEGA cloud storage
+  const loadExistingSheetData = useCallback(async (userEmail: string) => {
+    try {
+      console.log('🔄 Loading existing sheet data from MEGA cloud storage...');
+      
+      // Get list of user files to let them choose
+      const filesResult = await MegaApiService.listUserFiles(userEmail);
+      
+      if (filesResult.success && filesResult.data && filesResult.data.length > 0) {
+        // Let user choose which file to load
+        const fileNames = filesResult.data.map((file: any) => file.fileName);
+        const selectedFileName = window.prompt(
+          'Choose a file to load:\n' + fileNames.join('\n'),
+          fileNames[0]
+        );
+        
+        if (selectedFileName && fileNames.includes(selectedFileName)) {
+          const result = await MegaApiService.retrieveSheetData(userEmail, selectedFileName);
+          
+          if (result.success && result.data?.sheetData) {
+            const { sheetData, fileName } = result.data;
+            
+            // Update the active sheet with retrieved data
+            setSheets(prev => prev.map((sheet, index) => 
+              index === activeSheetIndex 
+                ? { 
+                    ...sheet, 
+                    name: fileName || 'Loaded Sheet',
+                    cells: sheetData.cells || {},
+                    rowCount: sheetData.rowCount || 1000,
+                    colCount: sheetData.colCount || 26
+                  }
+                : sheet
+            ));
+
+            // Note: updateLastAccessed is handled by the backend now
+            
+            console.log('✅ Sheet data successfully loaded from MEGA cloud storage');
+            
+            // Trigger DuckDB reload
+            setCsvUploaded(true);
+          } else {
+            console.error('❌ Failed to load sheet data:', result.message);
+          }
+        }
+      } else {
+        console.log('📭 No files found in MEGA cloud storage');
+      }
+    } catch (error) {
+      console.error('❌ Error loading existing sheet data:', error);
+    }
+  }, [activeSheetIndex]);
 
   const handleFormat = useCallback((action: string, value?: string) => {
     console.log('Format action:', action, value);
@@ -769,6 +915,15 @@ const Index: React.FC = () => {
               Upload CSV
             </Button>
             
+            {/* MEGA Cloud Storage Button */}
+            <Button
+              onClick={() => setShowMegaAuth(true)}
+              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white"
+            >
+              <Cloud className="h-4 w-4" />
+              {isMegaAuthenticated ? 'MEGA Connected' : 'Connect MEGA'}
+            </Button>
+            
             {/* Pivot Table Button */}
             <Button
               onClick={() => {
@@ -981,6 +1136,16 @@ const Index: React.FC = () => {
         isOpen={showAIReportGenerator}
         onClose={() => {
           setShowAIReportGenerator(false);
+        }}
+      />
+      
+      {/* MEGA Authentication Modal */}
+      <MegaAuthModal
+        isVisible={showMegaAuth}
+        onClose={() => setShowMegaAuth(false)}
+        onAuthSuccess={() => {
+          setIsMegaAuthenticated(true);
+          setShowMegaAuth(false);
         }}
       />
     </div>

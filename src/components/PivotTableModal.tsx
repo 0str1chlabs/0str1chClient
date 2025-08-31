@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,7 @@ import PivotTableUI from 'react-pivottable/PivotTableUI';
 import 'react-pivottable/pivottable.css';
 import { SheetData, PivotTableState } from '@/types/spreadsheet';
 import { MousePointer, ArrowRight, Info, HelpCircle } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface PivotTableModalProps {
   sheet: SheetData;
@@ -56,46 +57,99 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
   const [selectedAggregator, setSelectedAggregator] = useState('Sum');
   const [selectedRenderer, setSelectedRenderer] = useState('Table');
 
-  // Convert sheet data to pivot table format
+  // Convert sheet data to pivot table format with better error handling
   const pivotData = useMemo(() => {
-    if (!sheet || !sheet.cells) return [];
+    // Debug logging
+    console.log('PivotTableModal: Processing sheet data:', {
+      hasSheet: !!sheet,
+      hasCells: !!sheet?.cells,
+      cellsType: typeof sheet?.cells,
+      cellKeysCount: Object.keys(sheet?.cells || {}).length,
+      sampleKeys: Object.keys(sheet?.cells || {}).slice(0, 5)
+    });
     
-    const data: any[] = [];
-    const maxRow = Math.max(...Object.keys(sheet.cells).map(key => parseInt(key.slice(1))));
-    const maxCol = Math.max(...Object.keys(sheet.cells).map(key => key.charCodeAt(0) - 65));
-    
-    // Get headers from first row
-    const headers: string[] = [];
-    for (let col = 0; col <= maxCol; col++) {
-      const cellKey = `${String.fromCharCode(65 + col)}1`;
-      const header = sheet.cells[cellKey]?.value?.toString() || `Column ${String.fromCharCode(65 + col)}`;
-      headers.push(header);
+    // Early return for invalid data
+    if (!sheet?.cells || typeof sheet.cells !== 'object') {
+      console.log('PivotTableModal: Invalid sheet data, returning empty array');
+      return [];
     }
     
-    // Convert data rows
-    for (let row = 2; row <= maxRow; row++) {
-      const rowData: any = {};
-      let hasData = false;
+    const cellKeys = Object.keys(sheet.cells);
+    if (cellKeys.length === 0) {
+      console.log('PivotTableModal: No cell keys found, returning empty array');
+      return [];
+    }
+    
+    try {
+      const data: any[] = [];
       
-      for (let col = 0; col <= maxCol; col++) {
-        const cellKey = `${String.fromCharCode(65 + col)}${row}`;
-        const value = sheet.cells[cellKey]?.value;
-        if (value !== undefined && value !== '') {
-          hasData = true;
+      // Parse cell keys more safely
+      const validKeys = cellKeys.filter(key => {
+        // Only accept keys like "A1", "B2", "AA1", etc.
+        return /^[A-Z]+\d+$/.test(key);
+      });
+      
+      if (validKeys.length === 0) {
+        return [];
+      }
+      
+      // Extract row and column information
+      const rows = new Set<number>();
+      const cols = new Set<string>();
+      
+      validKeys.forEach(key => {
+        const colMatch = key.match(/^([A-Z]+)/);
+        const rowMatch = key.match(/(\d+)$/);
+        
+        if (colMatch && rowMatch) {
+          cols.add(colMatch[1]);
+          rows.add(parseInt(rowMatch[1]));
         }
-        rowData[headers[col]] = value || '';
+      });
+      
+      if (rows.size === 0 || cols.size === 0) {
+        return [];
       }
       
-      if (hasData) {
-        data.push(rowData);
+      const maxRow = Math.max(...Array.from(rows));
+      const maxCol = Math.max(...Array.from(cols).map(col => col.charCodeAt(0) - 65));
+      
+      // Get headers from first row
+      const headers: string[] = [];
+      for (let col = 0; col <= maxCol; col++) {
+        const cellKey = `${String.fromCharCode(65 + col)}1`;
+        const header = sheet.cells[cellKey]?.value?.toString() || `Column ${String.fromCharCode(65 + col)}`;
+        headers.push(header);
       }
+      
+      // Convert data rows
+      for (let row = 2; row <= maxRow; row++) {
+        const rowData: any = {};
+        let hasData = false;
+        
+        for (let col = 0; col <= maxCol; col++) {
+          const cellKey = `${String.fromCharCode(65 + col)}${row}`;
+          const value = sheet.cells[cellKey]?.value;
+          if (value !== undefined && value !== '') {
+            hasData = true;
+          }
+          rowData[headers[col]] = value || '';
+        }
+        
+        if (hasData) {
+          data.push(rowData);
+        }
+      }
+      
+      return data;
+    } catch (error) {
+      console.error('Error processing pivot data:', error);
+      return [];
     }
-    
-    return data;
-  }, [sheet]);
+  }, [sheet?.cells]);
 
   // Generate chart data from pivot table
-  const generateChartData = useMemo(() => {
+  const generateChartData = useCallback(() => {
     if (!pivotData.length) {
       console.log('No pivot data available for chart generation');
       return;
@@ -190,9 +244,7 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
         series: [{
           type: chartType,
           data: chartData.map(d => d.value),
-          itemStyle: {
-            color: chartType === 'pie' ? ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'] : '#4ECDC4'
-          }
+          category: 'Data'
         }]
       };
       
@@ -211,10 +263,12 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
     }
   }, [pivotData, pivotState, chartType, onGenerateChart]);
 
+  // Manual chart generation - removed auto-generation to prevent infinite loops
+  // Chart will be generated when user explicitly requests it
+
   const handleChartTypeChange = (type: 'bar' | 'line' | 'pie' | 'area') => {
     setChartType(type);
-    // generateChartData is a useCallback, so call it as a dependency, not as a function
-    // Instead, changing chartType will trigger generateChartData via useEffect/useCallback dependencies
+    // User needs to click "Generate Chart" button to create new chart
   };
 
   const handleAggregatorChange = (aggregator: string) => {
@@ -360,6 +414,49 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
     };
   }, []);
 
+  // Don't render if there's no valid data to prevent infinite loops
+  if (!isVisible) {
+    return null;
+  }
+
+  // Validate sheet data before rendering
+  if (!sheet?.cells || typeof sheet.cells !== 'object' || Object.keys(sheet.cells).length === 0) {
+    return (
+      <AnimatePresence>
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+          onClick={onClose}
+        >
+          <motion.div
+            className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-md p-6"
+            initial={{ scale: 0.9, y: 20, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0.9, y: 20, opacity: 0 }}
+            transition={{ duration: 0.4, ease: "easeOut" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              <BarChart3 className="h-16 w-16 mx-auto mb-4 text-red-500" />
+              <h2 className="text-xl font-bold text-gray-800 dark:text-gray-200 mb-2">
+                No Data Available
+              </h2>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">
+                The sheet data is empty or invalid. Please upload a valid CSV file.
+              </p>
+              <Button onClick={onClose} className="w-full">
+                Close
+              </Button>
+            </div>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+    );
+  }
+
   return (
     <AnimatePresence>
       {isVisible && (
@@ -371,14 +468,39 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
           transition={{ duration: 0.3 }}
           onClick={onClose}
         >
-          <motion.div
-            className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-7xl h-[90vh] flex flex-col overflow-hidden"
-            initial={{ scale: 0.9, y: 20, opacity: 0 }}
-            animate={{ scale: 1, y: 0, opacity: 1 }}
-            exit={{ scale: 0.9, y: 20, opacity: 0 }}
-            transition={{ duration: 0.4, ease: "easeOut" }}
-            onClick={(e) => e.stopPropagation()}
+          <ErrorBoundary
+            fallback={
+              <motion.div
+                className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-md p-6"
+                initial={{ scale: 0.9, y: 20, opacity: 0 }}
+                animate={{ scale: 1, y: 0, opacity: 1 }}
+                exit={{ scale: 0.9, y: 20, opacity: 0 }}
+                transition={{ duration: 0.4, ease: "easeOut" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="text-center">
+                  <BarChart3 className="h-16 w-16 mx-auto mb-4 text-red-500" />
+                  <h2 className="text-xl font-bold text-gray-800 dark:text-gray-200 mb-2">
+                    Component Error
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-400 mb-4">
+                    Something went wrong while rendering the pivot table. Please try again.
+                  </p>
+                  <Button onClick={onClose} className="w-full">
+                    Close
+                  </Button>
+                </div>
+              </motion.div>
+            }
           >
+            <motion.div
+              className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-7xl h-[90vh] flex flex-col overflow-hidden"
+              initial={{ scale: 0.9, y: 20, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.9, y: 20, opacity: 0 }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+              onClick={(e) => e.stopPropagation()}
+            >
             {/* Enhanced Header */}
             <motion.div 
               className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-800 dark:via-gray-700 dark:to-gray-800"
@@ -563,6 +685,26 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
                       ))}
                     </CardContent>
                   </Card>
+
+                  {/* Generate Chart Button */}
+                  <Card className="shadow-lg border-0 bg-white dark:bg-gray-800">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg flex items-center gap-2 text-gray-800 dark:text-gray-200">
+                        <BarChart3 className="h-5 w-5 text-blue-600" />
+                        Generate Chart
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Button
+                        onClick={generateChartData}
+                        disabled={!pivotData.length || (!pivotState.rows?.length && !pivotState.cols?.length)}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        <BarChart3 className="h-4 w-4 mr-2" />
+                        Generate {chartType.charAt(0).toUpperCase() + chartType.slice(1)} Chart
+                      </Button>
+                    </CardContent>
+                  </Card>
                 </div>
               </motion.div>
 
@@ -625,9 +767,21 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
                         <div className="h-full flex flex-col items-center justify-center text-gray-500 dark:text-gray-400">
                           <BarChart3 className="h-16 w-16 mb-4 opacity-50" />
                           <p className="text-lg font-medium mb-2">No Chart Data</p>
-                          <p className="text-sm text-center">
-                            Configure your pivot table and select a chart type to generate visualizations
-                          </p>
+                                                  <p className="text-sm text-center mb-4">
+                          Configure your pivot table and select a chart type to generate visualizations
+                        </p>
+                        <Button
+                          onClick={() => {
+                            setShowChart(false);
+                            setChartData([]);
+                            setChartSpec(null);
+                          }}
+                          variant="outline"
+                          size="sm"
+                        >
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Reset Chart
+                        </Button>
                         </div>
                       )}
                     </div>
@@ -693,6 +847,7 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
               </div>
             </div>
           </motion.div>
+            </ErrorBoundary>
         </motion.div>
       )}
     </AnimatePresence>
