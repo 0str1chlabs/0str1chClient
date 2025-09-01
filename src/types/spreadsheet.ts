@@ -3,6 +3,11 @@ export interface Cell {
   value: string | number;
   formula?: string;
   style?: CellStyle;
+  // Dual-state system for AI updates
+  originalValue?: string | number;
+  aiValue?: string | number;
+  hasAIUpdate?: boolean;
+  aiUpdateTimestamp?: number;
 }
 
 export interface CellStyle {
@@ -39,6 +44,9 @@ export interface SpreadsheetState {
   charts: Chart[];
   isAIMode: boolean;
   isDarkMode: boolean;
+  // Dual-state system
+  originalSheets?: SheetData[]; // Backup of original state before AI updates
+  hasAIUpdates?: boolean; // Flag to indicate if there are pending AI updates
 }
 
 // Pivot Table Types
@@ -69,4 +77,19 @@ export interface PivotTableState {
   vals: string[];
   aggregatorName: string;
   rendererName: string;
+}
+
+// AI Update Types
+export interface AIUpdate {
+  cellId: string;
+  originalValue: string | number;
+  aiValue: string | number;
+  timestamp: number;
+  reasoning?: string;
+}
+
+export interface AIUpdateBatch {
+  updates: AIUpdate[];
+  timestamp: number;
+  description?: string;
 }

@@ -245,3 +245,4 @@ Your MEGA cloud storage integration is now configured with:
 - ✅ **Secure data storage** with end-to-end encryption
 
 **Start uploading your CSV files and enjoy the benefits of cloud storage with compression!** 🚀
+

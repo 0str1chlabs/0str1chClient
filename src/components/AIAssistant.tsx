@@ -40,6 +40,11 @@ interface AIAssistantProps {
   csvUploaded?: boolean;
   resetCsvUploadFlag?: () => void;
   setIsProcessingCSV?: (processing: boolean) => void;
+  // AI Update methods for dual-state system
+  createAIUpdates?: (updates: any[]) => void;
+  acceptAllAIUpdates?: () => void;
+  rejectAllAIUpdates?: () => void;
+  hasAIUpdates?: boolean;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -57,7 +62,11 @@ export const AIAssistant = ({
   onEmbedChart,
   csvUploaded,
   resetCsvUploadFlag,
-  setIsProcessingCSV
+  setIsProcessingCSV,
+  createAIUpdates,
+  acceptAllAIUpdates,
+  rejectAllAIUpdates,
+  hasAIUpdates
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -802,14 +811,34 @@ ${sampleRows.join('\n')}`;
         return;
       }
       if (updates && Array.isArray(updates)) {
-        let applied = 0;
-        updates.forEach((update: { cellId: string, value: string | number }) => {
-          if (update.cellId && update.value !== undefined) {
-            updateCell(update.cellId, update.value);
-            applied++;
-          }
+        // Create AI updates instead of applying them directly
+        const aiUpdates = updates.map((update: { cellId: string, value: string | number }) => {
+          const currentCell = activeSheet.cells[update.cellId];
+          const originalValue = currentCell?.value || '';
+          
+          return {
+            cellId: update.cellId,
+            originalValue,
+            aiValue: update.value,
+            timestamp: Date.now(),
+            reasoning: 'AI-generated update'
+          };
         });
-        addMessage('ai', `Applied ${applied} cell update${applied !== 1 ? 's' : ''} to the spreadsheet.`);
+
+        if (createAIUpdates) {
+          createAIUpdates(aiUpdates);
+          addMessage('ai', `Created ${aiUpdates.length} AI suggestion${aiUpdates.length !== 1 ? 's' : ''}. Hover over cells to see the changes and accept/reject them individually.`);
+        } else {
+          // Fallback to direct updates if AI update system is not available
+          let applied = 0;
+          updates.forEach((update: { cellId: string, value: string | number }) => {
+            if (update.cellId && update.value !== undefined) {
+              updateCell(update.cellId, update.value);
+              applied++;
+            }
+          });
+          addMessage('ai', `Applied ${applied} cell update${applied !== 1 ? 's' : ''} to the spreadsheet.`);
+        }
       } else {
         addMessage('ai', `AI function did not return an updates array.`);
       }
