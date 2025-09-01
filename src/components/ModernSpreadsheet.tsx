@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Rnd } from 'react-rnd';
 import { Input } from '@/components/ui/input';
 import type { SheetData, Cell } from '@/types/spreadsheet';
+import CellComparisonTooltip from './CellComparisonTooltip';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import ListItemIcon from '@mui/material/ListItemIcon';
@@ -43,6 +44,9 @@ interface ModernSpreadsheetProps {
   className?: string;
   isSheetLoading?: boolean;
   setSheetLoading?: (loading: boolean) => void;
+  // AI Update methods
+  acceptAIUpdate?: (cellId: string) => void;
+  rejectAIUpdate?: (cellId: string) => void;
 }
 
 // Optimized Cell component with performance improvements
@@ -62,8 +66,13 @@ const SpreadsheetCell = React.memo(({
   handleEditSubmit,
   handleEditKeyDown,
   style,
-  isSheetLoading
+  isSheetLoading,
+  acceptAIUpdate,
+  rejectAIUpdate
 }: any) => {
+  // Tooltip state
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   // Memoized style calculation to prevent unnecessary re-renders
   const cellStyle = useMemo(() => {
     const baseStyle: React.CSSProperties = {
@@ -81,16 +90,49 @@ const SpreadsheetCell = React.memo(({
 
   // Memoized background color to avoid style recalculations
   const backgroundColor = useMemo(() => {
+    if (cell?.hasAIUpdate) {
+      return 'rgba(34, 197, 94, 0.8)'; // Solid green background for AI updates
+    }
     return cell?.style?.backgroundColor || (cell?.value ? 'white' : 'white');
-  }, [cell?.style?.backgroundColor, cell?.value]);
+  }, [cell?.style?.backgroundColor, cell?.value, cell?.hasAIUpdate]);
+
+  // Click handler for AI update tooltip
+  const handleCellClick = useCallback((e: React.MouseEvent) => {
+    if (cell?.hasAIUpdate) {
+      console.log('🎯 Clicked on AI update cell:', cellId, 'cell:', cell);
+      const rect = e.currentTarget.getBoundingClientRect();
+      setTooltipPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top - 2 // Position extremely close above the cell
+      });
+      setShowTooltip(true);
+    }
+    // Call the original onClick handler
+    onClick?.(e);
+  }, [cell?.hasAIUpdate, onClick, cellId]);
+
+  const handleTooltipClose = useCallback(() => {
+    setShowTooltip(false);
+  }, []);
+
+  // Simple hover tooltip for AI updates - no accept/reject needed
 
   // Memoized cell content to prevent unnecessary re-renders
   const cellContent = useMemo(() => {
+    // For AI updates, show the updated value (aiValue) instead of the original value
+    if (cell?.hasAIUpdate && cell?.aiValue !== undefined) {
+      if (typeof cell.aiValue === 'object' && cell.aiValue !== null) {
+        return cell.aiValue.message || cell.aiValue.value || JSON.stringify(cell.aiValue);
+      }
+      return cell.aiValue;
+    }
+    
+    // For regular cells, show the normal value
     if (typeof cell?.value === 'object' && cell?.value !== null) {
       return cell?.value.message || cell?.value.value || JSON.stringify(cell.value);
     }
     return cell?.value || '';
-  }, [cell?.value]);
+  }, [cell?.value, cell?.hasAIUpdate, cell?.aiValue]);
 
   // Memoized selection styling to avoid DOM manipulation
   const selectionStyle = useMemo(() => {
@@ -103,23 +145,30 @@ const SpreadsheetCell = React.memo(({
   }, [isSelected, isInRange]);
 
   return (
-    <div
-      key={cellId}
-      className={`
-        spreadsheet-cell w-32 h-12 border-r border-b border-green-200 dark:border-green-600 relative cursor-pointer transition-all duration-150 text-sm
-        ${selectionStyle}
-      `}
-      style={{
-        backgroundColor,
-        ...style
-      }}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      onMouseDown={onMouseDown}
-      onMouseEnter={onMouseEnter}
-      data-cell-id={cellId}
-      title={isSelected ? "Double-click to edit or start typing" : "Click to select, double-click to edit"}
-    >
+    <>
+      <div
+        key={cellId}
+        className={`
+          spreadsheet-cell w-32 h-12 border-r border-b border-green-200 dark:border-green-600 relative cursor-pointer transition-all duration-150 text-sm
+          ${selectionStyle}
+          ${cell?.hasAIUpdate ? 'ring-2 ring-purple-600 border-2 border-purple-600' : ''}
+        `}
+        style={{
+          backgroundColor,
+          ...style
+        }}
+        onClick={handleCellClick}
+        onDoubleClick={onDoubleClick}
+        onMouseDown={onMouseDown}
+        data-cell-id={cellId}
+        title={
+          cell?.hasAIUpdate 
+            ? "AI update available - click to see comparison" 
+            : isSelected 
+              ? "Double-click to edit or start typing" 
+              : "Click to select, double-click to edit"
+        }
+      >
       {isSheetLoading ? (
         <Skeleton variant="rectangular" width="100%" height="100%" animation="wave" />
       ) : isEditing ? (
@@ -136,13 +185,20 @@ const SpreadsheetCell = React.memo(({
         />
       ) : (
         <div 
-          className={`w-full h-full flex items-center px-3 text-green-900 dark:text-green-100 font-normal truncate ${
+          className={`w-full h-full flex items-center px-3 font-normal truncate relative ${
+            cell?.hasAIUpdate 
+              ? 'text-black font-semibold' // Black text for AI updates
+              : 'text-green-900 dark:text-green-100' // Normal text for other cells
+          } ${
             cell?.style?.textAlign === 'center' ? 'justify-center' :
             cell?.style?.textAlign === 'right' ? 'justify-end' : 'justify-start'
           }`}
           style={cellStyle}
         >
           {cellContent}
+          {cell?.hasAIUpdate && (
+            <div className="absolute top-1 right-1 w-3 h-3 bg-purple-600 rounded-full border border-white"></div>
+          )}
         </div>
       )}
       
@@ -169,17 +225,73 @@ const SpreadsheetCell = React.memo(({
           <div className="text-xs text-green-600 dark:text-green-400 font-mono">✏️</div>
         </div>
       )}
-    </div>
+      </div>
+      
+      {/* AI Update Tooltip */}
+      {/* Click-based tooltip for AI updates */}
+      {showTooltip && cell?.hasAIUpdate && (
+        <div
+          className="absolute z-50 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg p-3 text-sm"
+          style={{
+            left: tooltipPosition.x,
+            top: tooltipPosition.y,
+            transform: 'translateX(-50%)',
+            minWidth: '200px',
+          }}
+        >
+          <div className="font-semibold mb-2 text-gray-900 dark:text-gray-100">
+            Changes
+          </div>
+          <div className="space-y-2 mb-3">
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-gray-500 dark:text-gray-400">Previous:</span>
+              <span className="text-xs text-red-500 line-through">- {String(cell.originalValue || '')}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-gray-500 dark:text-gray-400">Current:</span>
+              <span className="text-sm text-purple-500 font-medium">+ {String(cell.aiValue || '')}</span>
+            </div>
+          </div>
+          <div className="text-xs text-gray-600 dark:text-gray-300 mb-3 text-center">
+            AI Updated
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                if (acceptAIUpdate) acceptAIUpdate(cellId);
+                handleTooltipClose();
+              }}
+              className="flex-1 bg-purple-500 hover:bg-purple-600 text-white text-sm px-3 py-2 rounded transition-colors font-medium"
+            >
+              Keep
+            </button>
+            <button
+              onClick={() => {
+                if (rejectAIUpdate) rejectAIUpdate(cellId);
+                handleTooltipClose();
+              }}
+              className="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm px-3 py-2 rounded transition-colors font-medium"
+            >
+              Undo
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }, (prevProps, nextProps) => {
-  // Custom comparison function for React.memo to prevent unnecessary re-renders
+  // Simple comparison for React.memo
   return (
     prevProps.cellId === nextProps.cellId &&
     prevProps.isSelected === nextProps.isSelected &&
     prevProps.isInRange === nextProps.isInRange &&
     prevProps.isEditing === nextProps.isEditing &&
     prevProps.isSheetLoading === nextProps.isSheetLoading &&
-    JSON.stringify(prevProps.cell) === JSON.stringify(nextProps.cell) &&
+    prevProps.cell?.value === nextProps.cell?.value &&
+    prevProps.cell?.hasAIUpdate === nextProps.cell?.hasAIUpdate &&
+    prevProps.cell?.aiValue === nextProps.cell?.aiValue &&
+    prevProps.cell?.originalValue === nextProps.cell?.originalValue &&
+    JSON.stringify(prevProps.cell?.style) === JSON.stringify(nextProps.cell?.style) &&
     prevProps.editValue === nextProps.editValue
   );
 });
@@ -194,7 +306,9 @@ export const ModernSpreadsheet = ({
   onSheetNameChange,
   className = '',
   isSheetLoading,
-  setSheetLoading
+  setSheetLoading,
+  acceptAIUpdate,
+  rejectAIUpdate
 }: ModernSpreadsheetProps) => {
   
   // Use the external selectedCells prop as the source of truth
@@ -759,10 +873,23 @@ export const ModernSpreadsheet = ({
       const cells = [];
       for (let col = startCol; col < endCol; col++) {
         const cellId = getCellId(row, col);
-        cells.push({ cellId, cell: sheet.cells[cellId] });
+        const cell = sheet.cells[cellId];
+        cells.push({ cellId, cell });
+        
+        // Debug AI update cells
+        if (cell?.hasAIUpdate) {
+          console.log('🔍 Found AI update cell in rowData:', cellId, 'cell:', cell);
+        }
       }
       rows.push({ row, cells });
     }
+    
+    // Debug all AI update cells in the sheet
+    const aiUpdateCells = Object.keys(sheet.cells).filter(cellId => sheet.cells[cellId]?.hasAIUpdate);
+    if (aiUpdateCells.length > 0) {
+      console.log('📊 Total AI update cells in sheet:', aiUpdateCells.length, 'cells:', aiUpdateCells);
+    }
+    
     return rows;
   }, [startRow, endRow, startCol, endCol, sheet.cells, getCellId]);
 
@@ -1080,6 +1207,12 @@ export const ModernSpreadsheet = ({
                 const isInRange = selectedCellsSet.has(cellId);
                 const isEditing = editingCell === cellId;
                 const colLetter = cellId[0];
+                
+                // Debug AI update cells
+                if (cell?.hasAIUpdate) {
+                  console.log('🎯 Rendering cell with AI update:', cellId, 'cell:', cell, 'hasAIUpdate:', cell.hasAIUpdate);
+                }
+                
                 return (
                   <SpreadsheetCell
                     key={cellId}
@@ -1102,6 +1235,8 @@ export const ModernSpreadsheet = ({
                     }}
                     isSheetLoading={isSheetLoading}
                     className={isDragging ? 'dragging' : ''}
+                    acceptAIUpdate={acceptAIUpdate}
+                    rejectAIUpdate={rejectAIUpdate}
                   />
                 );
               })}

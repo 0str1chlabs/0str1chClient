@@ -42,7 +42,8 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           if (!sheet.cells[action.cellId]) {
             sheet.cells[action.cellId] = { value: action.value };
           } else {
-            sheet.cells[action.cellId].value = action.value;
+            // Preserve existing properties like AI updates
+            sheet.cells[action.cellId] = { ...sheet.cells[action.cellId], value: action.value };
           }
           // Force a new reference for the sheet object in the array
           draft.sheets[sheetIndex] = { ...sheet };
@@ -93,7 +94,9 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
             row.forEach((cellValue: string, colIndex: number) => {
               const colLetter = String.fromCharCode(65 + colIndex);
               const cellId = `${colLetter}${rowIndex + 1}`;
-              cells[cellId] = { value: cellValue };
+              // Preserve existing AI update properties if they exist
+              const existingCell = sheet.cells[cellId];
+              cells[cellId] = existingCell ? { ...existingCell, value: cellValue } : { value: cellValue };
             });
           });
           sheet.cells = cells;
@@ -140,7 +143,8 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
             if (!sheet.cells[cellId]) {
               sheet.cells[cellId] = { value };
             } else {
-              sheet.cells[cellId].value = value;
+              // Preserve existing properties like AI updates
+              sheet.cells[cellId] = { ...sheet.cells[cellId], value };
             }
           });
         }
@@ -157,6 +161,7 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           
           action.updates.forEach((update: AIUpdate) => {
             const { cellId, originalValue, aiValue, timestamp, reasoning } = update;
+            console.log('🔄 Creating AI update for cell:', cellId, 'original:', originalValue, 'ai:', aiValue);
             
             if (!sheet.cells[cellId]) {
               sheet.cells[cellId] = { 
@@ -166,6 +171,7 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
                 hasAIUpdate: true,
                 aiUpdateTimestamp: timestamp
               };
+              console.log('📝 Created new cell with AI update:', cellId, sheet.cells[cellId]);
             } else {
               // Store original value if not already stored
               if (!sheet.cells[cellId].originalValue) {
@@ -175,10 +181,18 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
               sheet.cells[cellId].aiValue = aiValue;
               sheet.cells[cellId].hasAIUpdate = true;
               sheet.cells[cellId].aiUpdateTimestamp = timestamp;
+              console.log('📝 Updated existing cell with AI update:', cellId, sheet.cells[cellId]);
             }
           });
           
           draft.hasAIUpdates = true;
+          console.log('✅ Created', action.updates.length, 'AI updates. Total cells with updates:', Object.keys(sheet.cells).filter(cellId => sheet.cells[cellId]?.hasAIUpdate).length);
+          console.log('📋 AI Updates created:', action.updates.map(update => ({
+            cellId: update.cellId,
+            originalValue: update.originalValue,
+            aiValue: update.aiValue,
+            reasoning: update.reasoning
+          })));
         }
         break;
       }

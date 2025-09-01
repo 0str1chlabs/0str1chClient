@@ -40,11 +40,10 @@ interface AIAssistantProps {
   csvUploaded?: boolean;
   resetCsvUploadFlag?: () => void;
   setIsProcessingCSV?: (processing: boolean) => void;
-  // AI Update methods for dual-state system
+  // AI Update method for simple updates
   createAIUpdates?: (updates: any[]) => void;
-  acceptAllAIUpdates?: () => void;
-  rejectAllAIUpdates?: () => void;
-  hasAIUpdates?: boolean;
+  // Cell selection management
+  onDeselectCells?: () => void;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -64,9 +63,7 @@ export const AIAssistant = ({
   resetCsvUploadFlag,
   setIsProcessingCSV,
   createAIUpdates,
-  acceptAllAIUpdates,
-  rejectAllAIUpdates,
-  hasAIUpdates
+  onDeselectCells
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -102,16 +99,17 @@ export const AIAssistant = ({
       const context = createCellSelectionContext(selectedCells, activeSheet);
       setSelectionContext(context);
       
+      // Disabled automatic selection message to reduce chat clutter
       // Show helpful message when cells are first selected (only if schema is ready)
-      if (isSchemaReady && !isDuckDBProcessing && context && messages.length > 0) {
-        const lastMessage = messages[messages.length - 1];
-        // Only add message if the last message isn't already about selection
-        if (!lastMessage.content.includes('selected') && !lastMessage.content.includes('selection')) {
-          setTimeout(() => {
-            addMessage('ai', `🎯 I see you've selected ${context.selection_type === 'single' ? 'a cell' : context.selection_type === 'range' ? 'a range' : 'multiple cells'} (${context.selected_range}). I can help you analyze, update, or create charts from your selected data. Try asking: "What's the average?" or "Create a chart".`);
-          }, 1000);
-        }
-      }
+      // if (isSchemaReady && !isDuckDBProcessing && context && messages.length > 0) {
+      //   const lastMessage = messages[messages.length - 1];
+      //   // Only add message if the last message isn't already about selection
+      //   if (!lastMessage.content.includes('selected') && !lastMessage.content.includes('selection')) {
+      //     setTimeout(() => {
+      //       addMessage('ai', `🎯 I see you've selected ${context.selection_type === 'single' ? 'a cell' : context.selection_type === 'range' ? 'a range' : 'multiple cells'} (${context.selected_range}). I can help you analyze, update, or create charts from your selected data. Try asking: "What's the average?" or "Create a chart".`);
+      //     }, 1000);
+      //   }
+      // }
     } else {
       setSelectionContext(null);
     }
@@ -827,7 +825,7 @@ ${sampleRows.join('\n')}`;
 
         if (createAIUpdates) {
           createAIUpdates(aiUpdates);
-          addMessage('ai', `Created ${aiUpdates.length} AI suggestion${aiUpdates.length !== 1 ? 's' : ''}. Hover over cells to see the changes and accept/reject them individually.`);
+          addMessage('ai', `Updated ${aiUpdates.length} cell${aiUpdates.length !== 1 ? 's' : ''}. Hover over colored cells to see the changes.`);
         } else {
           // Fallback to direct updates if AI update system is not available
           let applied = 0;
@@ -843,7 +841,7 @@ ${sampleRows.join('\n')}`;
         addMessage('ai', `AI function did not return an updates array.`);
       }
     } else if (pendingType === 'sql' || pendingActionType === 'update') {
-      // Execute the SQL query
+      // Execute the SQL query and create AI updates
       try {
         const { queryDuckDB } = await import('../lib/utils');
         const result = await queryDuckDB(pendingAction as string);
@@ -851,8 +849,82 @@ ${sampleRows.join('\n')}`;
         if (result && result.length > 0) {
           addMessage('ai', `✅ SQL executed successfully! Modified ${result.length} rows.`);
           
-          // Refresh spreadsheet data from DuckDB to show updated values
-          await refreshSpreadsheetFromDuckDB();
+          // Create AI updates for the cells that were modified by SQL
+          if (createAIUpdates && activeSheet) {
+            // For SQL updates, we need to identify which cells actually changed
+            // We'll refresh the data first, then compare to find the changed cells
+            try {
+              // Refresh spreadsheet data from DuckDB to get the updated values
+              const { queryDuckDB } = await import('../lib/utils');
+              const updatedData = await queryDuckDB('SELECT * FROM sheet_data');
+              
+              if (updatedData && updatedData.length > 0) {
+                // Convert DuckDB result to spreadsheet format to compare
+                const updatedCells: Record<string, { value: string | number }> = {};
+                
+                // Get headers from the first row
+                const headers = Object.keys(updatedData[0]);
+                
+                // First, preserve the header row (row 1)
+                headers.forEach((header: string, colIndex: number) => {
+                  const colLetter = String.fromCharCode(65 + colIndex);
+                  const cellId = `${colLetter}1`;
+                  updatedCells[cellId] = { value: header };
+                });
+                
+                // Then process data rows (starting from row 2)
+                updatedData.forEach((row: any, rowIndex: number) => {
+                  headers.forEach((header: string, colIndex: number) => {
+                    const colLetter = String.fromCharCode(65 + colIndex);
+                    const cellId = `${colLetter}${rowIndex + 2}`; // Start from row 2 to preserve headers
+                    updatedCells[cellId] = { value: row[header] || '' };
+                  });
+                });
+                
+                // Now compare current cells with updated cells to find changes
+                const currentCells = activeSheet.cells;
+                const changedCells: any[] = [];
+                
+                console.log('🔍 Comparing SQL changes...');
+                console.log('Current cells count:', Object.keys(currentCells).length);
+                console.log('Updated cells count:', Object.keys(updatedCells).length);
+                
+                Object.keys(updatedCells).forEach(cellId => {
+                  const currentCell = currentCells[cellId];
+                  const updatedCell = updatedCells[cellId];
+                  
+                  if (currentCell && updatedCell) {
+                    const currentValue = currentCell.value;
+                    const updatedValue = updatedCell.value;
+                    
+                    // Check if the value actually changed
+                    if (currentValue !== updatedValue) {
+                      console.log('🔄 Found changed cell:', cellId, 'from:', currentValue, 'to:', updatedValue);
+                      changedCells.push({
+                        cellId,
+                        originalValue: currentValue,
+                        aiValue: updatedValue,
+                        timestamp: Date.now(),
+                        reasoning: `SQL update - ${result.length} rows modified`
+                      });
+                    }
+                  }
+                });
+                
+                console.log('📊 Total changed cells found:', changedCells.length);
+                
+                if (changedCells.length > 0) {
+                  createAIUpdates(changedCells);
+                  addMessage('ai', `Created ${changedCells.length} AI updates for cells that actually changed. Hover over colored cells to see the changes.`);
+                } else {
+                  addMessage('ai', `SQL executed successfully, but no visible changes were detected in the spreadsheet.`);
+                }
+              }
+            } catch (error) {
+              console.error('Error comparing SQL changes:', error);
+              addMessage('ai', `SQL executed successfully, but couldn't identify specific cell changes.`);
+            }
+          }
           
           // Update schema after modification
           await updateSchemaAfterModification();
@@ -1647,6 +1719,10 @@ ${sampleRows.join('\n')}`;
                   </div>
                 </div>
               )}
+
+
+              
+
               {pendingReplyResult && pendingActionType === 'reply' && (
                 <div className="flex flex-col items-center gap-3 mt-4">
                   <div className="text-green-600 dark:text-green-400 font-semibold">Result: {pendingReplyResult}</div>
@@ -1692,9 +1768,21 @@ ${sampleRows.join('\n')}`;
                        'Multiple Cells Selected'}
                     </span>
                   </div>
-                  <Badge variant="secondary" className="text-xs">
-                    {selectedCells.length} cell{selectedCells.length !== 1 ? 's' : ''}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs">
+                      {selectedCells.length} cell{selectedCells.length !== 1 ? 's' : ''}
+                    </Badge>
+                    {onDeselectCells && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onDeselectCells}
+                        className="h-6 px-2 text-xs border-green-300 text-green-700 hover:bg-green-100 dark:border-green-600 dark:text-green-300 dark:hover:bg-green-800/30"
+                      >
+                        Deselect
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div className="text-xs text-green-600 dark:text-green-400 mt-1">
                   {selectionContext.selected_range} • {selectionContext.columns.join(', ')} • {selectionContext.row_count} rows

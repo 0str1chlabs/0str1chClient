@@ -13,20 +13,35 @@ import { SheetData } from '@/types/spreadsheet';
 import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText, Brain, Cloud } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
+import { useSpreadsheet } from '@/hooks/useSpreadsheet';
 import MegaApiService from '../services/megaApiService';
 import { MegaAuthModal } from '../components/MegaAuthModal';
 
 const Index: React.FC = () => {
   const { user, logout } = useAuth();
-  const [sheets, setSheets] = useState<SheetData[]>([
-    {
-      id: 'sheet1',
-      name: 'Sheet 1',
-      cells: {},
-      rowCount: 1000,
-      colCount: 26 // A-Z columns
-    }
-  ]);
+  
+  // Use the new spreadsheet hook with dual-state system
+  const {
+    state,
+    activeSheet,
+    updateCell,
+    bulkUpdateCells,
+    createAIUpdates,
+    acceptAIUpdate,
+    rejectAIUpdate,
+    acceptAllAIUpdates,
+    rejectAllAIUpdates,
+    restoreOriginalState,
+    addSheet,
+    removeSheet,
+    setActiveSheet,
+    addMoreRows,
+    undo,
+    redo,
+    canUndo,
+    canRedo
+  } = useSpreadsheet();
+  
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [isAIMinimized, setIsAIMinimized] = useState(false);
   const [showPivotTable, setShowPivotTable] = useState(false);
@@ -46,12 +61,10 @@ const Index: React.FC = () => {
   // State to track CSV processing and upload flag
   const [isProcessingCSV, setIsProcessingCSV] = useState(false);
   const [csvUploaded, setCsvUploaded] = useState(false);
-  
+
   // MEGA storage state
   const [showMegaAuth, setShowMegaAuth] = useState(false);
   const [isMegaAuthenticated, setIsMegaAuthenticated] = useState(false);
-
-  const activeSheet = sheets[activeSheetIndex];
 
   // Hook for efficient DuckDB updates
   const { updateCell: updateDuckDBCell, batchUpdateCells: batchUpdateDuckDBCells } = useDuckDBUpdates();
@@ -215,12 +228,10 @@ const Index: React.FC = () => {
 
   // Initialize first sheet - start completely empty
   useEffect(() => {
-    if (sheets.length > 0 && Object.keys(sheets[0].cells).length === 0) {
+    if (state.sheets.length > 0 && Object.keys(state.sheets[0].cells).length === 0) {
       // Keep the sheet completely empty - no pre-created cells
       // Cells will be created dynamically as users type
-      setSheets(prev => prev.map((sheet, index) => 
-        index === 0 ? { ...sheet, cells: {}, rowCount: 1000, colCount: 26 } : sheet
-      ));
+      // This is now handled by the useSpreadsheet hook
     }
   }, []); // Empty dependency array - only run once on mount
 
@@ -254,63 +265,44 @@ const Index: React.FC = () => {
   }, []); // Empty dependency array - only run once on mount
 
   const handleUpdateCell = useCallback(async (cellId: string, value: string | number) => {
-    // Update local state immediately
-    setSheets(prev => prev.map((sheet, index) => 
-      index === activeSheetIndex 
-        ? { ...sheet, cells: { ...sheet.cells, [cellId]: { value } } }
-        : sheet
-    ));
+    // Update local state immediately using the new hook
+    updateCell(cellId, value);
 
     // Skip individual DuckDB updates for now - they will be handled on next full reload
     // This keeps things simple and avoids the rowid() error
     console.log(`Cell ${cellId} updated locally - DuckDB will be updated on next full reload`);
-  }, [activeSheetIndex]);
+  }, [updateCell]);
 
   const handleBulkUpdateCells = useCallback(async (updates: { cellId: string, value: any }[]) => {
-    // Update local state immediately
-    setSheets(prev => prev.map((sheet, index) => {
-      if (index === activeSheetIndex) {
-        const updatedCells = { ...sheet.cells };
-        updates.forEach(({ cellId, value }) => {
-          updatedCells[cellId] = { value };
-        });
-        return { ...sheet, cells: updatedCells };
-      }
-      return sheet;
-    }));
+    // Update local state immediately using the new hook
+    bulkUpdateCells(updates);
 
     // Skip DuckDB batch updates for now - they will be handled on next full reload
     console.log(`${updates.length} cells updated locally - DuckDB will be updated on next full reload`);
-  }, [activeSheetIndex]);
+  }, [bulkUpdateCells]);
 
   const handleAddSheet = useCallback(() => {
-    // Create a completely empty sheet - no pre-created cells
-    const newSheet: SheetData = {
-      id: `sheet${sheets.length + 1}`,
-      name: `Sheet ${sheets.length + 1}`,
-      cells: {}, // Start with empty cells object
-      rowCount: 1000,
-      colCount: 26
-    };
-    setSheets(prev => [...prev, newSheet]);
-    setActiveSheetIndex(sheets.length);
-  }, [sheets.length]);
+    // Use the new hook to add a sheet
+    addSheet();
+    setActiveSheetIndex(state.sheets.length);
+  }, [addSheet, state.sheets.length]);
 
   const handleRemoveSheet = useCallback((index: number) => {
-    if (sheets.length > 1) {
-      setSheets(prev => prev.filter((_, i) => i !== index));
+    if (state.sheets.length > 1) {
+      const sheetToRemove = state.sheets[index];
+      removeSheet(sheetToRemove.id);
       if (activeSheetIndex >= index && activeSheetIndex > 0) {
         setActiveSheetIndex(activeSheetIndex - 1);
       } else if (activeSheetIndex === index && index === 0) {
         setActiveSheetIndex(0);
       }
     }
-  }, [sheets.length, activeSheetIndex]);
+  }, [state.sheets.length, activeSheetIndex, removeSheet, state.sheets]);
 
   const handleSheetNameChange = useCallback((index: number, newName: string) => {
-    setSheets(prev => prev.map((sheet, i) => 
-      i === index ? { ...sheet, name: newName } : sheet
-    ));
+    // This would need to be implemented in the useSpreadsheet hook
+    // For now, we'll keep the old implementation
+    console.log(`Sheet name change not yet implemented in new system: ${newName}`);
   }, []);
 
   const handleUploadCSV = useCallback(() => {
@@ -361,17 +353,12 @@ const Index: React.FC = () => {
             }
           }
           
-          // Update the active sheet with CSV data
-          setSheets(prev => prev.map((sheet, index) => 
-            index === activeSheetIndex 
-              ? { 
-                  ...sheet, 
-                  cells, 
-                  rowCount: maxRow, 
-                  colCount: maxCol 
-                }
-              : sheet
-          ));
+          // Update the active sheet with CSV data using the new hook
+          const updates = Object.entries(cells).map(([cellId, cell]) => ({
+            cellId,
+            value: cell.value
+          }));
+          bulkUpdateCells(updates);
 
           // Store compressed sheet data in MEGA cloud storage
           if (user?.email) {
@@ -529,18 +516,12 @@ const Index: React.FC = () => {
           if (result.success && result.data?.sheetData) {
             const { sheetData, fileName } = result.data;
             
-            // Update the active sheet with retrieved data
-            setSheets(prev => prev.map((sheet, index) => 
-              index === activeSheetIndex 
-                ? { 
-                    ...sheet, 
-                    name: fileName || 'Loaded Sheet',
-                    cells: sheetData.cells || {},
-                    rowCount: sheetData.rowCount || 1000,
-                    colCount: sheetData.colCount || 26
-                  }
-                : sheet
-            ));
+            // Update the active sheet with retrieved data using the new hook
+            const updates = Object.entries(sheetData.cells || {}).map(([cellId, cell]: [string, any]) => ({
+              cellId,
+              value: cell.value
+            }));
+            bulkUpdateCells(updates);
 
             // Note: updateLastAccessed is handled by the backend now
             
@@ -568,75 +549,8 @@ const Index: React.FC = () => {
       return;
     }
 
-    // Create a copy of the current sheets to modify
-    setSheets(prev => prev.map((sheet, index) => {
-      if (index === activeSheetIndex) {
-        const updatedCells = { ...sheet.cells };
-        
-        // Apply formatting to all selected cells
-        selectedCells.forEach(cellId => {
-          const currentCell = updatedCells[cellId];
-          if (currentCell) {
-            const updatedCell = { ...currentCell };
-            
-            // Initialize style object if it doesn't exist
-            if (!updatedCell.style) {
-              updatedCell.style = {};
-    }
-
-    switch (action) {
-      case 'bold-toggle':
-                updatedCell.style.bold = value === 'true';
-        break;
-      case 'italic-toggle':
-                updatedCell.style.italic = value === 'true';
-        break;
-      case 'underline-toggle':
-                updatedCell.style.underline = value === 'true';
-        break;
-      case 'align-left':
-                updatedCell.style.textAlign = 'left';
-        break;
-      case 'align-center':
-                updatedCell.style.textAlign = 'center';
-        break;
-      case 'align-right':
-                updatedCell.style.textAlign = 'right';
-                break;
-              case 'fill-color':
-                if (value === 'transparent') {
-                  delete updatedCell.style.backgroundColor;
-                } else {
-                  updatedCell.style.backgroundColor = value;
-                }
-                break;
-              case 'text-color':
-                updatedCell.style.textColor = value;
-                break;
-              case 'font-size':
-                updatedCell.style.fontSize = parseInt(value || '12');
-                break;
-              case 'font-family':
-                updatedCell.style.fontFamily = value;
-        break;
-      default:
-                console.log('Unknown format action:', action);
-                return sheet;
-            }
-            
-            updatedCells[cellId] = updatedCell;
-          }
-        });
-        
-        return {
-          ...sheet,
-          cells: updatedCells
-        };
-      }
-      return sheet;
-    }));
-    
-    console.log(`Applied ${action} formatting to ${selectedCells.length} cells`);
+        // TODO: Update to use new state management system
+    console.log('Formatting not yet implemented in new state management system');
   }, [selectedCells, activeSheetIndex]);
 
   const handleCalculate = useCallback((operation: string) => {
@@ -979,7 +893,7 @@ const Index: React.FC = () => {
       {/* Sheet Tabs */}
       <div className="fixed top-20 left-0 right-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6">
         <div className="flex items-center gap-2 py-2">
-          {sheets.map((sheet, index) => (
+          {state.sheets.map((sheet, index) => (
             <div
               key={sheet.id}
               className={`flex items-center gap-2 px-4 py-2 rounded-t-lg border-b-2 transition-all duration-200 cursor-pointer ${
@@ -990,7 +904,7 @@ const Index: React.FC = () => {
               onClick={() => setActiveSheetIndex(index)}
             >
               <span className="text-sm font-medium">{sheet.name}</span>
-              {sheets.length > 1 && (
+              {state.sheets.length > 1 && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1058,21 +972,17 @@ const Index: React.FC = () => {
               bulkUpdateCells={handleBulkUpdateCells}
               onSelectionChange={setSelectedCells}
               selectedCells={selectedCells}
-              onAddMoreRows={() => {
-                setSheets(prev => prev.map((sheet, index) => 
-                  index === activeSheetIndex 
-                    ? { ...sheet, rowCount: sheet.rowCount + 1000 }
-                    : sheet
-                ));
-              }}
+              onAddMoreRows={addMoreRows}
               onSheetNameChange={(newName) => handleSheetNameChange(activeSheetIndex, newName)}
+              acceptAIUpdate={acceptAIUpdate}
+              rejectAIUpdate={rejectAIUpdate}
             />
           </div>
         </InfiniteCanvas>
         
         {/* AI Chatbox - Positioned outside canvas with higher z-index */}
         {!isAIMinimized && (
-        <AIAssistant
+                <AIAssistant
           onGenerateChart={handleGenerateChart}
           onCalculate={handleCalculate}
           activeSheet={activeSheet}
@@ -1082,12 +992,14 @@ const Index: React.FC = () => {
           onUploadCSV={handleUploadCSV}
           onCreateCustom={handleCreateCustom}
           updateCell={handleUpdateCell}
-                      bulkUpdateCells={handleBulkUpdateCells}
-            onEmbedChart={handleEmbedChart}
-            csvUploaded={csvUploaded}
-            resetCsvUploadFlag={resetCsvUploadFlag}
-            setIsProcessingCSV={setIsProcessingCSV}
-          />
+          bulkUpdateCells={handleBulkUpdateCells}
+          onEmbedChart={handleEmbedChart}
+          csvUploaded={csvUploaded}
+          resetCsvUploadFlag={resetCsvUploadFlag}
+          setIsProcessingCSV={setIsProcessingCSV}
+          createAIUpdates={createAIUpdates}
+          onDeselectCells={() => setSelectedCells([])}
+        />
         )}
 
         {/* Movable Toolbar - Positioned outside canvas with higher z-index */}
