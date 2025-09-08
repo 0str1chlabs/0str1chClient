@@ -47,6 +47,11 @@ interface ModernSpreadsheetProps {
   // AI Update methods
   acceptAIUpdate?: (cellId: string) => void;
   rejectAIUpdate?: (cellId: string) => void;
+  // Column/Row hover handlers for bulk AI updates
+  onColumnHover?: (columnLetter: string, position: { x: number; y: number }) => void;
+  onColumnLeave?: () => void;
+  onRowHover?: (rowNumber: number, position: { x: number; y: number }) => void;
+  onRowLeave?: () => void;
 }
 
 // Optimized Cell component with performance improvements
@@ -296,11 +301,11 @@ const SpreadsheetCell = React.memo(({
   );
 });
 
-export const ModernSpreadsheet = ({ 
-  sheet, 
-  updateCell, 
+export const ModernSpreadsheet = ({
+  sheet,
+  updateCell,
   bulkUpdateCells,
-  onSelectionChange, 
+  onSelectionChange,
   selectedCells = [],
   onAddMoreRows,
   onSheetNameChange,
@@ -308,7 +313,11 @@ export const ModernSpreadsheet = ({
   isSheetLoading,
   setSheetLoading,
   acceptAIUpdate,
-  rejectAIUpdate
+  rejectAIUpdate,
+  onColumnHover,
+  onColumnLeave,
+  onRowHover,
+  onRowLeave
 }: ModernSpreadsheetProps) => {
   
   // Use the external selectedCells prop as the source of truth
@@ -1135,8 +1144,15 @@ export const ModernSpreadsheet = ({
                   setMenuAnchor(e.currentTarget);
                   setMenuCol(header);
                 }}
-                onMouseEnter={() => setHoveredCol(col)}
-                onMouseLeave={() => setHoveredCol(null)}
+                onMouseEnter={(e) => {
+                  setHoveredCol(col);
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  onColumnHover?.(header, { x: rect.left + rect.width / 2, y: rect.top });
+                }}
+                onMouseLeave={() => {
+                  setHoveredCol(null);
+                  onColumnLeave?.();
+                }}
               >
                 <span>{header}</span>
                 {hoveredCol === col && (
@@ -1197,7 +1213,26 @@ export const ModernSpreadsheet = ({
           {rowData.map(({ row, cells }) => (
             <div key={row} className="flex hover:bg-green-100/30 dark:hover:bg-green-800/10 transition-colors">
               {/* Row Header */}
-              <div className="w-16 h-12 bg-gradient-to-r from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 border-r border-b border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-semibold text-green-600 dark:text-green-300 sticky left-0 z-10 row-header">
+              <div
+                className="w-16 h-12 bg-gradient-to-r from-green-100 to-green-50 dark:from-green-700 dark:to-green-800 border-r border-b border-green-300 dark:border-green-500 flex items-center justify-center text-xs font-semibold text-green-600 dark:text-green-300 sticky left-0 z-10 row-header cursor-pointer"
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  onRowHover?.(row + 1, { x: rect.left, y: rect.top + rect.height / 2 });
+                }}
+                onMouseLeave={onRowLeave}
+                onClick={(e) => {
+                  // Select all cells in this row
+                  const cellIds = [];
+                  for (let col = 0; col < sheet.colCount; col++) {
+                    const colLetter = String.fromCharCode(65 + col);
+                    cellIds.push(`${colLetter}${row + 1}`);
+                  }
+                  // Update selection immediately for responsive feel
+                  onSelectionChange?.(cellIds);
+                  // Also use debounced updater for performance optimization
+                  debouncedSelectionUpdater.current(cellIds);
+                }}
+              >
                 {row + 1}
               </div>
               

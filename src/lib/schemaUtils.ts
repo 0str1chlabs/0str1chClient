@@ -285,8 +285,8 @@ function generateSummary(columns: ColumnSchema[]) {
 /**
  * Create a simplified schema for AI processing
  */
-export function createSimplifiedSchema(schema: SheetSchema): any {
-  return {
+export function createSimplifiedSchema(schema: SheetSchema): string {
+  const simplified = {
     sheet_name: schema.sheetName,
     total_rows: schema.totalRows,
     total_columns: schema.totalColumns,
@@ -303,6 +303,17 @@ export function createSimplifiedSchema(schema: SheetSchema): any {
     data_quality: schema.dataQuality,
     summary: schema.summary
   };
+
+  // Return as formatted string that backend can parse
+  return `Sheet: ${schema.sheetName}
+Rows: ${schema.totalRows}
+Columns:
+${schema.columns.map(col =>
+  `- ${col.name} (${col.letter}): ${col.dataType} (${col.businessRelevance}) e.g. ${col.sampleValues.slice(0, 3).join(', ')}`
+).join('\n')}
+
+Data Quality: ${JSON.stringify(schema.dataQuality)}
+Summary: ${JSON.stringify(schema.summary)}`;
 }
 
 /**
@@ -322,11 +333,90 @@ export function getColumnsForAnalysis(schema: SheetSchema, analysisType: 'financ
     sales: ['customer', 'client', 'lead', 'opportunity', 'deal', 'conversion', 'campaign', 'region', 'territory'],
     operations: ['product', 'service', 'inventory', 'supply', 'logistics', 'quality', 'efficiency', 'process']
   };
-  
+
   const keywords = typeKeywords[analysisType] || [];
-  
+
   return schema.columns.filter(col => {
     const lowerName = col.name.toLowerCase();
     return keywords.some(keyword => lowerName.includes(keyword)) || col.businessRelevance === 'high';
   });
+}
+
+/**
+ * Create direct column mapping from actual sheet headers
+ * Uses the first row of data to get actual header names
+ */
+export function createDirectColumnMapping(sheetData: any[]): { [key: string]: string } {
+  const mapping: { [key: string]: string } = {};
+
+  if (!sheetData || sheetData.length === 0) {
+    console.warn('⚠️ No sheet data available for column mapping');
+    return mapping;
+  }
+
+  // Get the first row (headers)
+  const headers = sheetData[0];
+  if (!headers) {
+    console.warn('⚠️ No header row found in sheet data');
+    return mapping;
+  }
+
+  // Map each header to its Excel column letter
+  // Excel columns: A=0, B=1, C=2, etc.
+  const excelColumns = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+  Object.keys(headers).forEach((excelCol, index) => {
+    const headerValue = headers[excelCol]?.toString()?.trim();
+
+    if (headerValue && headerValue.length > 0) {
+      // Map the exact header name to its Excel column
+      mapping[headerValue] = excelCol;
+
+      // Also map normalized versions (lowercase, trimmed)
+      const normalized = headerValue.toLowerCase().trim();
+      if (normalized !== headerValue) {
+        mapping[normalized] = excelCol;
+      }
+
+      console.log(`📋 Mapped header "${headerValue}" -> "${excelCol}"`);
+    }
+  });
+
+  console.log('🔗 Direct column mapping created:', mapping);
+  return mapping;
+}
+
+/**
+ * Legacy function - kept for backward compatibility but should not be used
+ * @deprecated Use createDirectColumnMapping instead
+ */
+export function createDynamicColumnMapping(schema: SheetSchema): { [key: string]: string } {
+  console.warn('⚠️ createDynamicColumnMapping is deprecated. Use createDirectColumnMapping instead.');
+  return {};
+}
+
+// Test function to verify direct column mapping
+export function testDirectMapping(sheetData: any[]) {
+  const mapping = createDirectColumnMapping(sheetData);
+  console.log('🧪 Testing direct column mapping:');
+  console.log('📋 Sheet headers:', Object.keys(mapping));
+  console.log('🔗 Generated mapping:', mapping);
+
+  // Test some common lookups
+  const testCases = [
+    'Department', 'Gender', 'Salary', 'Age',
+    'Scientific Temperament', 'Technical Skills', 'Performance Rating'
+  ];
+
+  console.log('🧪 Testing lookups:');
+  testCases.forEach(testCase => {
+    const result = mapping[testCase] || mapping[testCase.toLowerCase()];
+    if (result) {
+      console.log(`✅ "${testCase}" -> "${result}"`);
+    } else {
+      console.log(`❌ "${testCase}" -> not found`);
+    }
+  });
+
+  return mapping;
 }

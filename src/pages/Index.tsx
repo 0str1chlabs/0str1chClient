@@ -1,21 +1,46 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+
+// Add custom CSS for fade-in-up animation
+const fadeInUpStyle = `
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-fade-in-up {
+    animation: fadeInUp 1s ease-in-out;
+  }
+`;
+
+// Inject the CSS
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = fadeInUpStyle;
+  document.head.appendChild(style);
+}
 import { Button } from '@/components/ui/button';
 import { AIAssistant } from '@/components/AIAssistant';
 import { MovableToolbar } from '@/components/MovableToolbar';
 import { ModernSpreadsheet } from '@/components/ModernSpreadsheet';
 import { PivotTableModal } from '@/components/PivotTableModal';
+import { CellComparisonTooltip, ColumnAITooltip, RowAITooltip, SheetAIControl } from '@/components/CellComparisonTooltip';
 import { InfiniteCanvas } from '@/components/InfiniteCanvas';
 import { StatisticalSummary } from '@/components/StatisticalSummary';
-import { ReportGenerator } from '@/components/ReportGenerator';
+
 import { AIReportGenerator } from '@/components/AIReportGenerator';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, FileText, Brain, Cloud } from 'lucide-react';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
 import MegaApiService from '../services/megaApiService';
-import { MegaAuthModal } from '../components/MegaAuthModal';
+
 
 const Index: React.FC = () => {
   const { user, logout } = useAuth();
@@ -31,12 +56,18 @@ const Index: React.FC = () => {
     rejectAIUpdate,
     acceptAllAIUpdates,
     rejectAllAIUpdates,
+    acceptColumnAIUpdates,
+    rejectColumnAIUpdates,
+    acceptRowAIUpdates,
+    rejectRowAIUpdates,
     restoreOriginalState,
     addSheet,
+    addSheetFromCSV,
     removeSheet,
     setActiveSheet,
     addMoreRows,
-    undo,
+    updateExistingSheet,
+      undo,
     redo,
     canUndo,
     canRedo
@@ -45,8 +76,25 @@ const Index: React.FC = () => {
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [isAIMinimized, setIsAIMinimized] = useState(false);
   const [showPivotTable, setShowPivotTable] = useState(false);
-  const [showReportGenerator, setShowReportGenerator] = useState(false);
+  const [showSheetSelector, setShowSheetSelector] = useState(false);
+  const [lastModifiedDate, setLastModifiedDate] = useState(null);
+  const [availableSheets, setAvailableSheets] = useState([]);
   const [showAIReportGenerator, setShowAIReportGenerator] = useState(false);
+
+  // Column/Row AI Update Tooltip state
+  const [columnTooltip, setColumnTooltip] = useState<{
+    visible: boolean;
+    columnLetter: string;
+    updateCount: number;
+    position: { x: number; y: number };
+  }>({ visible: false, columnLetter: '', updateCount: 0, position: { x: 0, y: 0 } });
+
+  const [rowTooltip, setRowTooltip] = useState<{
+    visible: boolean;
+    rowNumber: number;
+    updateCount: number;
+    position: { x: number; y: number };
+  }>({ visible: false, rowNumber: 0, updateCount: 0, position: { x: 0, y: 0 } });
   const [selectedCells, setSelectedCells] = useState<string[]>([]);
   const canvasRef = useRef<any>(null);
   const [embeddedCharts, setEmbeddedCharts] = useState<Array<{
@@ -62,9 +110,19 @@ const Index: React.FC = () => {
   const [isProcessingCSV, setIsProcessingCSV] = useState(false);
   const [csvUploaded, setCsvUploaded] = useState(false);
 
+  // Loading state management
+  const [isCheckingMegaData, setIsCheckingMegaData] = useState(true);
+  const [hasCheckedMegaData, setHasCheckedMegaData] = useState(false);
+  const [isLoadingSheets, setIsLoadingSheets] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
+
+  // Sheet cache management (max 3 sheets on client side)
+  const [sheetCache, setSheetCache] = useState<Map<string, any>>(new Map());
+  const [cacheTimestamps, setCacheTimestamps] = useState<Map<string, number>>(new Map());
+  const MAX_CACHE_SIZE = 3;
+
   // MEGA storage state
-  const [showMegaAuth, setShowMegaAuth] = useState(false);
-  const [isMegaAuthenticated, setIsMegaAuthenticated] = useState(false);
+
 
   // Hook for efficient DuckDB updates
   const { updateCell: updateDuckDBCell, batchUpdateCells: batchUpdateDuckDBCells } = useDuckDBUpdates();
@@ -81,37 +139,131 @@ const Index: React.FC = () => {
     }, 16) // 60fps
   );
 
+  // Sync activeSheetIndex with hook's activeSheetId when sheets change
+  useEffect(() => {
+    const activeSheetInHook = state.sheets.find(s => s.id === state.activeSheetId);
+    if (activeSheetInHook) {
+      const index = state.sheets.findIndex(s => s.id === state.activeSheetId);
+      if (index !== activeSheetIndex) {
+        setActiveSheetIndex(index);
+      }
+    }
+  }, [state.sheets, state.activeSheetId]); // Removed activeSheetIndex from dependencies to prevent infinite loop
+
+  // Loading state management
+  const [isProcessingSchema, setIsProcessingSchema] = useState(false);
+  const [isSchemaReady, setIsSchemaReady] = useState(false);
+  const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
+
+  // Animated loading messages - different sets for different stages
+  const initialLoadingMessages = [
+    'Ostrich is running...',
+    'Ostrich is sprinting...',
+    'Ostrich is accelerating...',
+    'Ostrich is powering through...',
+    'Ostrich is charging ahead...'
+  ];
+
+  const schemaProcessingMessages = [
+    'Ostrich is analyzing your data...',
+    'Ostrich is generating insights...',
+    'Ostrich is preparing AI analysis...',
+    'Ostrich is optimizing performance...',
+    'Ostrich is ready to assist...'
+  ];
+
+  // Choose message set based on current state
+  const loadingMessages = isProcessingSchema ? schemaProcessingMessages : initialLoadingMessages;
+
+  // Animate loading messages with slower transitions
+  useEffect(() => {
+    if (isLoadingSheets || isCheckingMegaData || isProcessingSchema) {
+      const interval = setInterval(() => {
+        setCurrentMessageIndex(prev => (prev + 1) % loadingMessages.length);
+      }, 2000); // Change message every 2 seconds (slower)
+
+      return () => clearInterval(interval);
+    } else {
+      // Reset message index when not loading
+      setCurrentMessageIndex(0);
+    }
+  }, [isLoadingSheets, isCheckingMegaData, isProcessingSchema, loadingMessages.length]);
+
+  // Monitor AI Assistant processing state
+  useEffect(() => {
+    // Listen for schema processing events from AI Assistant
+    const handleSchemaProcessing = (event: CustomEvent) => {
+      const { processing, ready } = event.detail;
+      setIsProcessingSchema(processing);
+      setIsSchemaReady(ready);
+
+      // If schema is ready, clear all loading states
+      if (ready) {
+        setIsCheckingMegaData(false);
+        setIsLoadingSheets(false);
+        setIsProcessingSchema(false);
+      }
+    };
+
+    // Listen for DuckDB processing events
+    const handleDuckDBProcessing = (event: CustomEvent) => {
+      setIsProcessingSchema(event.detail.processing);
+    };
+
+    window.addEventListener('schemaProcessing' as any, handleSchemaProcessing);
+    window.addEventListener('duckdbProcessing' as any, handleDuckDBProcessing);
+
+    return () => {
+      window.removeEventListener('schemaProcessing' as any, handleSchemaProcessing);
+      window.removeEventListener('duckdbProcessing' as any, handleDuckDBProcessing);
+    };
+  }, []);
+
   // Check for existing sheet data in MEGA cloud storage on page load
   useEffect(() => {
     const checkExistingSheetData = async () => {
+      setIsCheckingMegaData(true);
+      setIsLoadingSheets(true);
+
       if (user?.email) {
         try {
           console.log('🔍 Checking for existing sheet data in MEGA cloud storage...');
-          
+
           // Check MEGA service status via backend
           const megaStatus = await MegaApiService.checkMegaStatus();
           if (!megaStatus.success) {
-            console.log('🔐 MEGA service not available, prompting for authentication...');
-            setShowMegaAuth(true);
+            console.log('🔐 MEGA service not available');
+            setIsCheckingMegaData(false);
+            setHasCheckedMegaData(true);
+            setIsLoadingSheets(false);
             return;
           }
-          
+
           const result = await MegaApiService.checkUserSheetData(user.email);
-          
+
           if (result.success && result.hasData) {
             console.log('📊 Found existing sheet data in MEGA cloud:', result.data);
-            
-            // Ask user if they want to load existing data
-            if (window.confirm('Found existing sheet data in MEGA cloud. Would you like to load it?')) {
-              await loadExistingSheetData(user.email);
-            }
+            console.log('🎯 Loading only the most recent sheet for optimal startup performance...');
+
+            // Load existing data directly without confirmation
+            await loadExistingSheetData(user.email);
           } else {
             console.log('📭 No existing sheet data found for user in MEGA cloud');
+            console.log('📄 Starting with empty sheet - user can load sheets via "+" tab when needed');
           }
         } catch (error) {
           console.error('❌ Error checking for existing sheet data:', error);
         }
+      } else {
+        // No user logged in, show empty sheet
+        setIsCheckingMegaData(false);
+        setHasCheckedMegaData(true);
+        setIsLoadingSheets(false);
       }
+
+      setIsCheckingMegaData(false);
+      setHasCheckedMegaData(true);
+      setIsLoadingSheets(false);
     };
 
     checkExistingSheetData();
@@ -281,23 +433,233 @@ const Index: React.FC = () => {
     console.log(`${updates.length} cells updated locally - DuckDB will be updated on next full reload`);
   }, [bulkUpdateCells]);
 
+  // Sheet cache management functions
+  const updateSheetCache = useCallback((sheetId: string, sheetData: any) => {
+    setSheetCache(prev => {
+      const newCache = new Map(prev);
+      newCache.set(sheetId, sheetData);
+      return newCache;
+    });
+
+    // Update timestamp for LRU tracking
+    setCacheTimestamps(prev => {
+      const newTimestamps = new Map(prev);
+      newTimestamps.set(sheetId, Date.now());
+      return newTimestamps;
+    });
+
+    // Implement LRU eviction if cache exceeds max size
+    if (sheetCache.size >= MAX_CACHE_SIZE) {
+      const sortedTimestamps = Array.from(cacheTimestamps.entries())
+        .sort(([,a], [,b]) => a - b); // Sort by timestamp (oldest first)
+
+      if (sortedTimestamps.length > 0) {
+        const oldestSheetId = sortedTimestamps[0][0];
+        console.log(`🗑️ Evicting sheet ${oldestSheetId} from cache (LRU)`);
+
+        setSheetCache(prev => {
+          const newCache = new Map(prev);
+          newCache.delete(oldestSheetId);
+          return newCache;
+        });
+
+        setCacheTimestamps(prev => {
+          const newTimestamps = new Map(prev);
+          newTimestamps.delete(oldestSheetId);
+          return newTimestamps;
+        });
+      }
+    }
+  }, [sheetCache.size, cacheTimestamps, MAX_CACHE_SIZE]);
+
+  const getSheetFromCache = useCallback((sheetId: string) => {
+    return sheetCache.get(sheetId);
+  }, [sheetCache]);
+
+  // Helper functions for bulk AI update operations
+  const getColumnAIUpdateCount = useCallback((columnLetter: string) => {
+    if (!activeSheet) return 0;
+    return Object.entries(activeSheet.cells).filter(([cellId, cell]) =>
+      cellId.startsWith(columnLetter) && cell.hasAIUpdate
+    ).length;
+  }, [activeSheet]);
+
+  const getRowAIUpdateCount = useCallback((rowNumber: number) => {
+    if (!activeSheet) return 0;
+    const rowRegex = new RegExp(`${rowNumber}$`);
+    return Object.entries(activeSheet.cells).filter(([cellId, cell]) =>
+      rowRegex.test(cellId) && cell.hasAIUpdate
+    ).length;
+  }, [activeSheet]);
+
+  const getTotalAIUpdateCount = useCallback(() => {
+    if (!activeSheet) return 0;
+    return Object.values(activeSheet.cells).filter(cell => cell.hasAIUpdate).length;
+  }, [activeSheet]);
+
+  // Column tooltip handlers
+  const handleColumnHover = useCallback((columnLetter: string, position: { x: number; y: number }) => {
+    const updateCount = getColumnAIUpdateCount(columnLetter);
+    if (updateCount > 0) {
+      setColumnTooltip({
+        visible: true,
+        columnLetter,
+        updateCount,
+        position
+      });
+    }
+  }, [getColumnAIUpdateCount]);
+
+  const handleColumnLeave = useCallback(() => {
+    setColumnTooltip(prev => ({ ...prev, visible: false }));
+  }, []);
+
+  // Row tooltip handlers
+  const handleRowHover = useCallback((rowNumber: number, position: { x: number; y: number }) => {
+    const updateCount = getRowAIUpdateCount(rowNumber);
+    if (updateCount > 0) {
+      setRowTooltip({
+        visible: true,
+        rowNumber,
+        updateCount,
+        position
+      });
+    }
+  }, [getRowAIUpdateCount]);
+
+  const handleRowLeave = useCallback(() => {
+    setRowTooltip(prev => ({ ...prev, visible: false }));
+  }, []);
+
+  const handleSheetSelection = useCallback(async (selectedSheet) => {
+    try {
+      setIsLoadingSheets(true);
+      console.log(`📂 Loading sheet from cloud: ${selectedSheet.fileName}`);
+
+      const result = await MegaApiService.retrieveSheetData(user?.email, selectedSheet.fileName);
+
+      if (result.success && result.data?.sheetData) {
+        const { sheetData } = result.data;
+        const fileName = result.data.fileName || selectedSheet.fileName; // Use backend fileName or fallback to original
+
+        // Convert sheet data to CSV format for addSheetFromCSV
+        const csvData: string[][] = [];
+        const { colCount, rowCount } = sheetData;
+
+        // Create header row
+        const headerRow: string[] = [];
+        for (let col = 0; col < colCount; col++) {
+          const colLetter = String.fromCharCode(65 + col);
+          const cellId = `${colLetter}1`;
+          const cell = sheetData.cells[cellId];
+          const headerValue = cell && cell.value ? String(cell.value) : colLetter;
+          headerRow.push(headerValue);
+        }
+        csvData.push(headerRow);
+
+        // Create data rows
+        for (let row = 2; row <= rowCount; row++) {
+          const dataRow: string[] = [];
+          for (let col = 0; col < colCount; col++) {
+            const colLetter = String.fromCharCode(65 + col);
+            const cellId = `${colLetter}${row}`;
+            const cell = sheetData.cells[cellId];
+            const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
+            dataRow.push(cellValue);
+          }
+          csvData.push(dataRow);
+        }
+
+        // Ensure fileName is valid before using
+        if (!fileName) {
+          console.error('❌ Invalid fileName received from backend, using fallback');
+          setShowSheetSelector(false);
+          return;
+        }
+
+        // Add the sheet using the hook method
+        addSheetFromCSV(csvData, fileName.replace('.csv.gz', ''));
+
+        // Cache the sheet data (using the current active sheet ID)
+        if (state.activeSheetId) {
+          updateSheetCache(state.activeSheetId, sheetData);
+        }
+
+        console.log(`✅ Loaded and cached sheet: ${fileName}`);
+        setShowSheetSelector(false);
+
+        // Trigger DuckDB reload
+        setCsvUploaded(true);
+      } else {
+        console.error(`❌ Failed to load sheet data for ${selectedSheet.fileName}:`, result.message);
+      }
+    } catch (error) {
+      console.error(`❌ Error loading sheet ${selectedSheet.fileName}:`, error);
+    } finally {
+      setIsLoadingSheets(false);
+    }
+  }, [user?.email, addSheetFromCSV, updateSheetCache]);
+
   const handleAddSheet = useCallback(() => {
-    // Use the new hook to add a sheet
-    addSheet();
-    setActiveSheetIndex(state.sheets.length);
-  }, [addSheet, state.sheets.length]);
+    // Check if there are unloaded sheets from storage that we haven't loaded yet
+    const loadedSheetNames = state.sheets.map(sheet => sheet.name.toLowerCase());
+    const unloadedSheets = availableSheets.filter(sheet => {
+      const cleanName = sheet.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '').toLowerCase();
+      return !loadedSheetNames.includes(cleanName);
+    });
+
+    if (unloadedSheets.length > 0) {
+      // Show sheet selector modal for unloaded sheets
+      console.log(`📋 Found ${unloadedSheets.length} unloaded sheets, showing selector modal`);
+      setShowSheetSelector(true);
+    } else {
+      // No unloaded sheets, create new empty sheet
+      console.log('📄 No unloaded sheets, creating new empty sheet');
+      addSheet();
+    }
+  }, [addSheet, state.sheets, availableSheets]);
+
+  const handleTabSwitch = useCallback((index: number) => {
+    // Bounds checking
+    if (index >= 0 && index < state.sheets.length) {
+      const targetSheet = state.sheets[index];
+      if (targetSheet) {
+        // Update both local state and hook state
+        setActiveSheetIndex(index);
+        setActiveSheet(targetSheet.id);
+
+        // Update cache timestamp for LRU tracking
+        setCacheTimestamps(prev => {
+          const newTimestamps = new Map(prev);
+          newTimestamps.set(targetSheet.id, Date.now());
+          return newTimestamps;
+        });
+
+        console.log(`🔄 Switched to sheet: ${targetSheet.name} (index: ${index})`);
+      }
+    }
+  }, [state.sheets, setActiveSheet]);
 
   const handleRemoveSheet = useCallback((index: number) => {
     if (state.sheets.length > 1) {
       const sheetToRemove = state.sheets[index];
       removeSheet(sheetToRemove.id);
+
+      // Calculate new active index after removal
+      let newActiveIndex = activeSheetIndex;
       if (activeSheetIndex >= index && activeSheetIndex > 0) {
-        setActiveSheetIndex(activeSheetIndex - 1);
+        newActiveIndex = activeSheetIndex - 1;
       } else if (activeSheetIndex === index && index === 0) {
-        setActiveSheetIndex(0);
+        newActiveIndex = 0;
+      }
+
+      // Update both local state and hook state
+      setActiveSheetIndex(newActiveIndex);
+      if (state.sheets[newActiveIndex]) {
+        setActiveSheet(state.sheets[newActiveIndex].id);
       }
     }
-  }, [state.sheets.length, activeSheetIndex, removeSheet, state.sheets]);
+  }, [state.sheets, activeSheetIndex, removeSheet, setActiveSheet]);
 
   const handleSheetNameChange = useCallback((index: number, newName: string) => {
     // This would need to be implemented in the useSpreadsheet hook
@@ -366,8 +728,7 @@ const Index: React.FC = () => {
               // Check MEGA service status via backend
               const megaStatus = await MegaApiService.checkMegaStatus();
               if (!megaStatus.success) {
-                console.log('🔐 MEGA service not available, prompting for authentication...');
-                setShowMegaAuth(true);
+                console.log('🔐 MEGA service not available');
                 return;
               }
               
@@ -402,7 +763,6 @@ const Index: React.FC = () => {
 
               if (result.success) {
                 console.log('✅ Sheet data successfully stored in MEGA cloud storage with proper folder structure');
-                setIsMegaAuthenticated(true);
               } else {
                 console.error('❌ Failed to store sheet data in MEGA cloud storage:', result.message);
               }
@@ -497,49 +857,120 @@ const Index: React.FC = () => {
   // Load existing sheet data from MEGA cloud storage
   const loadExistingSheetData = useCallback(async (userEmail: string) => {
     try {
+      setIsLoadingSheets(true);
       console.log('🔄 Loading existing sheet data from MEGA cloud storage...');
-      
+
       // Get list of user files to let them choose
       const filesResult = await MegaApiService.listUserFiles(userEmail);
-      
-      if (filesResult.success && filesResult.data && filesResult.data.length > 0) {
-        // Let user choose which file to load
-        const fileNames = filesResult.data.map((file: any) => file.fileName);
-        const selectedFileName = window.prompt(
-          'Choose a file to load:\n' + fileNames.join('\n'),
-          fileNames[0]
-        );
-        
-        if (selectedFileName && fileNames.includes(selectedFileName)) {
-          const result = await MegaApiService.retrieveSheetData(userEmail, selectedFileName);
-          
-          if (result.success && result.data?.sheetData) {
-            const { sheetData, fileName } = result.data;
-            
-            // Update the active sheet with retrieved data using the new hook
-            const updates = Object.entries(sheetData.cells || {}).map(([cellId, cell]: [string, any]) => ({
-              cellId,
-              value: cell.value
-            }));
-            bulkUpdateCells(updates);
 
-            // Note: updateLastAccessed is handled by the backend now
-            
-            console.log('✅ Sheet data successfully loaded from MEGA cloud storage');
-            
-            // Trigger DuckDB reload
-            setCsvUploaded(true);
-          } else {
-            console.error('❌ Failed to load sheet data:', result.message);
+      if (filesResult.success && filesResult.data && filesResult.data.length > 0) {
+        console.log(`📁 Found ${filesResult.data.length} files in MEGA cloud storage`);
+
+        // Sort files by last modified date (most recent first)
+        const sortedFiles = filesResult.data.sort((a: any, b: any) => {
+          const dateA = new Date(a.lastModified || a.timestamp || 0);
+          const dateB = new Date(b.lastModified || b.timestamp || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+
+        // Only load the most recent sheet on startup for better performance
+        const sheetsToLoad = 1; // Only load the most recent sheet initially
+        console.log(`📊 Loading only the most recent sheet on startup (for better performance)`);
+
+        // Load only the most recent sheet
+        for (let i = 0; i < sheetsToLoad; i++) {
+          const file = sortedFiles[i];
+          try {
+            const result = await MegaApiService.retrieveSheetData(userEmail, file.fileName);
+
+                        if (result.success && result.data?.sheetData) {
+              const { sheetData } = result.data;
+              const fileName = result.data.fileName || file.fileName; // Use backend fileName or fallback to original
+
+              // Convert sheet data to CSV format for addSheetFromCSV
+              const csvData: string[][] = [];
+              const { colCount, rowCount } = sheetData;
+
+              // Create header row
+              const headerRow: string[] = [];
+              for (let col = 0; col < colCount; col++) {
+                const colLetter = String.fromCharCode(65 + col);
+                const cellId = `${colLetter}1`;
+                const cell = sheetData.cells[cellId];
+                const headerValue = cell && cell.value ? String(cell.value) : colLetter;
+                headerRow.push(headerValue);
+              }
+              csvData.push(headerRow);
+
+              // Create data rows
+              for (let row = 2; row <= rowCount; row++) {
+                const dataRow: string[] = [];
+                for (let col = 0; col < colCount; col++) {
+                  const colLetter = String.fromCharCode(65 + col);
+                  const cellId = `${colLetter}${row}`;
+                  const cell = sheetData.cells[cellId];
+                  const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
+                  dataRow.push(cellValue);
+                }
+                csvData.push(dataRow);
+              }
+
+              // Ensure fileName is valid before using
+              if (!fileName) {
+                console.error(`❌ Invalid fileName received from backend for ${file.fileName}, skipping`);
+                continue; // Skip this file and continue with others
+              }
+
+              // Add the new sheet using the hook method
+              addSheetFromCSV(csvData, fileName.replace('.csv.gz', ''));
+
+              // Cache the sheet data for future use (using the current active sheet ID)
+              if (state.activeSheetId) {
+                updateSheetCache(state.activeSheetId, sheetData);
+              }
+
+              console.log(`✅ Loaded and cached sheet: ${fileName} (last modified: ${file.lastModified || 'unknown'})`);
+            } else {
+              console.error(`❌ Failed to load sheet data for ${file.fileName}:`, result.message);
+            }
+          } catch (error) {
+            console.error(`❌ Error loading sheet ${file.fileName}:`, error);
           }
         }
+
+        // Store all available sheets for later reference (popup selection)
+        setAvailableSheets(sortedFiles.map(file => ({
+          fileName: file.fileName,
+          lastModified: file.lastModified || file.timestamp,
+          // We'll load sheetData on demand
+        })));
+
+        // Log what sheets are available vs loaded
+        const loadedSheetNames = state.sheets.map(sheet => sheet.name.toLowerCase());
+        const availableSheetNames = sortedFiles.map(file =>
+          file.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '').toLowerCase()
+        );
+
+        console.log(`📋 Available sheets in cloud: ${availableSheetNames.join(', ')}`);
+        console.log(`📊 Currently loaded sheets: ${loadedSheetNames.join(', ')}`);
+        console.log(`🎯 Active sheet: ${state.sheets.length > 0 ? state.sheets[0].name : 'None'}`);
+
+        // Set the most recent sheet as active (should be the first one loaded)
+        console.log('✅ Most recent sheet loaded as active sheet on startup');
+
+        // Trigger DuckDB reload
+        setCsvUploaded(true);
+
       } else {
         console.log('📭 No files found in MEGA cloud storage');
+        setAvailableSheets([]); // Clear any stale data
       }
     } catch (error) {
       console.error('❌ Error loading existing sheet data:', error);
+    } finally {
+      setIsLoadingSheets(false);
     }
-  }, [activeSheetIndex]);
+  }, [MAX_CACHE_SIZE, updateSheetCache]);
 
   const handleFormat = useCallback((action: string, value?: string) => {
     console.log('Format action:', action, value);
@@ -829,15 +1260,6 @@ const Index: React.FC = () => {
               Upload CSV
             </Button>
             
-            {/* MEGA Cloud Storage Button */}
-            <Button
-              onClick={() => setShowMegaAuth(true)}
-              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white"
-            >
-              <Cloud className="h-4 w-4" />
-              {isMegaAuthenticated ? 'MEGA Connected' : 'Connect MEGA'}
-            </Button>
-            
             {/* Pivot Table Button */}
             <Button
               onClick={() => {
@@ -848,18 +1270,6 @@ const Index: React.FC = () => {
             >
               <BarChart3 className="h-4 w-4 mr-2" />
               Pivot Table
-            </Button>
-            
-            {/* Report Generator Button */}
-            <Button
-              onClick={() => {
-                setShowReportGenerator(true);
-                setIsAIMinimized(true);
-              }}
-              className="bg-green-600 hover:bg-green-700 text-white transition-all duration-200 hover:scale-105"
-            >
-              <FileText className="h-4 w-4 mr-2" />
-              Generate Report
             </Button>
             
             {/* AI Report Generator Button */}
@@ -901,7 +1311,7 @@ const Index: React.FC = () => {
                   ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
                   : 'border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
               }`}
-              onClick={() => setActiveSheetIndex(index)}
+              onClick={() => handleTabSwitch(index)}
             >
               <span className="text-sm font-medium">{sheet.name}</span>
               {state.sheets.length > 1 && (
@@ -931,6 +1341,90 @@ const Index: React.FC = () => {
       
       {/* Main Content */}
       <div className="relative h-[calc(100vh-120px)] mt-20 main-canvas-area">
+        {/* Full Screen Loading Overlay */}
+        {(isCheckingMegaData || isLoadingSheets || isProcessingSchema) && !isSchemaReady && (
+          <div className="fixed inset-0 bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 z-[100] flex items-center justify-center">
+            <div className="text-center">
+              {/* Animated Ostrich Logo/Icon */}
+              <div className="relative mb-6">
+                <div className="w-16 h-16 mx-auto bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg animate-pulse">
+                  <div className="text-white text-2xl font-bold">🦅</div>
+                </div>
+                {/* Animated dots */}
+                <div className="flex justify-center space-x-1 mt-4">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+                </div>
+              </div>
+
+              <div className="relative h-8 mb-3 overflow-hidden">
+                <h3
+                  key={currentMessageIndex}
+                  className="text-2xl font-bold text-gray-900 dark:text-white absolute inset-0 transform transition-all duration-1000 ease-in-out animate-fade-in-up"
+                >
+                  {loadingMessages[currentMessageIndex]}
+                </h3>
+              </div>
+
+              <div className="flex items-center justify-center space-x-2 mb-4">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" style={{animationDelay: '0ms'}}></div>
+                <div className="w-2 h-2 bg-purple-500 rounded-full animate-ping" style={{animationDelay: '200ms'}}></div>
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" style={{animationDelay: '400ms'}}></div>
+                <div className="w-2 h-2 bg-purple-500 rounded-full animate-ping" style={{animationDelay: '600ms'}}></div>
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" style={{animationDelay: '800ms'}}></div>
+              </div>
+
+              <p className="text-gray-600 dark:text-gray-400 text-sm transition-all duration-500 ease-in-out">
+                {isCheckingMegaData
+                  ? 'Connecting to your cloud storage...'
+                  : isProcessingSchema
+                    ? 'Generating AI schema and preparing analysis...'
+                    : 'Preparing your spreadsheets...'
+                }
+              </p>
+
+              {/* Progress indicator */}
+              <div className="mt-6 w-64 mx-auto">
+                <div className="h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-1000 ease-out"
+                    style={{
+                      width: isCheckingMegaData ? '40%' : isProcessingSchema ? '70%' : '95%',
+                      animation: isSchemaReady ? 'pulse 2s infinite' : 'none'
+                    }}
+                  ></div>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 transition-all duration-500 ease-in-out">
+                  {isCheckingMegaData
+                    ? 'Checking your data...'
+                    : isProcessingSchema
+                      ? 'Processing schema...'
+                      : isSchemaReady
+                        ? 'Ready to analyze!'
+                        : 'Almost ready...'
+                  }
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Mega Cloud Data Loading Overlay (smaller, for specific operations) */}
+        {isCheckingMegaData && !isLoadingSheets && (
+          <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 z-50 flex items-center justify-center">
+            <div className="text-center">
+              <LoaderCircle className="h-12 w-12 animate-spin text-green-600 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                Checking Cloud Storage
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400">
+                Loading your sheets from MEGA cloud storage...
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* CSV Processing Overlay */}
         {isProcessingCSV && (
           <div className="absolute inset-0 bg-white/80 dark:bg-gray-900/80 z-50 flex items-center justify-center">
@@ -966,17 +1460,30 @@ const Index: React.FC = () => {
             }}
             id="spreadsheet-container"
           >
-            <ModernSpreadsheet
-              sheet={activeSheet}
-              updateCell={handleUpdateCell}
-              bulkUpdateCells={handleBulkUpdateCells}
-              onSelectionChange={setSelectedCells}
-              selectedCells={selectedCells}
-              onAddMoreRows={addMoreRows}
-              onSheetNameChange={(newName) => handleSheetNameChange(activeSheetIndex, newName)}
-              acceptAIUpdate={acceptAIUpdate}
-              rejectAIUpdate={rejectAIUpdate}
-            />
+            {activeSheet ? (
+              <ModernSpreadsheet
+                sheet={activeSheet}
+                updateCell={handleUpdateCell}
+                bulkUpdateCells={handleBulkUpdateCells}
+                onSelectionChange={setSelectedCells}
+                selectedCells={selectedCells}
+                onAddMoreRows={addMoreRows}
+                onSheetNameChange={(newName) => handleSheetNameChange(activeSheetIndex, newName)}
+                acceptAIUpdate={acceptAIUpdate}
+                rejectAIUpdate={rejectAIUpdate}
+                onColumnHover={handleColumnHover}
+                onColumnLeave={handleColumnLeave}
+                onRowHover={handleRowHover}
+                onRowLeave={handleRowLeave}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-500">
+                <div className="text-center">
+                  <p className="text-lg">Loading sheet...</p>
+                  <p className="text-sm mt-2">Please wait while we initialize your spreadsheet.</p>
+                </div>
+              </div>
+            )}
           </div>
         </InfiniteCanvas>
         
@@ -999,6 +1506,7 @@ const Index: React.FC = () => {
           setIsProcessingCSV={setIsProcessingCSV}
           createAIUpdates={createAIUpdates}
           onDeselectCells={() => setSelectedCells([])}
+
         />
         )}
 
@@ -1032,15 +1540,61 @@ const Index: React.FC = () => {
         onSavePivot={handleSavePivot}
       />
 
-      {/* Report Generator Modal */}
-      <ReportGenerator
-        activeSheet={activeSheet}
-        existingCharts={embeddedCharts}
-        isOpen={showReportGenerator}
-        onClose={() => {
-          setShowReportGenerator(false);
-        }}
-      />
+
+
+      {/* Sheet Selector Modal */}
+      {showSheetSelector && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
+              Load Sheet from Cloud Storage
+            </h3>
+
+            <div className="space-y-2 mb-4">
+              {availableSheets
+                .filter(sheet => {
+                  const cleanName = sheet.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '').toLowerCase();
+                  const loadedNames = state.sheets.map(s => s.name.toLowerCase());
+                  return !loadedNames.includes(cleanName);
+                })
+                .map((sheet, index) => (
+                  <button
+                    key={`unloaded-${index}`}
+                    onClick={() => handleSheetSelection({ fileName: sheet.fileName })}
+                    className="w-full text-left p-3 rounded border hover:bg-gray-50 dark:hover:bg-gray-700 dark:border-gray-600 dark:text-white transition-colors"
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="font-medium">
+                        {sheet.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '')}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {sheet.lastModified ? new Date(sheet.lastModified).toLocaleDateString() : 'Unknown'}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  addSheet();
+                  setShowSheetSelector(false);
+                }}
+                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+              >
+                Create Empty Sheet
+              </button>
+              <button
+                onClick={() => setShowSheetSelector(false)}
+                className="flex-1 bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* AI Report Generator Modal */}
       <AIReportGenerator
@@ -1050,16 +1604,38 @@ const Index: React.FC = () => {
           setShowAIReportGenerator(false);
         }}
       />
-      
-      {/* MEGA Authentication Modal */}
-      <MegaAuthModal
-        isVisible={showMegaAuth}
-        onClose={() => setShowMegaAuth(false)}
-        onAuthSuccess={() => {
-          setIsMegaAuthenticated(true);
-          setShowMegaAuth(false);
-        }}
+
+      {/* Column AI Update Tooltip */}
+      <ColumnAITooltip
+        columnLetter={columnTooltip.columnLetter}
+        updateCount={columnTooltip.updateCount}
+        onAcceptAll={(columnLetter) => acceptColumnAIUpdates(columnLetter)}
+        onRejectAll={(columnLetter) => rejectColumnAIUpdates(columnLetter)}
+        position={columnTooltip.position}
+        isVisible={columnTooltip.visible}
       />
+
+      {/* Row AI Update Tooltip */}
+      <RowAITooltip
+        rowNumber={rowTooltip.rowNumber}
+        updateCount={rowTooltip.updateCount}
+        onAcceptAll={(rowNumber) => acceptRowAIUpdates(rowNumber)}
+        onRejectAll={(rowNumber) => rejectRowAIUpdates(rowNumber)}
+        position={rowTooltip.position}
+        isVisible={rowTooltip.visible}
+      />
+
+      {/* Sheet-level AI Update Control */}
+      {getTotalAIUpdateCount() > 0 && (
+        <SheetAIControl
+          totalUpdates={getTotalAIUpdateCount()}
+          onAcceptAll={acceptAllAIUpdates}
+          onRejectAll={rejectAllAIUpdates}
+          onRestoreOriginal={restoreOriginalState}
+          className="fixed top-20 right-4 z-40 max-w-sm"
+        />
+      )}
+
     </div>
   );
 };

@@ -11,16 +11,37 @@ const createEmptySheet = (id: string, name: string): SheetData => ({
   colCount: 26,
 });
 
-
-
 const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetState => {
   return produce(state, draft => {
     switch (action.type) {
       case 'ADD_SHEET': {
-        const newId = `sheet-${state.sheets.length + 1}`;
+        const newId = `sheet-${Date.now()}`; // Use timestamp for unique ID
         const newSheet = createEmptySheet(newId, `Sheet ${state.sheets.length + 1}`);
         draft.sheets.push(newSheet);
         draft.activeSheetId = newId;
+        break;
+      }
+      case 'UPDATE_EXISTING_SHEET': {
+        // This action updates an existing sheet's data without affecting other sheets
+        const sheetIndex = draft.sheets.findIndex(s => s.id === action.sheetId);
+        if (sheetIndex !== -1) {
+          const sheet = draft.sheets[sheetIndex];
+          // Update the sheet's data while preserving its structure
+          if (action.cells) {
+            sheet.cells = { ...action.cells };
+          }
+          if (action.rowCount) {
+            sheet.rowCount = action.rowCount;
+          }
+          if (action.colCount) {
+            sheet.colCount = action.colCount;
+          }
+          if (action.name) {
+            sheet.name = action.name;
+          }
+          // Force a new reference for React to detect the change
+          draft.sheets[sheetIndex] = { ...sheet };
+        }
         break;
       }
       case 'REMOVE_SHEET': {
@@ -104,7 +125,7 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         break;
       }
       case 'ADD_SHEET_FROM_CSV': {
-        const newId = `sheet-${state.sheets.length + 1}`;
+        const newId = `sheet-${Date.now()}`; // Use timestamp for unique ID
         const cells: Record<string, Cell> = {};
         action.csvData.forEach((row: string[], rowIndex: number) => {
           row.forEach((cellValue: string, colIndex: number) => {
@@ -234,8 +255,7 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
       case 'ACCEPT_ALL_AI_UPDATES': {
         const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
         if (sheet) {
-          Object.keys(sheet.cells).forEach(cellId => {
-            const cell = sheet.cells[cellId];
+          Object.values(sheet.cells).forEach(cell => {
             if (cell.hasAIUpdate && cell.aiValue !== undefined) {
               cell.value = cell.aiValue;
               cell.hasAIUpdate = false;
@@ -251,8 +271,7 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
       case 'REJECT_ALL_AI_UPDATES': {
         const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
         if (sheet) {
-          Object.keys(sheet.cells).forEach(cellId => {
-            const cell = sheet.cells[cellId];
+          Object.values(sheet.cells).forEach(cell => {
             if (cell.hasAIUpdate) {
               cell.hasAIUpdate = false;
               cell.aiValue = undefined;
@@ -262,6 +281,88 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           draft.hasAIUpdates = false;
           draft.originalSheets = undefined; // Clear backup
         }
+        break;
+      }
+      case 'ACCEPT_COLUMN_AI_UPDATES': {
+        const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
+        if (sheet) {
+          Object.entries(sheet.cells).forEach(([cellId, cell]) => {
+            if (cell.hasAIUpdate && cell.aiValue !== undefined && cellId.startsWith(action.columnLetter)) {
+              cell.value = cell.aiValue;
+              cell.hasAIUpdate = false;
+              cell.aiValue = undefined;
+              cell.aiUpdateTimestamp = undefined;
+            }
+          });
+
+          // Check if all AI updates are resolved
+          const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
+          if (!hasRemainingAIUpdates) {
+            draft.hasAIUpdates = false;
+            draft.originalSheets = undefined; // Clear backup
+          }
+        }
+        break;
+      }
+      case 'REJECT_COLUMN_AI_UPDATES': {
+        const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
+        if (sheet) {
+          Object.entries(sheet.cells).forEach(([cellId, cell]) => {
+            if (cell.hasAIUpdate && cellId.startsWith(action.columnLetter)) {
+              cell.hasAIUpdate = false;
+              cell.aiValue = undefined;
+              cell.aiUpdateTimestamp = undefined;
+            }
+          });
+
+          // Check if all AI updates are resolved
+          const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
+          if (!hasRemainingAIUpdates) {
+            draft.hasAIUpdates = false;
+            draft.originalSheets = undefined; // Clear backup
+          }
+        }
+        break;
+      }
+      case 'ACCEPT_ROW_AI_UPDATES': {
+        const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
+        if (sheet) {
+          Object.entries(sheet.cells).forEach(([cellId, cell]) => {
+            if (cell.hasAIUpdate && cell.aiValue !== undefined && cellId.match(new RegExp(`${action.rowNumber}$`))) {
+              cell.value = cell.aiValue;
+              cell.hasAIUpdate = false;
+              cell.aiValue = undefined;
+              cell.aiUpdateTimestamp = undefined;
+            }
+          });
+
+          // Check if all AI updates are resolved
+          const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
+          if (!hasRemainingAIUpdates) {
+            draft.hasAIUpdates = false;
+            draft.originalSheets = undefined; // Clear backup
+          }
+        }
+        break;
+      }
+      case 'REJECT_ROW_AI_UPDATES': {
+        const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
+        if (sheet) {
+          Object.entries(sheet.cells).forEach(([cellId, cell]) => {
+            if (cell.hasAIUpdate && cellId.match(new RegExp(`${action.rowNumber}$`))) {
+              cell.hasAIUpdate = false;
+              cell.aiValue = undefined;
+              cell.aiUpdateTimestamp = undefined;
+            }
+          });
+
+          // Check if all AI updates are resolved
+          const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
+          if (!hasRemainingAIUpdates) {
+            draft.hasAIUpdates = false;
+              draft.originalSheets = undefined; // Clear backup
+            }
+          }
         break;
       }
       case 'RESTORE_ORIGINAL_STATE': {
@@ -279,23 +380,15 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
 };
 
 export const useSpreadsheet = () => {
-  // Patch reducer to handle __SET_STATE__
-  const patchedReducer = (state: SpreadsheetState, action: any): SpreadsheetState => {
-    if (action.type === '__SET_STATE__') return action.payload;
-    return spreadsheetReducer(state, action);
-  };
-
-  const [state, dispatch] = useReducer(
-    patchedReducer,
-    undefined,
-    () => ({
-      sheets: [createEmptySheet('sheet-1', 'Sheet 1')],
-      activeSheetId: 'sheet-1',
-      charts: [],
-      isAIMode: true,
-      isDarkMode: false,
-    })
-  );
+  const [state, dispatch] = useReducer(spreadsheetReducer, {
+    sheets: [createEmptySheet('sheet-1', 'Sheet 1')],
+    activeSheetId: 'sheet-1',
+    charts: [],
+    isAIMode: false,
+    isDarkMode: false,
+    hasAIUpdates: false,
+    originalSheets: undefined,
+  });
 
   // Undo/redo state
   const [history, setHistory] = useState([state]);
@@ -416,6 +509,11 @@ export const useSpreadsheet = () => {
     dispatchWithHistory({ type: 'BULK_UPDATE_CELLS', updates });
   }, [dispatchWithHistory]);
 
+  // New function to update existing sheets without affecting others
+  const updateExistingSheet = useCallback((sheetId: string, updates: { cells?: any, rowCount?: number, colCount?: number, name?: string }) => {
+    dispatchWithHistory({ type: 'UPDATE_EXISTING_SHEET', sheetId, ...updates });
+  }, [dispatchWithHistory]);
+
   // AI Update handlers
   const createAIUpdates = useCallback((updates: AIUpdate[]) => {
     dispatchWithHistory({ type: 'CREATE_AI_UPDATES', updates });
@@ -447,6 +545,44 @@ export const useSpreadsheet = () => {
     });
   }, [dispatchWithHistory]);
 
+  // Column-level AI update functions
+  const acceptColumnAIUpdates = useCallback((columnLetter: string) => {
+    dispatchWithHistory({ type: 'ACCEPT_COLUMN_AI_UPDATES', columnLetter });
+    toast({
+      title: `Column ${columnLetter} Updates Accepted`,
+      description: `All AI suggestions in column ${columnLetter} have been applied.`,
+      duration: 3000,
+    });
+  }, [dispatchWithHistory]);
+
+  const rejectColumnAIUpdates = useCallback((columnLetter: string) => {
+    dispatchWithHistory({ type: 'REJECT_COLUMN_AI_UPDATES', columnLetter });
+    toast({
+      title: `Column ${columnLetter} Updates Rejected`,
+      description: `All AI suggestions in column ${columnLetter} have been discarded.`,
+      duration: 3000,
+    });
+  }, [dispatchWithHistory]);
+
+  // Row-level AI update functions
+  const acceptRowAIUpdates = useCallback((rowNumber: number) => {
+    dispatchWithHistory({ type: 'ACCEPT_ROW_AI_UPDATES', rowNumber });
+    toast({
+      title: `Row ${rowNumber} Updates Accepted`,
+      description: `All AI suggestions in row ${rowNumber} have been applied.`,
+      duration: 3000,
+    });
+  }, [dispatchWithHistory]);
+
+  const rejectRowAIUpdates = useCallback((rowNumber: number) => {
+    dispatchWithHistory({ type: 'REJECT_ROW_AI_UPDATES', rowNumber });
+    toast({
+      title: `Row ${rowNumber} Updates Rejected`,
+      description: `All AI suggestions in row ${rowNumber} have been discarded.`,
+      duration: 3000,
+    });
+  }, [dispatchWithHistory]);
+
   const restoreOriginalState = useCallback(() => {
     dispatchWithHistory({ type: 'RESTORE_ORIGINAL_STATE' });
     toast({
@@ -456,10 +592,13 @@ export const useSpreadsheet = () => {
     });
   }, [dispatchWithHistory]);
 
-  const activeSheet = useMemo(() => 
-    state.sheets.find(s => s.id === state.activeSheetId),
-    [state.sheets, state.activeSheetId]
-  );
+  const activeSheet = useMemo(() => {
+    // Find the active sheet by ID
+    const sheet = state.sheets.find(s => s.id === state.activeSheetId);
+    // If not found, fall back to the first sheet
+    // If no sheets exist, return undefined (shouldn't happen in normal operation)
+    return sheet || state.sheets[0] || undefined;
+  }, [state.sheets, state.activeSheetId]);
 
   return {
     state,
@@ -478,12 +617,17 @@ export const useSpreadsheet = () => {
     addSheetFromCSV,
     addMoreRows,
     bulkUpdateCells,
+    updateExistingSheet,
     // AI Update methods
     createAIUpdates,
     acceptAIUpdate,
     rejectAIUpdate,
     acceptAllAIUpdates,
     rejectAllAIUpdates,
+    acceptColumnAIUpdates,
+    rejectColumnAIUpdates,
+    acceptRowAIUpdates,
+    rejectRowAIUpdates,
     restoreOriginalState,
     undo,
     redo,

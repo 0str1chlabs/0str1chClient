@@ -7,8 +7,14 @@ export interface ChartConfig {
   title: string;
   x_column: string;
   y_column: string;
-  chart_purpose: string;
+  chart_purpose?: string;
   aggregation?: string; // 'count', 'sum', 'average'
+  data?: any[]; // Backend-provided data
+  sql_query?: string;
+  x_axis_label?: string;
+  y_axis_label?: string;
+  description?: string;
+  insights?: string;
 }
 
 export interface KPIConfig {

@@ -299,8 +299,39 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
     const createTableSQL = `CREATE TABLE "${tableName}" (${columns});`;
     
     console.log('Creating table with SQL:', createTableSQL);
-    await conn.query(createTableSQL);
-    console.log('Table created successfully');
+    // Try to create the table, with fallback to truncating if it exists
+    try {
+      await conn.query(createTableSQL);
+      console.log('Table created successfully');
+    } catch (createError) {
+      if (createError.message.includes('already exists')) {
+        console.log(`Table "${tableName}" already exists, attempting to truncate instead...`);
+        try {
+          await conn.query(`TRUNCATE TABLE "${tableName}"`);
+          console.log('Table truncated successfully');
+        } catch (truncateError) {
+          console.error('Failed to truncate table:', truncateError);
+          
+          // Last resort: try to create with a unique name
+          const uniqueTableName = `${tableName}_${Date.now()}`;
+          console.log(`Attempting to create table with unique name: "${uniqueTableName}"`);
+          
+          try {
+            const uniqueCreateSQL = `CREATE TABLE "${uniqueTableName}" (${columns});`;
+            await conn.query(uniqueCreateSQL);
+            console.log(`Table created with unique name: "${uniqueTableName}"`);
+            
+            // Update the tableName variable to use the unique name
+            tableName = uniqueTableName;
+          } catch (uniqueError) {
+            console.error('Failed to create table with unique name:', uniqueError);
+            throw new Error(`Cannot create table "${tableName}" or alternative: ${createError.message}`);
+          }
+        }
+      } else {
+        throw createError;
+      }
+    }
     
     // Skip complex table verification - if CREATE TABLE didn't throw an error, assume it worked
     // DuckDB-WASM might have different behavior for SHOW TABLES
@@ -715,7 +746,7 @@ export async function updateCellInDuckDB(cellId: string, value: string | number,
       // Individual cell updates are complex in DuckDB-WASM, so we'll skip them
       console.log(`Skipping individual cell update for ${cellId} - will be handled on next full reload`);
       
-      return { success: true, updatedCell: cellId, value: cleanValue };
+      return { success: true, updatedCell: cellId, value: value };
     } finally {
       await conn.close();
     }

@@ -58,6 +58,49 @@ export class MegaApiService {
   }
 
   /**
+   * Clean data to remove circular references and complex objects
+   */
+  private cleanDataForSerialization(data: any): any {
+    const seen = new WeakSet();
+    
+    const clean = (obj: any): any => {
+      if (obj === null || typeof obj !== 'object') {
+        return obj;
+      }
+      
+      if (seen.has(obj)) {
+        return '[Circular Reference]';
+      }
+      
+      seen.add(obj);
+      
+      if (Array.isArray(obj)) {
+        return obj.map(clean);
+      }
+      
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        // Only include primitive values and simple objects
+        if (value === null || 
+            typeof value === 'string' || 
+            typeof value === 'number' || 
+            typeof value === 'boolean' ||
+            (typeof value === 'object' && value.constructor === Object)) {
+          cleaned[key] = clean(value);
+        } else {
+          // Skip complex objects like functions, DOM elements, etc.
+          cleaned[key] = '[Complex Object]';
+        }
+      }
+      
+      seen.delete(obj);
+      return cleaned;
+    };
+    
+    return clean(data);
+  }
+
+  /**
    * Store sheet data via backend MEGA API
    */
   async storeSheetData(
@@ -69,8 +112,26 @@ export class MegaApiService {
     try {
       console.log('🔄 Compressing sheet data before sending to backend...');
       
+      // Clean the data to remove circular references and complex objects
+      console.log('🧹 Cleaning data for serialization...');
+      const cleanedSheetData = this.cleanDataForSerialization(sheetData);
+      const cleanedMetadata = this.cleanDataForSerialization(metadata);
+      
+      console.log('📊 Data cleaning completed:', {
+        originalCellsCount: Object.keys(sheetData.cells || {}).length,
+        cleanedCellsCount: Object.keys(cleanedSheetData.cells || {}).length,
+        metadataKeys: Object.keys(cleanedMetadata)
+      });
+      
       // Compress the sheet data using fflate
-      const jsonData = JSON.stringify(sheetData);
+      let jsonData: string;
+      try {
+        jsonData = JSON.stringify(cleanedSheetData);
+      } catch (stringifyError) {
+        console.error('❌ JSON stringify failed:', stringifyError);
+        throw new Error(`Failed to serialize sheet data: ${stringifyError instanceof Error ? stringifyError.message : 'Unknown error'}`);
+      }
+      
       const originalSize = new Blob([jsonData]).size;
       
       // Compress data using fflate
@@ -98,11 +159,23 @@ export class MegaApiService {
       });
 
       // Convert compressed data to base64 for JSON transmission
-      const compressedBase64 = btoa(String.fromCharCode(...compressedData));
+      // Use a more efficient approach to avoid stack overflow with large arrays
+      console.log('🔄 Converting compressed data to base64...');
+      let compressedBase64: string;
+      try {
+        // Use a more memory-efficient approach for large arrays
+        console.log(`📊 Converting ${compressedData.length} bytes to base64...`);
+        const binaryString = Array.from(compressedData, byte => String.fromCharCode(byte)).join('');
+        compressedBase64 = btoa(binaryString);
+        console.log('✅ Base64 conversion completed successfully');
+      } catch (base64Error) {
+        console.error('❌ Base64 conversion failed:', base64Error);
+        throw new Error(`Failed to convert compressed data to base64: ${base64Error instanceof Error ? base64Error.message : 'Unknown error'}`);
+      }
       
       // Add compression metadata
       const enhancedMetadata = {
-        ...metadata,
+        ...cleanedMetadata,
         totalSize: originalSize,
         compressionRatio,
         compressionLevel: 6,
@@ -111,17 +184,27 @@ export class MegaApiService {
 
       console.log('🔄 Sending compressed sheet data to backend for MEGA storage...');
       
+      // Prepare the request body with error handling
+      let requestBody: string;
+      try {
+        requestBody = JSON.stringify({
+          userEmail,
+          fileName,
+          compressedData: compressedBase64,
+          metadata: enhancedMetadata
+        });
+        console.log(`📊 Request body size: ${(requestBody.length / 1024).toFixed(2)} KB`);
+      } catch (requestBodyError) {
+        console.error('❌ Failed to stringify request body:', requestBodyError);
+        throw new Error(`Failed to prepare request body: ${requestBodyError instanceof Error ? requestBodyError.message : 'Unknown error'}`);
+      }
+      
       const response = await fetch(`${this.baseUrl}/upload`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          userEmail,
-          fileName,
-          compressedData: compressedBase64,
-          metadata: enhancedMetadata
-        }),
+        body: requestBody,
       });
 
       const result = await response.json();
