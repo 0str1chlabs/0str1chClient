@@ -41,7 +41,12 @@ export interface TokenVerificationResponse {
 }
 
 class AuthService {
-  private baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api/auth` : 'http://localhost:8090/api/auth';
+  private baseURL = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:8090') + '/api/auth';
+  
+  constructor() {
+    console.log('🔧 AuthService initialized with baseURL:', this.baseURL);
+    console.log('🔧 VITE_BACKEND_URL from env:', import.meta.env.VITE_BACKEND_URL);
+  }
   private tokenKey = 'auth_token';
   private refreshTokenKey = 'refresh_token';
   private userKey = 'user_data';

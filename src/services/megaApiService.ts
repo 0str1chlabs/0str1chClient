@@ -24,7 +24,10 @@ export class MegaApiService {
   private baseUrl: string;
 
   private constructor() {
-    this.baseUrl = 'http://localhost:8090/api/mega';
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+    this.baseUrl = backendUrl + '/api/mega';
+    console.log('🔧 MegaApiService initialized with baseUrl:', this.baseUrl);
+    console.log('🔧 VITE_BACKEND_URL from env:', import.meta.env.VITE_BACKEND_URL);
   }
 
   public static getInstance(): MegaApiService {

@@ -210,7 +210,8 @@ export const AIAssistant = ({
       addMessage('ai', `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`);
       try {
         const token = localStorage.getItem('auth_token');
-        const response = await fetch('http://localhost:8090/api/ai', {
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+        const response = await fetch(`${backendUrl}/api/ai`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -666,7 +667,8 @@ ${sampleRows.join('\n')}`;
       const token = localStorage.getItem('auth_token');
 
       // First, get AI1 reasoning and simplified question
-      const ai1Response = await axios.post('/api/ai/ai1', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+      const ai1Response = await axios.post(`${backendUrl}/api/ai/ai1`, {
           message: userMessage,
         schema,
         userEmail: user?.email || '',
@@ -709,7 +711,7 @@ ${sampleRows.join('\n')}`;
       }
 
       // Then, get AI2 code generation (only for sheet-related queries)
-      const ai2Response = await axios.post('/api/ai/ai2', {
+      const ai2Response = await axios.post(`${backendUrl}/api/ai/ai2`, {
         message: userMessage,
         schema,
         userEmail: user?.email || '',

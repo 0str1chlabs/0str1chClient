@@ -24,7 +24,7 @@ export class MongoDBService {
   private constructor() {
     this.baseUrl = process.env.NODE_ENV === 'production' 
       ? '/api' 
-      : 'http://localhost:8090/api';
+      : (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090') + '/api';
   }
 
   public static getInstance(): MongoDBService {

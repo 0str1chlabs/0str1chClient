@@ -30,7 +30,8 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
 
     // Send summary to backend for embedding/storage
     try {
-      const resp = await fetch('/api/sheet-profile', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+      const resp = await fetch(`${backendUrl}/api/sheet-profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ summary }),

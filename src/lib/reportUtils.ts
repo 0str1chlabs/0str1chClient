@@ -174,7 +174,8 @@ async function generateCategoryReport(
     
     // Call backend to generate category report
     const token = localStorage.getItem('auth_token');
-    const response = await fetch('http://localhost:8090/api/ai/category-report', {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+    const response = await fetch(`${backendUrl}/api/ai/category-report`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

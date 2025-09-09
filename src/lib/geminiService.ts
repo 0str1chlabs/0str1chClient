@@ -1,3 +1,4 @@
+
 export interface GeminiConfig {
   baseUrl?: string;
 }
@@ -39,7 +40,7 @@ class GeminiService {
 
   constructor(config: GeminiConfig) {
     this.config = {
-      baseUrl: 'http://localhost:8090', // Changed from 3001 to 8090
+      baseUrl: import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090',
       ...config
     };
   }
@@ -111,7 +112,7 @@ Return JSON format:
    */
   private async callGeminiAPI(prompt: string): Promise<string> {
     try {
-      const baseUrl = this.config.baseUrl || 'http://localhost:8090'; // Changed fallback to 8090
+      const baseUrl = this.config.baseUrl || import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
 
       const response = await fetch(`${baseUrl}/api/ai/gemini/generate-charts-kpis`, {
         method: 'POST',
@@ -199,7 +200,7 @@ Return JSON format:
    */
   async testConnection(): Promise<boolean> {
     try {
-      const baseUrl = this.config.baseUrl || 'http://localhost:8090'; // Changed fallback to 8090
+      const baseUrl = this.config.baseUrl || import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
       const response = await fetch(`${baseUrl}/health`);
       
       if (response.ok) {
@@ -218,5 +219,5 @@ Return JSON format:
 
 // Export a singleton instance
 export const geminiService = new GeminiService({
-  baseUrl: import.meta.env.VITE_AISERVER_URL || 'http://localhost:8090' // Changed fallback to 8090
+  baseUrl: import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_AISERVER_URL || 'http://localhost:8090'
 });

@@ -590,8 +590,12 @@ export const AIReportGenerator: React.FC<AIReportGeneratorProps> = ({
 
       console.log('📤 Sending request to enhanced AI report API...');
 
+      // Get the backend URL from environment or use localhost
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+      const apiUrl = `${backendUrl}/api/ai/enhanced-report`;
+
       // Call Enhanced AI Report API
-      const response = await fetch('/api/ai/enhanced-report', {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

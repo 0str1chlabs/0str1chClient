@@ -20,6 +20,8 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [authStatus, setAuthStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   const handleAuthenticate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -231,3 +233,4 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
     </AnimatePresence>
   );
 };
+
