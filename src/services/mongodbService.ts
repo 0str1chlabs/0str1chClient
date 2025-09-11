@@ -22,9 +22,11 @@ export class MongoDBService {
   private baseUrl: string;
 
   private constructor() {
-    this.baseUrl = process.env.NODE_ENV === 'production' 
-      ? '/api' 
-      : (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090') + '/api';
+    // Use VITE_BACKEND_URL if available, otherwise fallback to localhost for development
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+    this.baseUrl = backendUrl + '/api';
+    console.log('🔧 MongoDBService initialized with baseUrl:', this.baseUrl);
+    console.log('🔧 VITE_BACKEND_URL from env:', import.meta.env.VITE_BACKEND_URL);
   }
 
   public static getInstance(): MongoDBService {

@@ -1,4 +1,5 @@
 
+import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -14,6 +15,17 @@ const colors = [
 ];
 
 export const ColorPicker = ({ onColorSelect, children }: ColorPickerProps) => {
+  // Debug environment variables on component mount
+  useEffect(() => {
+    console.log('🔧 Environment Debug from ColorPicker:');
+    console.log('  VITE_BACKEND_URL:', import.meta.env.VITE_BACKEND_URL);
+    console.log('  VITE_API_URL:', import.meta.env.VITE_API_URL);
+    console.log('  VITE_AISERVER_URL:', import.meta.env.VITE_AISERVER_URL);
+    console.log('  MODE:', import.meta.env.MODE);
+    console.log('  PROD:', import.meta.env.PROD);
+    console.log('  DEV:', import.meta.env.DEV);
+  }, []);
+
   return (
     <Popover>
       <PopoverTrigger asChild>

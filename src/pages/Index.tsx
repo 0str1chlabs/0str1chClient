@@ -805,6 +805,7 @@ const Index: React.FC = () => {
             // Send summary to backend for AI processing and Qdrant storage
             const userEmail = user?.email || 'anonymous@example.com';
             const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+            console.log('🔧 Using backend URL:', backendUrl);
             const resp = await fetch(`${backendUrl}/api/sheet-profile`, {
               method: 'POST',
               headers: { 

@@ -31,6 +31,7 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
     // Send summary to backend for embedding/storage
     try {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+      console.log('🔧 CSVUploader using backend URL:', backendUrl);
       const resp = await fetch(`${backendUrl}/api/sheet-profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

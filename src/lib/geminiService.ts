@@ -39,10 +39,16 @@ class GeminiService {
   private config: GeminiConfig;
 
   constructor(config: GeminiConfig) {
+    // Use VITE_BACKEND_URL if available, otherwise fallback to localhost for development
+    const defaultBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+
     this.config = {
-      baseUrl: import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090',
+      baseUrl: config.baseUrl || defaultBaseUrl,
       ...config
     };
+
+    console.log('🔧 GeminiService initialized with baseUrl:', this.config.baseUrl);
+    console.log('🔧 VITE_BACKEND_URL from env:', import.meta.env.VITE_BACKEND_URL);
   }
 
   /**
@@ -112,7 +118,7 @@ Return JSON format:
    */
   private async callGeminiAPI(prompt: string): Promise<string> {
     try {
-      const baseUrl = this.config.baseUrl || import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+      const baseUrl = this.config.baseUrl;
 
       const response = await fetch(`${baseUrl}/api/ai/gemini/generate-charts-kpis`, {
         method: 'POST',
@@ -200,7 +206,7 @@ Return JSON format:
    */
   async testConnection(): Promise<boolean> {
     try {
-      const baseUrl = this.config.baseUrl || import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+      const baseUrl = this.config.baseUrl;
       const response = await fetch(`${baseUrl}/health`);
       
       if (response.ok) {
