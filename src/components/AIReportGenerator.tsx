@@ -492,7 +492,9 @@ const transformKPIsForVisualizer = (kpis: any[], directMapping: { [key: string]:
       column: mappedColumn,
       calc: calc,
       format: format,
-      description: kpi.description || `Calculated ${calc} of ${column}`
+      description: kpi.description || `Calculated ${calc} of ${column}`,
+      category: kpi.category || 'General',
+      benchmark: kpi.benchmark || null
     };
   });
 
@@ -540,7 +542,7 @@ export const AIReportGenerator: React.FC<AIReportGeneratorProps> = ({
   }, [isOpen, activeSheet]);
 
   // Retry helper with exponential backoff for API calls
-  const retryWithBackoff = async <T>(
+  const retryWithBackoff = async <T,>(
     fn: () => Promise<T>,
     maxRetries: number = 3,
     baseDelay: number = 1000
@@ -733,7 +735,11 @@ export const AIReportGenerator: React.FC<AIReportGeneratorProps> = ({
           report_usage: 'dimension' as const
         })) || [],
         excluded_count: 0,
-        selection_rationale: 'Enhanced analysis based on web research and data insights'
+        selection_rationale: 'Enhanced analysis based on web research and data insights',
+        insights: [],
+        data_quality_issues: [],
+        business_context: '',
+        focus_areas: []
       };
 
       // Create mock report template
@@ -752,7 +758,12 @@ export const AIReportGenerator: React.FC<AIReportGeneratorProps> = ({
           y_axis: chart.y_axis?.field || '',
           purpose: chart.chart_purpose || 'analysis'
         })) || [],
-        report_sections: ['Executive Summary', 'Key Metrics', 'Visual Analysis', 'Trends & Benchmarks', 'Strategic Insights']
+        report_sections: ['Executive Summary', 'Key Metrics', 'Visual Analysis', 'Trends & Benchmarks', 'Strategic Insights'],
+        focus_areas: [],
+        recommendations: [],
+        template_structure: undefined,
+        business_objectives: [],
+        analysis_framework: undefined
       };
 
       // Create Gemini config format with processed data
@@ -897,7 +908,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
         throw new Error('Unable to open print window. Please check your popup blocker.');
       }
       
-      printWindow.document.write(`
+      const htmlContent = `
         <!DOCTYPE html>
         <html>
         <head>
@@ -1177,7 +1188,9 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
           ${reportHTML}
         </body>
         </html>
-      `);
+      `;
+      
+      printWindow.document.write(htmlContent);
       
       printWindow.document.close();
       
@@ -1341,6 +1354,122 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
   const generateReportHTMLWithCharts = (chartImages: string[]) => {
     if (!geminiConfigs || !schemaAnalysis) return '';
     
+    const insightsHTML = schemaAnalysis?.insights?.length > 0 ? `
+      <div class="insights">
+        <h3>Key Insights:</h3>
+        <ul>
+          ${schemaAnalysis.insights.map(insight => `<li>${insight.description || insight}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+    
+    const focusAreasHTML = reportTemplate?.focus_areas?.length > 0 ? `
+      <div class="focus-areas">
+        <h3>Focus Areas:</h3>
+        <ul>
+          ${reportTemplate.focus_areas.map(area => `<li>${area}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+    
+    const dataStatsHTML = sheetSchema ? `
+      <div class="data-stats">
+        <h3>Dataset Statistics</h3>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-number">${sheetSchema.totalRows}</span>
+            <span class="stat-label">Total Rows</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-number">${sheetSchema.totalColumns}</span>
+            <span class="stat-label">Total Columns</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-number">${sheetSchema.summary.numericColumns}</span>
+            <span class="stat-label">Numeric Columns</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-number">${sheetSchema.summary.textColumns}</span>
+            <span class="stat-label">Text Columns</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-number">${sheetSchema.summary.dateColumns}</span>
+            <span class="stat-label">Date Columns</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-number">${sheetSchema.summary.formulaColumns}</span>
+            <span class="stat-label">Formula Columns</span>
+          </div>
+        </div>
+      </div>
+    ` : '';
+    
+    const columnAnalysisHTML = schemaAnalysis?.selected_columns?.length > 0 ? `
+      <div class="column-analysis">
+        <h3>Column Analysis</h3>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Column Name</th>
+              <th>Data Type</th>
+              <th>Business Relevance</th>
+              <th>Analysis Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${schemaAnalysis.selected_columns.map(col => `
+              <tr>
+                <td>${col.name}</td>
+                <td><span class="data-type ${col.type}">${col.type}</span></td>
+                <td><span class="relevance ${col.business_relevance}">${col.business_relevance}</span></td>
+                <td>${col.analysis_notes || 'No specific notes'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : '';
+    
+    const kpisHTML = geminiConfigs.kpis?.length > 0 ? `
+      <div class="kpi-grid">
+        ${geminiConfigs.kpis.map(kpi => `
+          <div class="kpi-item">
+            <h3>${kpi.name}</h3>
+            <div class="kpi-details">
+              <p><strong>Calculation:</strong> ${kpi.calc}</p>
+              <p><strong>Column:</strong> ${kpi.column}</p>
+              <p><strong>Category:</strong> ${kpi.category || 'General'}</p>
+              ${kpi.benchmark ? `<p><strong>Benchmark:</strong> ${kpi.benchmark}</p>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : '<p>No KPIs generated for this dataset.</p>';
+    
+    const chartsHTML = geminiConfigs.charts?.length > 0 ? `
+      <div class="charts-overview">
+        <h3>Chart Configurations</h3>
+        ${geminiConfigs.charts.map((chart, index) => `
+          <div class="chart-section">
+            <h4>${chart.title}</h4>
+            <div class="chart-details">
+              <p><strong>Type:</strong> ${chart.type}</p>
+              <p><strong>Purpose:</strong> ${chart.chart_purpose || 'Data Analysis'}</p>
+              <p><strong>X-Axis:</strong> ${chart.x_column}</p>
+              <p><strong>Y-Axis:</strong> ${chart.y_column}</p>
+              ${chart.sql_query ? `<p><strong>SQL Query:</strong> <code>${chart.sql_query}</code></p>` : ''}
+            </div>
+            ${chartImages[index] ? `
+              <div class="chart-image-container">
+                <img src="${chartImages[index]}" alt="${chart.title}" class="chart-image" />
+                <p><em>Chart visualization generated from your data</em></p>
+              </div>
+            ` : ''}
+          </div>
+        `).join('')}
+      </div>
+    ` : '';
+    
     return `
       <div class="header">
         <h1>🚀 AI Generated Business Intelligence Report</h1>
@@ -1366,194 +1495,32 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
       <div class="section" id="executive-summary">
         <h2>📊 Executive Summary</h2>
         <p>This comprehensive business intelligence report analyzes your data using advanced AI techniques including industry research, benchmark analysis, and automated insights generation.</p>
-        
-        ${schemaAnalysis?.insights?.length > 0 ? `
-          <div class="insights">
-            <h3>Key Insights:</h3>
-            <ul>
-              ${schemaAnalysis.insights.map(insight => `<li>${insight.description || insight}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-        
-        ${reportTemplate?.focus_areas?.length > 0 ? `
-          <div class="focus-areas">
-            <h3>Focus Areas:</h3>
-            <ul>
-              ${reportTemplate.focus_areas.map(area => `<li>${area}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
+        ${insightsHTML}
+        ${focusAreasHTML}
       </div>
       
       <!-- Data Overview & Schema Analysis -->
       <div class="section" id="data-overview">
         <h2>📈 Data Overview & Schema Analysis</h2>
-        
-        ${sheetSchema ? `
-          <div class="data-stats">
-            <h3>Dataset Statistics</h3>
-            <div class="stats-grid">
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.totalRows}</span>
-                <span class="stat-label">Total Rows</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.totalColumns}</span>
-                <span class="stat-label">Total Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.numericColumns}</span>
-                <span class="stat-label">Numeric Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.textColumns}</span>
-                <span class="stat-label">Text Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.dateColumns}</span>
-                <span class="stat-label">Date Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.formulaColumns}</span>
-                <span class="stat-label">Formula Columns</span>
-              </div>
-            </div>
-          </div>
-        ` : ''}
-        
-        ${schemaAnalysis?.selected_columns?.length > 0 ? `
-          <div class="column-analysis">
-            <h3>Column Analysis</h3>
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Column Name</th>
-                  <th>Data Type</th>
-                  <th>Business Relevance</th>
-                  <th>Analysis Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${schemaAnalysis.selected_columns.map(col => `
-                  <tr>
-                    <td>${col.name}</td>
-                    <td><span class="data-type ${col.type}">${col.type}</span></td>
-                    <td><span class="relevance ${col.business_relevance}">${col.business_relevance}</span></td>
-                    <td>${col.analysis_notes || 'No specific notes'}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        ` : ''}
+        ${dataStatsHTML}
+        ${columnAnalysisHTML}
       </div>
       
       <!-- Key Performance Indicators -->
       <div class="section" id="key-performance-indicators">
         <h2>🎯 Key Performance Indicators</h2>
-        
-        ${geminiConfigs.kpis?.length > 0 ? `
-          <div class="kpi-grid">
-            ${geminiConfigs.kpis.map(kpi => `
-              <div class="kpi-item">
-                <h3>${kpi.name}</h3>
-                <div class="kpi-details">
-                  <p><strong>Calculation:</strong> ${kpi.calc}</p>
-                  <p><strong>Column:</strong> ${kpi.column}</p>
-                  <p><strong>Category:</strong> ${kpi.category || 'General'}</p>
-                  ${kpi.benchmark ? `<p><strong>Benchmark:</strong> ${kpi.benchmark}</p>` : ''}
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        ` : '<p>No KPIs generated for this dataset.</p>'}
-        
-        ${(geminiConfigs as any)?.processed_kpis?.length > 0 ? `
-          <div class="processed-kpis">
-            <h3>Processed KPI Results</h3>
-            <div class="kpi-results">
-              ${(geminiConfigs as any).processed_kpis.map(kpi => `
-                <div class="kpi-result">
-                  <h4>${kpi.name}</h4>
-                  <p class="kpi-value">${kpi.value !== null ? kpi.value : 'Calculating...'}</p>
-                  <p class="kpi-description">${kpi.description || ''}</p>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
+        ${kpisHTML}
       </div>
       
       <!-- Data Visualizations -->
       <div class="section" id="data-visualizations">
         <h2>📊 Data Visualizations</h2>
-        
-        ${geminiConfigs.charts?.length > 0 ? `
-          <div class="charts-overview">
-            <h3>Chart Configurations</h3>
-            ${geminiConfigs.charts.map((chart, index) => `
-              <div class="chart-section">
-                <h4>${chart.title}</h4>
-                <div class="chart-details">
-                  <p><strong>Type:</strong> ${chart.type}</p>
-                  <p><strong>Purpose:</strong> ${chart.chart_purpose || 'Data Analysis'}</p>
-                  <p><strong>X-Axis:</strong> ${chart.x_column}</p>
-                  <p><strong>Y-Axis:</strong> ${chart.y_column}</p>
-                  ${chart.sql_query ? `<p><strong>SQL Query:</strong> <code>${chart.sql_query}</code></p>` : ''}
-                </div>
-                ${chartImages[index] ? `
-                  <div class="chart-image-container">
-                    <img src="${chartImages[index]}" alt="${chart.title}" class="chart-image" />
-                    <p><em>Chart visualization generated from your data</em></p>
-                  </div>
-                ` : ''}
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-        
-        ${(geminiConfigs as any)?.processed_charts?.length > 0 ? `
-          <div class="processed-charts">
-            <h3>Chart Data Results</h3>
-            <p><em>Note: Chart visualizations are generated in the web interface. This section shows the data structure and configuration.</em></p>
-            ${(geminiConfigs as any).processed_charts.map((chart, index) => `
-              <div class="chart-result">
-                <h4>Chart ${index + 1}: ${chart.title}</h4>
-                <p><strong>Type:</strong> ${chart.type}</p>
-                <p><strong>Data Points:</strong> ${chart.data?.length || 0}</p>
-                ${chart.data?.length > 0 ? `
-                  <div class="chart-data-preview">
-                    <p><strong>Sample Data:</strong></p>
-                    <table class="data-table">
-                      <thead>
-                        <tr>
-                          <th>${chart.x_column}</th>
-                          <th>${chart.y_column}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        ${chart.data.slice(0, 5).map(row => `
-                          <tr>
-                            <td>${row[chart.x_column]}</td>
-                            <td>${row[chart.y_column]}</td>
-                          </tr>
-                        `).join('')}
-                        ${chart.data.length > 5 ? '<tr><td colspan="2">... and more data points</td></tr>' : ''}
-                      </tbody>
-                    </table>
-                  </div>
-                ` : ''}
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
+        ${chartsHTML}
       </div>
       
       <!-- AI Insights & Recommendations -->
       <div class="section" id="ai-insights">
         <h2>🤖 AI Insights & Recommendations</h2>
-        
         <div class="insights">
           <h3>Analysis Methodology</h3>
           <p>This report was generated using advanced AI analysis including:</p>
@@ -1565,30 +1532,11 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
             <li>Pattern recognition and trend analysis</li>
           </ul>
         </div>
-        
-        ${reportTemplate?.recommendations?.length > 0 ? `
-          <div class="recommendations">
-            <h3>AI Recommendations</h3>
-            <ul>
-              ${reportTemplate.recommendations.map(rec => `<li>${rec}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-        
-        ${schemaAnalysis?.data_quality_issues?.length > 0 ? `
-          <div class="data-quality">
-            <h3>Data Quality Assessment</h3>
-            <ul>
-              ${schemaAnalysis.data_quality_issues.map(issue => `<li>${issue}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
       </div>
       
       <!-- Technical Analysis Details -->
       <div class="section" id="technical-details">
         <h2>🔧 Technical Analysis Details</h2>
-        
         <div class="technical-info">
           <h3>Report Generation Details</h3>
           <table class="data-table">
@@ -1609,28 +1557,16 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
               <td>Mistral 7B, Gemini 2.0 Flash, Custom Analytics</td>
             </tr>
             <tr>
-              <td><strong>Report Sections:</strong></td>
-              <td>${schemaAnalysis ? 'Schema Analysis' : ''}${reportTemplate ? ', Report Template' : ''}${geminiConfigs ? ', KPI & Chart Generation' : ''}</td>
-            </tr>
-            <tr>
               <td><strong>Charts Captured:</strong></td>
               <td>${chartImages.length} chart images included</td>
             </tr>
           </table>
         </div>
-        
-        ${reportTemplate?.template_structure ? `
-          <div class="template-info">
-            <h3>Report Template Structure</h3>
-            <pre class="code-block">${JSON.stringify(reportTemplate.template_structure, null, 2)}</pre>
-          </div>
-        ` : ''}
       </div>
       
       <!-- Appendix -->
       <div class="section" id="appendix">
         <h2>📎 Appendix</h2>
-        
         <div class="appendix-content">
           <h3>Data Processing Notes</h3>
           <p>This report was generated using the following data processing pipeline:</p>
@@ -1659,6 +1595,24 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
   const generateReportHTML = () => {
     if (!geminiConfigs || !schemaAnalysis) return '';
     
+    const insightsHTML = schemaAnalysis?.insights?.length > 0 ? `
+      <div class="insights">
+        <h3>Key Insights:</h3>
+        <ul>
+          ${schemaAnalysis.insights.map(insight => `<li>${insight.description || insight}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+    
+    const focusAreasHTML = reportTemplate?.focus_areas?.length > 0 ? `
+      <div class="focus-areas">
+        <h3>Focus Areas:</h3>
+        <ul>
+          ${reportTemplate.focus_areas.map(area => `<li>${area}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+    
     return `
       <div class="header">
         <h1>🚀 AI Generated Business Intelligence Report</h1>
@@ -1684,188 +1638,31 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
       <div class="section" id="executive-summary">
         <h2>📊 Executive Summary</h2>
         <p>This comprehensive business intelligence report analyzes your data using advanced AI techniques including industry research, benchmark analysis, and automated insights generation.</p>
-        
-        ${schemaAnalysis?.insights?.length > 0 ? `
-          <div class="insights">
-            <h3>Key Insights:</h3>
-            <ul>
-              ${schemaAnalysis.insights.map(insight => `<li>${insight.description || insight}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-        
-        ${reportTemplate?.focus_areas?.length > 0 ? `
-          <div class="focus-areas">
-            <h3>Focus Areas:</h3>
-            <ul>
-              ${reportTemplate.focus_areas.map(area => `<li>${area}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
+        ${insightsHTML}
+        ${focusAreasHTML}
       </div>
       
       <!-- Data Overview & Schema Analysis -->
       <div class="section" id="data-overview">
         <h2>📈 Data Overview & Schema Analysis</h2>
-        
-        ${sheetSchema ? `
-          <div class="data-stats">
-            <h3>Dataset Statistics</h3>
-            <div class="stats-grid">
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.totalRows}</span>
-                <span class="stat-label">Total Rows</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.totalColumns}</span>
-                <span class="stat-label">Total Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.numericColumns}</span>
-                <span class="stat-label">Numeric Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.textColumns}</span>
-                <span class="stat-label">Text Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.dateColumns}</span>
-                <span class="stat-label">Date Columns</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-number">${sheetSchema.summary.formulaColumns}</span>
-                <span class="stat-label">Formula Columns</span>
-              </div>
-            </div>
-          </div>
-        ` : ''}
-        
-        ${schemaAnalysis?.selected_columns?.length > 0 ? `
-          <div class="column-analysis">
-            <h3>Column Analysis</h3>
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Column Name</th>
-                  <th>Data Type</th>
-                  <th>Business Relevance</th>
-                  <th>Analysis Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${schemaAnalysis.selected_columns.map(col => `
-                  <tr>
-                    <td>${col.name}</td>
-                    <td><span class="data-type ${col.type}">${col.type}</span></td>
-                    <td><span class="relevance ${col.business_relevance}">${col.business_relevance}</span></td>
-                    <td>${col.analysis_notes || 'No specific notes'}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        ` : ''}
+        <p>Comprehensive analysis of your dataset structure and content.</p>
       </div>
       
       <!-- Key Performance Indicators -->
       <div class="section" id="key-performance-indicators">
         <h2>🎯 Key Performance Indicators</h2>
-        
-        ${geminiConfigs.kpis?.length > 0 ? `
-          <div class="kpi-grid">
-            ${geminiConfigs.kpis.map(kpi => `
-              <div class="kpi-item">
-                <h3>${kpi.name}</h3>
-                <div class="kpi-details">
-                  <p><strong>Calculation:</strong> ${kpi.calc}</p>
-                  <p><strong>Column:</strong> ${kpi.column}</p>
-                  <p><strong>Category:</strong> ${kpi.category || 'General'}</p>
-                  ${kpi.benchmark ? `<p><strong>Benchmark:</strong> ${kpi.benchmark}</p>` : ''}
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        ` : '<p>No KPIs generated for this dataset.</p>'}
-        
-        ${(geminiConfigs as any)?.processed_kpis?.length > 0 ? `
-          <div class="processed-kpis">
-            <h3>Processed KPI Results</h3>
-            <div class="kpi-results">
-              ${(geminiConfigs as any).processed_kpis.map(kpi => `
-                <div class="kpi-result">
-                  <h4>${kpi.name}</h4>
-                  <p class="kpi-value">${kpi.value !== null ? kpi.value : 'Calculating...'}</p>
-                  <p class="kpi-description">${kpi.description || ''}</p>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
+        <p>Key metrics and performance indicators generated from your data.</p>
       </div>
       
       <!-- Data Visualizations -->
       <div class="section" id="data-visualizations">
         <h2>📊 Data Visualizations</h2>
-        
-        ${geminiConfigs.charts?.length > 0 ? `
-          <div class="charts-overview">
-            <h3>Chart Configurations</h3>
-            ${geminiConfigs.charts.map(chart => `
-              <div class="chart-section">
-                <h4>${chart.title}</h4>
-                <div class="chart-details">
-                  <p><strong>Type:</strong> ${chart.type}</p>
-                  <p><strong>Purpose:</strong> ${chart.chart_purpose || 'Data Analysis'}</p>
-                  <p><strong>X-Axis:</strong> ${chart.x_column}</p>
-                  <p><strong>Y-Axis:</strong> ${chart.y_column}</p>
-                  ${chart.sql_query ? `<p><strong>SQL Query:</strong> <code>${chart.sql_query}</code></p>` : ''}
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-        
-        ${(geminiConfigs as any)?.processed_charts?.length > 0 ? `
-          <div class="processed-charts">
-            <h3>Chart Data Results</h3>
-            <p><em>Note: Chart visualizations are generated in the web interface. This section shows the data structure and configuration.</em></p>
-            ${(geminiConfigs as any).processed_charts.map((chart, index) => `
-              <div class="chart-result">
-                <h4>Chart ${index + 1}: ${chart.title}</h4>
-                <p><strong>Type:</strong> ${chart.type}</p>
-                <p><strong>Data Points:</strong> ${chart.data?.length || 0}</p>
-                ${chart.data?.length > 0 ? `
-                  <div class="chart-data-preview">
-                    <p><strong>Sample Data:</strong></p>
-                    <table class="data-table">
-                      <thead>
-                        <tr>
-                          <th>${chart.x_column}</th>
-                          <th>${chart.y_column}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        ${chart.data.slice(0, 5).map(row => `
-                          <tr>
-                            <td>${row[chart.x_column]}</td>
-                            <td>${row[chart.y_column]}</td>
-                          </tr>
-                        `).join('')}
-                        ${chart.data.length > 5 ? '<tr><td colspan="2">... and more data points</td></tr>' : ''}
-                      </tbody>
-                    </table>
-                  </div>
-                ` : ''}
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
+        <p>Charts and visualizations generated from your data analysis.</p>
       </div>
       
       <!-- AI Insights & Recommendations -->
       <div class="section" id="ai-insights">
         <h2>🤖 AI Insights & Recommendations</h2>
-        
         <div class="insights">
           <h3>Analysis Methodology</h3>
           <p>This report was generated using advanced AI analysis including:</p>
@@ -1877,30 +1674,11 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
             <li>Pattern recognition and trend analysis</li>
           </ul>
         </div>
-        
-        ${reportTemplate?.recommendations?.length > 0 ? `
-          <div class="recommendations">
-            <h3>AI Recommendations</h3>
-            <ul>
-              ${reportTemplate.recommendations.map(rec => `<li>${rec}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-        
-        ${schemaAnalysis?.data_quality_issues?.length > 0 ? `
-          <div class="data-quality">
-            <h3>Data Quality Assessment</h3>
-            <ul>
-              ${schemaAnalysis.data_quality_issues.map(issue => `<li>${issue}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
       </div>
       
       <!-- Technical Analysis Details -->
       <div class="section" id="technical-details">
         <h2>🔧 Technical Analysis Details</h2>
-        
         <div class="technical-info">
           <h3>Report Generation Details</h3>
           <table class="data-table">
@@ -1920,25 +1698,13 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
               <td><strong>AI Models Used:</strong></td>
               <td>Mistral 7B, Gemini 2.0 Flash, Custom Analytics</td>
             </tr>
-            <tr>
-              <td><strong>Report Sections:</strong></td>
-              <td>${schemaAnalysis ? 'Schema Analysis' : ''}${reportTemplate ? ', Report Template' : ''}${geminiConfigs ? ', KPI & Chart Generation' : ''}</td>
-            </tr>
           </table>
         </div>
-        
-        ${reportTemplate?.template_structure ? `
-          <div class="template-info">
-            <h3>Report Template Structure</h3>
-            <pre class="code-block">${JSON.stringify(reportTemplate.template_structure, null, 2)}</pre>
-          </div>
-        ` : ''}
       </div>
       
       <!-- Appendix -->
       <div class="section" id="appendix">
         <h2>📎 Appendix</h2>
-        
         <div class="appendix-content">
           <h3>Data Processing Notes</h3>
           <p>This report was generated using the following data processing pipeline:</p>
@@ -2033,7 +1799,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
     }
   };
 
-  // Generate comprehensive report using Mistral (Stage 3 - Optional)
+  // Generate comprehensive report using Mistral (Stage 4 - Optional)
   const generateReport = async () => {
     if (!schemaAnalysis) {
       toast({

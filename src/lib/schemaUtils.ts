@@ -14,6 +14,7 @@ export interface ColumnSchema {
 }
 
 export interface SheetSchema {
+  dataTypes: any[];
   sheetName: string;
   totalRows: number;
   totalColumns: number;

@@ -19,6 +19,8 @@ export interface ChartConfig {
 }
 
 export interface KPIConfig {
+  category: string;
+  benchmark: any;
   name: string;
   column: string;
   calc: string;

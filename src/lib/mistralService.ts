@@ -11,7 +11,12 @@ export interface SchemaAnalysisRequest {
 }
 
 export interface SchemaAnalysisResponse {
+  insights: any[];
+  data_quality_issues: any[];
+  business_context: string;
+  focus_areas: any[];
   selected_columns: Array<{
+    analysis_notes: string;
     name: string;
     type: string;
     business_relevance: string;
@@ -22,6 +27,11 @@ export interface SchemaAnalysisResponse {
 }
 
 export interface ReportTemplateResponse {
+  focus_areas: any[];
+  recommendations: any[];
+  template_structure: {};
+  business_objectives: any[];
+  analysis_framework: {};
   report_type: string;
   primary_focus: string;
   kpi_cards: Array<{
