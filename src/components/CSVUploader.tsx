@@ -28,20 +28,8 @@ export const CSVUploader = ({ onUpload }: CSVUploaderProps) => {
     const summary = sheetProfileSummary(meta, profiles);
     console.log('Sheet Profile Summary:', summary);
 
-    // Send summary to backend for embedding/storage
-    try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
-      console.log('🔧 CSVUploader using backend URL:', backendUrl);
-      const resp = await fetch(`${backendUrl}/api/sheet-profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ summary }),
-      });
-      const result = await resp.json();
-      console.log('Backend embedding response:', result);
-    } catch (err) {
-  
-    }
+    // Note: Qdrant-based sheet profiling has been removed
+    // The summary is now only used for local debugging/logging
 
     // Load into DuckDB and log a sample query
     if (rows.length > 1) {

@@ -111,6 +111,19 @@ class BackblazeApiService {
     return JSON.parse(jsonString);
   }
 
+  // Convert Uint8Array to base64 efficiently without call stack issues
+  private uint8ArrayToBase64(uint8Array: Uint8Array): string {
+    let binary = '';
+    const chunkSize = 8192; // Process in chunks to avoid call stack issues
+    
+    for (let i = 0; i < uint8Array.length; i += chunkSize) {
+      const chunk = uint8Array.slice(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    
+    return btoa(binary);
+  }
+
   // Upload file via backend with frontend compression (no CORS issues)
   async uploadFile(userEmail: string, fileName: string, data: unknown, metadata: Record<string, unknown> = {}): Promise<{ success: boolean; fileId?: string; message: string }> {
     try {
@@ -136,7 +149,8 @@ class BackblazeApiService {
       };
 
       // Convert compressed data to base64 for JSON transmission
-      const base64Data = btoa(String.fromCharCode(...compressedData));
+      // Use a more efficient method that doesn't exceed call stack limits
+      const base64Data = this.uint8ArrayToBase64(compressedData);
 
       // Send compressed data to backend for upload to Backblaze B2
       const response = await fetch(`${BACKBLAZE_API_URL}/upload`, {

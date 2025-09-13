@@ -745,33 +745,11 @@ const Index: React.FC = () => {
             
             console.log('Generated summary:', summary);
             
-            // Send summary to backend for AI processing and Qdrant storage
-            const userEmail = user?.email || 'anonymous@example.com';
-            const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
-            console.log('🔧 Using backend URL:', backendUrl);
-            const resp = await fetch(`${backendUrl}/api/sheet-profile`, {
-              method: 'POST',
-              headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-              },
-              body: JSON.stringify({ 
-                summary: JSON.stringify(summary),
-                userEmail: userEmail
-              }),
-            });
-            
-            const result = await resp.json();
-            console.log('Backend AI processing response:', result);
-            
-            if (result.success) {
-              console.log('✅ CSV summary successfully processed and stored in Qdrant');
-            } else {
-              console.error('❌ Failed to process CSV summary:', result.error);
-            }
+            // Note: Qdrant-based sheet profiling has been removed
+            // The summary is now only used for local debugging/logging
             
           } catch (err) {
-            console.error('❌ Error generating/sending CSV summary:', err);
+            console.error('❌ Error generating CSV summary:', err);
           }
 
           // Use the original working logic - just trigger a flag for AIAssistant to handle

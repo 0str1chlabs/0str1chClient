@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import html2canvas from 'html2canvas';
 import { 
   FileText, 
   Brain, 
@@ -18,9 +19,11 @@ import {
   Lightbulb,
   TrendingUp,
   BarChart3,
+  Download,
+  Save,
+  ChevronDown,
   X,
   Eye,
-  Download,
   Copy,
   RefreshCw,
   LayoutTemplate
@@ -506,6 +509,11 @@ export const AIReportGenerator: React.FC<AIReportGeneratorProps> = ({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingTemplate, setIsGeneratingTemplate] = useState(false);
   const [isGeneratingGeminiConfigs, setIsGeneratingGeminiConfigs] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [isDownloadingPDF, setIsDownloadingPDF] = useState(false);
+  const [isSavingReport, setIsSavingReport] = useState(false);
+  const [showSchemaDropdown, setShowSchemaDropdown] = useState(false);
+  const chartsContainerRef = useRef<HTMLDivElement>(null);
   const [dynamicColumnMapping, setDynamicColumnMapping] = useState<{ [key: string]: string }>({});
   const [schemaAnalysis, setSchemaAnalysis] = useState<SchemaAnalysisResponse | null>(null);
   const [reportTemplate, setReportTemplate] = useState<ReportTemplateResponse | null>(null);
@@ -530,6 +538,51 @@ export const AIReportGenerator: React.FC<AIReportGeneratorProps> = ({
       }
     }
   }, [isOpen, activeSheet]);
+
+  // Retry helper with exponential backoff for API calls
+  const retryWithBackoff = async <T>(
+    fn: () => Promise<T>,
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<T> => {
+    let lastError: Error;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        setRetryCount(0); // Reset retry count on success
+        return await fn();
+      } catch (error) {
+        lastError = error as Error;
+        
+        // Check if it's a retryable error (503, 502, 504, or network errors)
+        const isRetryable = error instanceof Error && (
+          error.message.includes('503') ||
+          error.message.includes('502') ||
+          error.message.includes('504') ||
+          error.message.includes('Service Unavailable') ||
+          error.message.includes('Bad Gateway') ||
+          error.message.includes('Gateway Timeout') ||
+          error.message.includes('fetch')
+        );
+        
+        if (attempt === maxRetries || !isRetryable) {
+          setRetryCount(0); // Reset retry count on final failure
+          throw lastError;
+        }
+        
+        // Update retry count for UI feedback
+        setRetryCount(attempt + 1);
+        
+        // Calculate delay with exponential backoff and jitter
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        console.log(`🔄 Retry attempt ${attempt + 1}/${maxRetries + 1} after ${Math.round(delay)}ms delay`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError!;
+  };
 
   // Analyze schema with Mistral AI (Stage 1)
   const analyzeSchema = async () => {
@@ -595,25 +648,29 @@ export const AIReportGenerator: React.FC<AIReportGeneratorProps> = ({
       console.log('🔧 AIReportGenerator using backend URL:', backendUrl);
       const apiUrl = `${backendUrl}/api/ai/enhanced-report`;
 
-      // Call Enhanced AI Report API
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestPayload)
+      // Call Enhanced AI Report API with retry logic
+      const result = await retryWithBackoff(async () => {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestPayload)
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.details || errorData.error || `HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to generate enhanced report');
+        }
+
+        return result;
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.details || errorData.error || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to generate enhanced report');
-      }
 
       console.log('✅ Enhanced AI Report generation complete');
       console.log('📊 Backend response structure:', {
@@ -774,14 +831,1135 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setError(errorMessage);
       
+      // Provide specific feedback for different error types
+      let userMessage = errorMessage;
+      if (errorMessage.includes('503') || errorMessage.includes('Service Unavailable')) {
+        userMessage = 'AI service is temporarily unavailable. Please try again in a few minutes.';
+      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
+        userMessage = 'Server is temporarily unavailable. Please try again shortly.';
+      } else if (errorMessage.includes('504') || errorMessage.includes('Gateway Timeout')) {
+        userMessage = 'Request timed out. The AI service may be experiencing high load.';
+      }
+      
       toast({
         title: "Report Generation Failed",
-        description: `Enhanced analysis failed: ${errorMessage}`,
+        description: userMessage,
         variant: "destructive"
       });
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  // Download report as PDF with charts
+  const downloadReportAsPDF = async () => {
+    if (!geminiConfigs || !schemaAnalysis) {
+      toast({
+        title: "No Report Available",
+        description: "Please generate a report first before downloading.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsDownloadingPDF(true);
+    
+    try {
+      // Capture chart images if charts container exists
+      let chartImages: string[] = [];
+      if (chartsContainerRef.current) {
+        console.log('📊 Capturing chart images...');
+        const chartElements = chartsContainerRef.current.querySelectorAll('[data-chart]');
+        
+        for (let i = 0; i < chartElements.length; i++) {
+          try {
+            const canvas = await html2canvas(chartElements[i] as HTMLElement, {
+              backgroundColor: '#ffffff',
+              scale: 2, // Higher resolution
+              useCORS: true,
+              allowTaint: true
+            });
+            const imageDataUrl = canvas.toDataURL('image/png');
+            chartImages.push(imageDataUrl);
+            console.log(`✅ Captured chart ${i + 1}`);
+          } catch (chartError) {
+            console.error(`❌ Failed to capture chart ${i + 1}:`, chartError);
+          }
+        }
+      }
+      
+      // Create HTML content for the report with chart images
+      const reportHTML = generateReportHTMLWithCharts(chartImages);
+      
+      // Create a new window for printing
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        throw new Error('Unable to open print window. Please check your popup blocker.');
+      }
+      
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>AI Generated Report - ${activeSheet?.name || 'Sheet'}</title>
+          <style>
+            body { 
+              font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+              margin: 0; 
+              padding: 20px; 
+              line-height: 1.6; 
+              color: #333;
+              background: #fff;
+            }
+            .header { 
+              text-align: center; 
+              margin-bottom: 40px; 
+              border-bottom: 3px solid #2563eb; 
+              padding-bottom: 30px; 
+              background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+              padding: 30px;
+              border-radius: 10px;
+            }
+            .header h1 { 
+              color: #1e40af; 
+              margin: 0 0 10px 0; 
+              font-size: 2.5em;
+              font-weight: 700;
+            }
+            .header p { 
+              color: #64748b; 
+              margin: 5px 0; 
+              font-size: 1.1em;
+            }
+            .section { 
+              margin-bottom: 40px; 
+              page-break-inside: avoid;
+            }
+            .section h2 { 
+              color: #1e40af; 
+              margin-bottom: 20px; 
+              font-size: 1.8em;
+              border-bottom: 2px solid #e2e8f0;
+              padding-bottom: 10px;
+            }
+            .section h3 { 
+              color: #374151; 
+              margin-bottom: 15px; 
+              font-size: 1.3em;
+            }
+            .section h4 { 
+              color: #4b5563; 
+              margin-bottom: 10px; 
+              font-size: 1.1em;
+            }
+            .toc { 
+              background: #f8fafc; 
+              padding: 20px; 
+              border-radius: 8px; 
+              border-left: 4px solid #2563eb;
+            }
+            .toc li { 
+              margin: 8px 0; 
+              list-style: none;
+            }
+            .toc a { 
+              color: #2563eb; 
+              text-decoration: none; 
+              font-weight: 500;
+            }
+            .toc a:hover { 
+              text-decoration: underline; 
+            }
+            .stats-grid { 
+              display: grid; 
+              grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
+              gap: 20px; 
+              margin: 20px 0; 
+            }
+            .stat-item { 
+              text-align: center; 
+              background: #f8fafc; 
+              padding: 20px; 
+              border-radius: 10px; 
+              border: 2px solid #e2e8f0;
+            }
+            .stat-number { 
+              display: block; 
+              font-size: 2.5em; 
+              font-weight: 700; 
+              color: #2563eb; 
+              margin-bottom: 5px;
+            }
+            .stat-label { 
+              color: #64748b; 
+              font-size: 0.9em; 
+              font-weight: 500;
+            }
+            .data-table { 
+              width: 100%; 
+              border-collapse: collapse; 
+              margin: 20px 0; 
+              background: #fff;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .data-table th, .data-table td { 
+              padding: 12px 15px; 
+              text-align: left; 
+              border-bottom: 1px solid #e2e8f0;
+            }
+            .data-table th { 
+              background: #f8fafc; 
+              font-weight: 600; 
+              color: #374151;
+            }
+            .data-table tr:hover { 
+              background: #f8fafc; 
+            }
+            .data-type { 
+              padding: 4px 8px; 
+              border-radius: 4px; 
+              font-size: 0.8em; 
+              font-weight: 500;
+            }
+            .data-type.numeric { 
+              background: #dbeafe; 
+              color: #1e40af; 
+            }
+            .data-type.text { 
+              background: #dcfce7; 
+              color: #166534; 
+            }
+            .data-type.date { 
+              background: #fef3c7; 
+              color: #92400e; 
+            }
+            .relevance { 
+              padding: 4px 8px; 
+              border-radius: 4px; 
+              font-size: 0.8em; 
+              font-weight: 500;
+            }
+            .relevance.high { 
+              background: #dcfce7; 
+              color: #166534; 
+            }
+            .relevance.medium { 
+              background: #fef3c7; 
+              color: #92400e; 
+            }
+            .relevance.low { 
+              background: #fee2e2; 
+              color: #991b1b; 
+            }
+            .kpi-grid { 
+              display: grid; 
+              grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
+              gap: 20px; 
+              margin: 20px 0; 
+            }
+            .kpi-item { 
+              background: #f8fafc; 
+              padding: 20px; 
+              border-radius: 10px; 
+              border-left: 4px solid #2563eb; 
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .kpi-item h3 { 
+              color: #1e40af; 
+              margin: 0 0 15px 0; 
+              font-size: 1.2em;
+            }
+            .kpi-details p { 
+              margin: 8px 0; 
+              font-size: 0.9em;
+            }
+            .kpi-results { 
+              display: grid; 
+              grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+              gap: 15px; 
+              margin: 20px 0; 
+            }
+            .kpi-result { 
+              background: #f0f9ff; 
+              padding: 15px; 
+              border-radius: 8px; 
+              border: 1px solid #bae6fd;
+            }
+            .kpi-value { 
+              font-size: 1.5em; 
+              font-weight: 700; 
+              color: #0369a1; 
+              margin: 10px 0;
+            }
+            .chart-section { 
+              margin: 25px 0; 
+              padding: 20px; 
+              background: #f8fafc; 
+              border-radius: 10px; 
+              border: 1px solid #e2e8f0;
+            }
+            .chart-details p { 
+              margin: 8px 0; 
+              font-size: 0.9em;
+            }
+            .chart-image { 
+              max-width: 100%; 
+              height: auto; 
+              margin: 15px 0; 
+              border: 1px solid #e2e8f0; 
+              border-radius: 8px; 
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .chart-data-preview { 
+              margin-top: 15px; 
+            }
+            .chart-data-preview table { 
+              font-size: 0.8em; 
+            }
+            .insights { 
+              background: #f0f9ff; 
+              padding: 20px; 
+              border-radius: 10px; 
+              margin: 20px 0; 
+              border-left: 4px solid #0ea5e9;
+            }
+            .recommendations { 
+              background: #f0fdf4; 
+              padding: 20px; 
+              border-radius: 10px; 
+              margin: 20px 0; 
+              border-left: 4px solid #22c55e;
+            }
+            .data-quality { 
+              background: #fef2f2; 
+              padding: 20px; 
+              border-radius: 10px; 
+              margin: 20px 0; 
+              border-left: 4px solid #ef4444;
+            }
+            .technical-info { 
+              background: #f8fafc; 
+              padding: 20px; 
+              border-radius: 10px; 
+              margin: 20px 0;
+            }
+            .code-block { 
+              background: #1f2937; 
+              color: #f9fafb; 
+              padding: 15px; 
+              border-radius: 8px; 
+              overflow-x: auto; 
+              font-family: 'Courier New', monospace; 
+              font-size: 0.8em;
+            }
+            .appendix-content { 
+              background: #f8fafc; 
+              padding: 20px; 
+              border-radius: 10px; 
+              margin: 20px 0;
+            }
+            .footer { 
+              margin-top: 50px; 
+              text-align: center; 
+              color: #6b7280; 
+              font-size: 0.9em; 
+              padding: 20px; 
+              border-top: 2px solid #e2e8f0;
+            }
+            @media print { 
+              body { margin: 0; padding: 15px; }
+              .section { page-break-inside: avoid; }
+              .header { page-break-after: avoid; }
+            }
+          </style>
+        </head>
+        <body>
+          ${reportHTML}
+        </body>
+        </html>
+      `);
+      
+      printWindow.document.close();
+      
+      // Wait for content to load, then trigger print
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+      }, 1000);
+      
+      toast({
+        title: "PDF Download Started",
+        description: `Report with ${chartImages.length} charts ready for download.`,
+      });
+      
+    } catch (error) {
+      console.error('❌ PDF download failed:', error);
+      toast({
+        title: "PDF Download Failed",
+        description: error instanceof Error ? error.message : 'Failed to generate PDF',
+        variant: "destructive"
+      });
+    } finally {
+      setIsDownloadingPDF(false);
+    }
+  };
+
+  // Save comprehensive report to cloud storage
+  const saveReportToCloud = async () => {
+    if (!geminiConfigs || !schemaAnalysis) {
+      toast({
+        title: "No Report Available",
+        description: "Please generate a report first before saving.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsSavingReport(true);
+    
+    try {
+      // Create comprehensive report data structure
+      const comprehensiveReportData = {
+        // Report metadata
+        reportMetadata: {
+          reportId: Date.now(),
+          generatedAt: new Date().toISOString(),
+          sheetName: activeSheet?.name || 'Unnamed Sheet',
+          userEmail: user?.email || 'anonymous@example.com',
+          reportVersion: '2.0',
+          aiModels: ['Mistral 7B', 'Gemini 2.0 Flash', 'Custom Analytics'],
+          totalSections: 7
+        },
+        
+        // Stage 1: Schema Analysis
+        schemaAnalysis: {
+          selected_columns: schemaAnalysis.selected_columns || [],
+          insights: schemaAnalysis.insights || [],
+          data_quality_issues: schemaAnalysis.data_quality_issues || [],
+          business_context: schemaAnalysis.business_context || '',
+          focus_areas: schemaAnalysis.focus_areas || [],
+          processed_charts: (schemaAnalysis as any).processed_charts || [],
+          processed_kpis: (schemaAnalysis as any).processed_kpis || []
+        },
+        
+        // Stage 2: Report Template
+        reportTemplate: {
+          focus_areas: reportTemplate?.focus_areas || [],
+          recommendations: reportTemplate?.recommendations || [],
+          template_structure: reportTemplate?.template_structure || {},
+          business_objectives: reportTemplate?.business_objectives || [],
+          analysis_framework: reportTemplate?.analysis_framework || {}
+        },
+        
+        // Stage 3: Gemini Configs (KPIs & Charts)
+        geminiConfigs: {
+          kpis: geminiConfigs.kpis || [],
+          charts: geminiConfigs.charts || [],
+          processed_kpis: (geminiConfigs as any).processed_kpis || [],
+          processed_charts: (geminiConfigs as any).processed_charts || [],
+          analysis_notes: (geminiConfigs as any).analysis_notes || []
+        },
+        
+        // Sheet Schema Information
+        sheetSchema: sheetSchema ? {
+          totalRows: sheetSchema.totalRows,
+          totalColumns: sheetSchema.totalColumns,
+          summary: sheetSchema.summary,
+          columns: sheetSchema.columns || [],
+          dataTypes: sheetSchema.dataTypes || []
+        } : null,
+        
+        // Generated Report Text (if available)
+        generatedReportText: generatedReport || null,
+        
+        // Dynamic Column Mapping
+        dynamicColumnMapping: dynamicColumnMapping || {},
+        
+        // Custom Prompt (if used)
+        customPrompt: customPrompt || null,
+        
+        // Report Statistics
+        reportStatistics: {
+          totalKPIs: geminiConfigs.kpis?.length || 0,
+          totalCharts: geminiConfigs.charts?.length || 0,
+          processedKPIs: (geminiConfigs as any).processed_kpis?.length || 0,
+          processedCharts: (geminiConfigs as any).processed_charts?.length || 0,
+          schemaColumns: schemaAnalysis.selected_columns?.length || 0,
+          focusAreas: reportTemplate?.focus_areas?.length || 0,
+          recommendations: reportTemplate?.recommendations?.length || 0
+        },
+        
+        // Export Information
+        exportInfo: {
+          exportDate: new Date().toISOString(),
+          exportFormat: 'JSON',
+          exportVersion: '1.0',
+          includesCharts: true,
+          includesKPIs: true,
+          includesSchema: true,
+          includesInsights: true
+        }
+      };
+
+      // Convert to JSON string with proper formatting
+      const reportJson = JSON.stringify(comprehensiveReportData, null, 2);
+      
+      // Create filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const cleanSheetName = activeSheet?.name?.replace(/[^a-zA-Z0-9]/g, '_') || 'Sheet';
+      const fileName = `Comprehensive_AI_Report_${cleanSheetName}_${timestamp}.json`;
+      
+      // Create blob and download
+      const blob = new Blob([reportJson], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      toast({
+        title: "Comprehensive Report Saved Successfully",
+        description: `Complete report with all sections saved as ${fileName}`,
+      });
+      
+    } catch (error) {
+      console.error('❌ Save comprehensive report failed:', error);
+      toast({
+        title: "Save Failed",
+        description: error instanceof Error ? error.message : 'Failed to save comprehensive report',
+        variant: "destructive"
+      });
+    } finally {
+      setIsSavingReport(false);
+    }
+  };
+
+  // Generate comprehensive HTML content for the entire report with chart images
+  const generateReportHTMLWithCharts = (chartImages: string[]) => {
+    if (!geminiConfigs || !schemaAnalysis) return '';
+    
+    return `
+      <div class="header">
+        <h1>🚀 AI Generated Business Intelligence Report</h1>
+        <p>Generated on ${new Date().toLocaleDateString()} for ${activeSheet?.name || 'Sheet'}</p>
+        <p>Report ID: ${Date.now()}</p>
+      </div>
+      
+      <!-- Table of Contents -->
+      <div class="section">
+        <h2>📋 Table of Contents</h2>
+        <ul class="toc">
+          <li><a href="#executive-summary">Executive Summary</a></li>
+          <li><a href="#data-overview">Data Overview & Schema Analysis</a></li>
+          <li><a href="#key-performance-indicators">Key Performance Indicators</a></li>
+          <li><a href="#data-visualizations">Data Visualizations</a></li>
+          <li><a href="#ai-insights">AI Insights & Recommendations</a></li>
+          <li><a href="#technical-details">Technical Analysis Details</a></li>
+          <li><a href="#appendix">Appendix</a></li>
+        </ul>
+      </div>
+      
+      <!-- Executive Summary -->
+      <div class="section" id="executive-summary">
+        <h2>📊 Executive Summary</h2>
+        <p>This comprehensive business intelligence report analyzes your data using advanced AI techniques including industry research, benchmark analysis, and automated insights generation.</p>
+        
+        ${schemaAnalysis?.insights?.length > 0 ? `
+          <div class="insights">
+            <h3>Key Insights:</h3>
+            <ul>
+              ${schemaAnalysis.insights.map(insight => `<li>${insight.description || insight}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+        
+        ${reportTemplate?.focus_areas?.length > 0 ? `
+          <div class="focus-areas">
+            <h3>Focus Areas:</h3>
+            <ul>
+              ${reportTemplate.focus_areas.map(area => `<li>${area}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Data Overview & Schema Analysis -->
+      <div class="section" id="data-overview">
+        <h2>📈 Data Overview & Schema Analysis</h2>
+        
+        ${sheetSchema ? `
+          <div class="data-stats">
+            <h3>Dataset Statistics</h3>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.totalRows}</span>
+                <span class="stat-label">Total Rows</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.totalColumns}</span>
+                <span class="stat-label">Total Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.numericColumns}</span>
+                <span class="stat-label">Numeric Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.textColumns}</span>
+                <span class="stat-label">Text Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.dateColumns}</span>
+                <span class="stat-label">Date Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.formulaColumns}</span>
+                <span class="stat-label">Formula Columns</span>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+        
+        ${schemaAnalysis?.selected_columns?.length > 0 ? `
+          <div class="column-analysis">
+            <h3>Column Analysis</h3>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Column Name</th>
+                  <th>Data Type</th>
+                  <th>Business Relevance</th>
+                  <th>Analysis Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${schemaAnalysis.selected_columns.map(col => `
+                  <tr>
+                    <td>${col.name}</td>
+                    <td><span class="data-type ${col.type}">${col.type}</span></td>
+                    <td><span class="relevance ${col.business_relevance}">${col.business_relevance}</span></td>
+                    <td>${col.analysis_notes || 'No specific notes'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Key Performance Indicators -->
+      <div class="section" id="key-performance-indicators">
+        <h2>🎯 Key Performance Indicators</h2>
+        
+        ${geminiConfigs.kpis?.length > 0 ? `
+          <div class="kpi-grid">
+            ${geminiConfigs.kpis.map(kpi => `
+              <div class="kpi-item">
+                <h3>${kpi.name}</h3>
+                <div class="kpi-details">
+                  <p><strong>Calculation:</strong> ${kpi.calc}</p>
+                  <p><strong>Column:</strong> ${kpi.column}</p>
+                  <p><strong>Category:</strong> ${kpi.category || 'General'}</p>
+                  ${kpi.benchmark ? `<p><strong>Benchmark:</strong> ${kpi.benchmark}</p>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '<p>No KPIs generated for this dataset.</p>'}
+        
+        ${(geminiConfigs as any)?.processed_kpis?.length > 0 ? `
+          <div class="processed-kpis">
+            <h3>Processed KPI Results</h3>
+            <div class="kpi-results">
+              ${(geminiConfigs as any).processed_kpis.map(kpi => `
+                <div class="kpi-result">
+                  <h4>${kpi.name}</h4>
+                  <p class="kpi-value">${kpi.value !== null ? kpi.value : 'Calculating...'}</p>
+                  <p class="kpi-description">${kpi.description || ''}</p>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Data Visualizations -->
+      <div class="section" id="data-visualizations">
+        <h2>📊 Data Visualizations</h2>
+        
+        ${geminiConfigs.charts?.length > 0 ? `
+          <div class="charts-overview">
+            <h3>Chart Configurations</h3>
+            ${geminiConfigs.charts.map((chart, index) => `
+              <div class="chart-section">
+                <h4>${chart.title}</h4>
+                <div class="chart-details">
+                  <p><strong>Type:</strong> ${chart.type}</p>
+                  <p><strong>Purpose:</strong> ${chart.chart_purpose || 'Data Analysis'}</p>
+                  <p><strong>X-Axis:</strong> ${chart.x_column}</p>
+                  <p><strong>Y-Axis:</strong> ${chart.y_column}</p>
+                  ${chart.sql_query ? `<p><strong>SQL Query:</strong> <code>${chart.sql_query}</code></p>` : ''}
+                </div>
+                ${chartImages[index] ? `
+                  <div class="chart-image-container">
+                    <img src="${chartImages[index]}" alt="${chart.title}" class="chart-image" />
+                    <p><em>Chart visualization generated from your data</em></p>
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+        
+        ${(geminiConfigs as any)?.processed_charts?.length > 0 ? `
+          <div class="processed-charts">
+            <h3>Chart Data Results</h3>
+            <p><em>Note: Chart visualizations are generated in the web interface. This section shows the data structure and configuration.</em></p>
+            ${(geminiConfigs as any).processed_charts.map((chart, index) => `
+              <div class="chart-result">
+                <h4>Chart ${index + 1}: ${chart.title}</h4>
+                <p><strong>Type:</strong> ${chart.type}</p>
+                <p><strong>Data Points:</strong> ${chart.data?.length || 0}</p>
+                ${chart.data?.length > 0 ? `
+                  <div class="chart-data-preview">
+                    <p><strong>Sample Data:</strong></p>
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>${chart.x_column}</th>
+                          <th>${chart.y_column}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${chart.data.slice(0, 5).map(row => `
+                          <tr>
+                            <td>${row[chart.x_column]}</td>
+                            <td>${row[chart.y_column]}</td>
+                          </tr>
+                        `).join('')}
+                        ${chart.data.length > 5 ? '<tr><td colspan="2">... and more data points</td></tr>' : ''}
+                      </tbody>
+                    </table>
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- AI Insights & Recommendations -->
+      <div class="section" id="ai-insights">
+        <h2>🤖 AI Insights & Recommendations</h2>
+        
+        <div class="insights">
+          <h3>Analysis Methodology</h3>
+          <p>This report was generated using advanced AI analysis including:</p>
+          <ul>
+            <li>Schema analysis and data profiling</li>
+            <li>Industry research and benchmarking</li>
+            <li>Automated KPI calculation</li>
+            <li>Intelligent chart recommendations</li>
+            <li>Pattern recognition and trend analysis</li>
+          </ul>
+        </div>
+        
+        ${reportTemplate?.recommendations?.length > 0 ? `
+          <div class="recommendations">
+            <h3>AI Recommendations</h3>
+            <ul>
+              ${reportTemplate.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+        
+        ${schemaAnalysis?.data_quality_issues?.length > 0 ? `
+          <div class="data-quality">
+            <h3>Data Quality Assessment</h3>
+            <ul>
+              ${schemaAnalysis.data_quality_issues.map(issue => `<li>${issue}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Technical Analysis Details -->
+      <div class="section" id="technical-details">
+        <h2>🔧 Technical Analysis Details</h2>
+        
+        <div class="technical-info">
+          <h3>Report Generation Details</h3>
+          <table class="data-table">
+            <tr>
+              <td><strong>Report Generated:</strong></td>
+              <td>${new Date().toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td><strong>Data Source:</strong></td>
+              <td>${activeSheet?.name || 'Unknown Sheet'}</td>
+            </tr>
+            <tr>
+              <td><strong>Analysis Engine:</strong></td>
+              <td>Sheet Scribe AI v2.0</td>
+            </tr>
+            <tr>
+              <td><strong>AI Models Used:</strong></td>
+              <td>Mistral 7B, Gemini 2.0 Flash, Custom Analytics</td>
+            </tr>
+            <tr>
+              <td><strong>Report Sections:</strong></td>
+              <td>${schemaAnalysis ? 'Schema Analysis' : ''}${reportTemplate ? ', Report Template' : ''}${geminiConfigs ? ', KPI & Chart Generation' : ''}</td>
+            </tr>
+            <tr>
+              <td><strong>Charts Captured:</strong></td>
+              <td>${chartImages.length} chart images included</td>
+            </tr>
+          </table>
+        </div>
+        
+        ${reportTemplate?.template_structure ? `
+          <div class="template-info">
+            <h3>Report Template Structure</h3>
+            <pre class="code-block">${JSON.stringify(reportTemplate.template_structure, null, 2)}</pre>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Appendix -->
+      <div class="section" id="appendix">
+        <h2>📎 Appendix</h2>
+        
+        <div class="appendix-content">
+          <h3>Data Processing Notes</h3>
+          <p>This report was generated using the following data processing pipeline:</p>
+          <ol>
+            <li><strong>Schema Extraction:</strong> Automatic detection of data types and patterns</li>
+            <li><strong>AI Analysis:</strong> Mistral 7B for business context understanding</li>
+            <li><strong>KPI Generation:</strong> Gemini 2.0 Flash for metric calculation</li>
+            <li><strong>Chart Configuration:</strong> Automated visualization recommendations</li>
+            <li><strong>Chart Capture:</strong> High-resolution image generation for PDF export</li>
+            <li><strong>Report Compilation:</strong> Integration of all analysis components</li>
+          </ol>
+          
+          <h3>About Sheet Scribe AI</h3>
+          <p>Sheet Scribe AI is an advanced business intelligence platform that combines artificial intelligence with spreadsheet analysis to provide comprehensive insights and automated reporting capabilities.</p>
+        </div>
+      </div>
+      
+      <div class="footer">
+        <p>Generated by Sheet Scribe AI - Advanced Business Intelligence Platform</p>
+        <p>Report ID: ${Date.now()} | Generated: ${new Date().toLocaleString()}</p>
+      </div>
+    `;
+  };
+
+  // Generate comprehensive HTML content for the entire report
+  const generateReportHTML = () => {
+    if (!geminiConfigs || !schemaAnalysis) return '';
+    
+    return `
+      <div class="header">
+        <h1>🚀 AI Generated Business Intelligence Report</h1>
+        <p>Generated on ${new Date().toLocaleDateString()} for ${activeSheet?.name || 'Sheet'}</p>
+        <p>Report ID: ${Date.now()}</p>
+      </div>
+      
+      <!-- Table of Contents -->
+      <div class="section">
+        <h2>📋 Table of Contents</h2>
+        <ul class="toc">
+          <li><a href="#executive-summary">Executive Summary</a></li>
+          <li><a href="#data-overview">Data Overview & Schema Analysis</a></li>
+          <li><a href="#key-performance-indicators">Key Performance Indicators</a></li>
+          <li><a href="#data-visualizations">Data Visualizations</a></li>
+          <li><a href="#ai-insights">AI Insights & Recommendations</a></li>
+          <li><a href="#technical-details">Technical Analysis Details</a></li>
+          <li><a href="#appendix">Appendix</a></li>
+        </ul>
+      </div>
+      
+      <!-- Executive Summary -->
+      <div class="section" id="executive-summary">
+        <h2>📊 Executive Summary</h2>
+        <p>This comprehensive business intelligence report analyzes your data using advanced AI techniques including industry research, benchmark analysis, and automated insights generation.</p>
+        
+        ${schemaAnalysis?.insights?.length > 0 ? `
+          <div class="insights">
+            <h3>Key Insights:</h3>
+            <ul>
+              ${schemaAnalysis.insights.map(insight => `<li>${insight.description || insight}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+        
+        ${reportTemplate?.focus_areas?.length > 0 ? `
+          <div class="focus-areas">
+            <h3>Focus Areas:</h3>
+            <ul>
+              ${reportTemplate.focus_areas.map(area => `<li>${area}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Data Overview & Schema Analysis -->
+      <div class="section" id="data-overview">
+        <h2>📈 Data Overview & Schema Analysis</h2>
+        
+        ${sheetSchema ? `
+          <div class="data-stats">
+            <h3>Dataset Statistics</h3>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.totalRows}</span>
+                <span class="stat-label">Total Rows</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.totalColumns}</span>
+                <span class="stat-label">Total Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.numericColumns}</span>
+                <span class="stat-label">Numeric Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.textColumns}</span>
+                <span class="stat-label">Text Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.dateColumns}</span>
+                <span class="stat-label">Date Columns</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-number">${sheetSchema.summary.formulaColumns}</span>
+                <span class="stat-label">Formula Columns</span>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+        
+        ${schemaAnalysis?.selected_columns?.length > 0 ? `
+          <div class="column-analysis">
+            <h3>Column Analysis</h3>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Column Name</th>
+                  <th>Data Type</th>
+                  <th>Business Relevance</th>
+                  <th>Analysis Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${schemaAnalysis.selected_columns.map(col => `
+                  <tr>
+                    <td>${col.name}</td>
+                    <td><span class="data-type ${col.type}">${col.type}</span></td>
+                    <td><span class="relevance ${col.business_relevance}">${col.business_relevance}</span></td>
+                    <td>${col.analysis_notes || 'No specific notes'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Key Performance Indicators -->
+      <div class="section" id="key-performance-indicators">
+        <h2>🎯 Key Performance Indicators</h2>
+        
+        ${geminiConfigs.kpis?.length > 0 ? `
+          <div class="kpi-grid">
+            ${geminiConfigs.kpis.map(kpi => `
+              <div class="kpi-item">
+                <h3>${kpi.name}</h3>
+                <div class="kpi-details">
+                  <p><strong>Calculation:</strong> ${kpi.calc}</p>
+                  <p><strong>Column:</strong> ${kpi.column}</p>
+                  <p><strong>Category:</strong> ${kpi.category || 'General'}</p>
+                  ${kpi.benchmark ? `<p><strong>Benchmark:</strong> ${kpi.benchmark}</p>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '<p>No KPIs generated for this dataset.</p>'}
+        
+        ${(geminiConfigs as any)?.processed_kpis?.length > 0 ? `
+          <div class="processed-kpis">
+            <h3>Processed KPI Results</h3>
+            <div class="kpi-results">
+              ${(geminiConfigs as any).processed_kpis.map(kpi => `
+                <div class="kpi-result">
+                  <h4>${kpi.name}</h4>
+                  <p class="kpi-value">${kpi.value !== null ? kpi.value : 'Calculating...'}</p>
+                  <p class="kpi-description">${kpi.description || ''}</p>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Data Visualizations -->
+      <div class="section" id="data-visualizations">
+        <h2>📊 Data Visualizations</h2>
+        
+        ${geminiConfigs.charts?.length > 0 ? `
+          <div class="charts-overview">
+            <h3>Chart Configurations</h3>
+            ${geminiConfigs.charts.map(chart => `
+              <div class="chart-section">
+                <h4>${chart.title}</h4>
+                <div class="chart-details">
+                  <p><strong>Type:</strong> ${chart.type}</p>
+                  <p><strong>Purpose:</strong> ${chart.chart_purpose || 'Data Analysis'}</p>
+                  <p><strong>X-Axis:</strong> ${chart.x_column}</p>
+                  <p><strong>Y-Axis:</strong> ${chart.y_column}</p>
+                  ${chart.sql_query ? `<p><strong>SQL Query:</strong> <code>${chart.sql_query}</code></p>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+        
+        ${(geminiConfigs as any)?.processed_charts?.length > 0 ? `
+          <div class="processed-charts">
+            <h3>Chart Data Results</h3>
+            <p><em>Note: Chart visualizations are generated in the web interface. This section shows the data structure and configuration.</em></p>
+            ${(geminiConfigs as any).processed_charts.map((chart, index) => `
+              <div class="chart-result">
+                <h4>Chart ${index + 1}: ${chart.title}</h4>
+                <p><strong>Type:</strong> ${chart.type}</p>
+                <p><strong>Data Points:</strong> ${chart.data?.length || 0}</p>
+                ${chart.data?.length > 0 ? `
+                  <div class="chart-data-preview">
+                    <p><strong>Sample Data:</strong></p>
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>${chart.x_column}</th>
+                          <th>${chart.y_column}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${chart.data.slice(0, 5).map(row => `
+                          <tr>
+                            <td>${row[chart.x_column]}</td>
+                            <td>${row[chart.y_column]}</td>
+                          </tr>
+                        `).join('')}
+                        ${chart.data.length > 5 ? '<tr><td colspan="2">... and more data points</td></tr>' : ''}
+                      </tbody>
+                    </table>
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- AI Insights & Recommendations -->
+      <div class="section" id="ai-insights">
+        <h2>🤖 AI Insights & Recommendations</h2>
+        
+        <div class="insights">
+          <h3>Analysis Methodology</h3>
+          <p>This report was generated using advanced AI analysis including:</p>
+          <ul>
+            <li>Schema analysis and data profiling</li>
+            <li>Industry research and benchmarking</li>
+            <li>Automated KPI calculation</li>
+            <li>Intelligent chart recommendations</li>
+            <li>Pattern recognition and trend analysis</li>
+          </ul>
+        </div>
+        
+        ${reportTemplate?.recommendations?.length > 0 ? `
+          <div class="recommendations">
+            <h3>AI Recommendations</h3>
+            <ul>
+              ${reportTemplate.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+        
+        ${schemaAnalysis?.data_quality_issues?.length > 0 ? `
+          <div class="data-quality">
+            <h3>Data Quality Assessment</h3>
+            <ul>
+              ${schemaAnalysis.data_quality_issues.map(issue => `<li>${issue}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Technical Analysis Details -->
+      <div class="section" id="technical-details">
+        <h2>🔧 Technical Analysis Details</h2>
+        
+        <div class="technical-info">
+          <h3>Report Generation Details</h3>
+          <table class="data-table">
+            <tr>
+              <td><strong>Report Generated:</strong></td>
+              <td>${new Date().toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td><strong>Data Source:</strong></td>
+              <td>${activeSheet?.name || 'Unknown Sheet'}</td>
+            </tr>
+            <tr>
+              <td><strong>Analysis Engine:</strong></td>
+              <td>Sheet Scribe AI v2.0</td>
+            </tr>
+            <tr>
+              <td><strong>AI Models Used:</strong></td>
+              <td>Mistral 7B, Gemini 2.0 Flash, Custom Analytics</td>
+            </tr>
+            <tr>
+              <td><strong>Report Sections:</strong></td>
+              <td>${schemaAnalysis ? 'Schema Analysis' : ''}${reportTemplate ? ', Report Template' : ''}${geminiConfigs ? ', KPI & Chart Generation' : ''}</td>
+            </tr>
+          </table>
+        </div>
+        
+        ${reportTemplate?.template_structure ? `
+          <div class="template-info">
+            <h3>Report Template Structure</h3>
+            <pre class="code-block">${JSON.stringify(reportTemplate.template_structure, null, 2)}</pre>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Appendix -->
+      <div class="section" id="appendix">
+        <h2>📎 Appendix</h2>
+        
+        <div class="appendix-content">
+          <h3>Data Processing Notes</h3>
+          <p>This report was generated using the following data processing pipeline:</p>
+          <ol>
+            <li><strong>Schema Extraction:</strong> Automatic detection of data types and patterns</li>
+            <li><strong>AI Analysis:</strong> Mistral 7B for business context understanding</li>
+            <li><strong>KPI Generation:</strong> Gemini 2.0 Flash for metric calculation</li>
+            <li><strong>Chart Configuration:</strong> Automated visualization recommendations</li>
+            <li><strong>Report Compilation:</strong> Integration of all analysis components</li>
+          </ol>
+          
+          <h3>About Sheet Scribe AI</h3>
+          <p>Sheet Scribe AI is an advanced business intelligence platform that combines artificial intelligence with spreadsheet analysis to provide comprehensive insights and automated reporting capabilities.</p>
+        </div>
+      </div>
+      
+      <div class="footer">
+        <p>Generated by Sheet Scribe AI - Advanced Business Intelligence Platform</p>
+        <p>Report ID: ${Date.now()} | Generated: ${new Date().toLocaleString()}</p>
+      </div>
+    `;
   };
 
   // Generate report template using Mistral AI (Stage 2)
@@ -999,6 +2177,46 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200 dark:scrollbar-thumb-gray-500 dark:scrollbar-track-gray-700 hover:scrollbar-thumb-gray-500 dark:hover:scrollbar-thumb-gray-400 transition-colors">
           <div className="max-w-none space-y-8">
+            
+            {/* Action Buttons at the Top */}
+            {(schemaAnalysis || reportTemplate || geminiConfigs) && (
+              <div className="flex items-center justify-between bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                <div className="flex items-center space-x-2">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                  <span className="font-medium text-gray-900 dark:text-gray-100">AI Report Actions</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={downloadReportAsPDF}
+                    disabled={isDownloadingPDF}
+                    className="flex items-center space-x-2"
+                  >
+                    {isDownloadingPDF ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    <span>PDF</span>
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={saveReportToCloud}
+                    disabled={isSavingReport}
+                    className="flex items-center space-x-2"
+                  >
+                    {isSavingReport ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    <span>Save</span>
+                  </Button>
+                </div>
+              </div>
+            )}
             {/* Progress Header */}
             <div className="flex items-center justify-between bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 p-4 rounded-lg">
               <div className="flex items-center space-x-4">
@@ -1024,66 +2242,79 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
             {/* Schema Analysis Section */}
             <div className="w-full">
               <div className="space-y-6">
-              {/* Schema Overview */}
+              {/* Schema Overview Dropdown */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Database className="h-5 w-5 text-blue-600" />
-                    <span>Sheet Schema Overview</span>
+                  <CardTitle className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Database className="h-5 w-5 text-blue-600" />
+                      <span>Sheet Schema Overview</span>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => setShowSchemaDropdown(!showSchemaDropdown)}
+                      className="flex items-center space-x-1"
+                    >
+                      <span>{showSchemaDropdown ? 'Hide' : 'Show'} Details</span>
+                      <ChevronDown className={`h-4 w-4 transition-transform ${showSchemaDropdown ? 'rotate-180' : ''}`} />
+                    </Button>
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  {sheetSchema ? (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="text-center p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                          <div className="text-2xl font-bold text-blue-600">{sheetSchema.totalRows}</div>
-                          <div className="text-sm text-blue-600">Total Rows</div>
+                {showSchemaDropdown && (
+                  <CardContent>
+                    {sheetSchema ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="text-center p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                            <div className="text-2xl font-bold text-blue-600">{sheetSchema.totalRows}</div>
+                            <div className="text-sm text-blue-600">Total Rows</div>
+                          </div>
+                          <div className="text-center p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                            <div className="text-2xl font-bold text-green-600">{sheetSchema.totalColumns}</div>
+                            <div className="text-sm text-green-600">Total Columns</div>
+                          </div>
+                          <div className="text-center p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
+                            <div className="text-2xl font-bold text-purple-600">{sheetSchema.summary.numericColumns}</div>
+                            <div className="text-sm text-purple-600">Numeric</div>
+                          </div>
+                          <div className="text-center p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
+                            <div className="text-2xl font-bold text-orange-600">{sheetSchema.summary.dateColumns}</div>
+                            <div className="text-sm text-orange-600">Date</div>
+                          </div>
                         </div>
-                        <div className="text-center p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                          <div className="text-2xl font-bold text-green-600">{sheetSchema.totalColumns}</div>
-                          <div className="text-sm text-green-600">Total Columns</div>
+                        
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span>Text Columns:</span>
+                            <Badge variant="outline">{sheetSchema.summary.textColumns}</Badge>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span>Formula Columns:</span>
+                            <Badge variant="outline">{sheetSchema.summary.formulaColumns}</Badge>
+                          </div>
                         </div>
-                        <div className="text-center p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-                          <div className="text-2xl font-bold text-purple-600">{sheetSchema.summary.numericColumns}</div>
-                          <div className="text-sm text-purple-600">Numeric</div>
-                        </div>
-                        <div className="text-center p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
-                          <div className="text-2xl font-bold text-orange-600">{sheetSchema.summary.dateColumns}</div>
-                          <div className="text-sm text-orange-600">Date</div>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>Text Columns:</span>
-                          <Badge variant="outline">{sheetSchema.summary.textColumns}</Badge>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span>Formula Columns:</span>
-                          <Badge variant="outline">{sheetSchema.summary.formulaColumns}</Badge>
-                        </div>
-                      </div>
 
-                      <div className="pt-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={() => setShowSchemaDetails(!showSchemaDetails)}
-                          className="w-auto"
-                        >
-                          <Eye className="h-4 w-4 mr-2" />
-                          {showSchemaDetails ? 'Hide' : 'Show'} Detailed Schema
-                        </Button>
+                        <div className="pt-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => setShowSchemaDetails(!showSchemaDetails)}
+                            className="w-auto"
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            {showSchemaDetails ? 'Hide' : 'Show'} Detailed Schema
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="text-center text-gray-500">
-                      <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
-                      <p>Extracting schema...</p>
-                    </div>
-                  )}
-                </CardContent>
+                    ) : (
+                      <div className="text-center text-gray-500">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
+                        <p>Extracting schema...</p>
+                      </div>
+                    )}
+                  </CardContent>
+                )}
               </Card>
 
               {/* Stage 1: Schema Analysis */}
@@ -1110,7 +2341,11 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                           {isAnalyzing ? (
                             <>
                               <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                              Stage 1: Analyzing Schema...
+                              {retryCount > 0 ? (
+                                `Retrying... (${retryCount}/3)`
+                              ) : (
+                                'Stage 1: Analyzing Schema...'
+                              )}
                             </>
                           ) : (
                             <>
@@ -1586,19 +2821,52 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                 <div className="w-full">
                   <Card className="shadow-lg">
                     <CardHeader>
-                      <CardTitle className="flex items-center space-x-2 text-lg">
-                        <BarChart3 className="h-6 w-6 text-blue-600" />
-                        <span>Data Visualizations</span>
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground">
-                        Interactive charts and visualizations generated from your data
-                      </p>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="flex items-center space-x-2 text-lg">
+                            <BarChart3 className="h-6 w-6 text-blue-600" />
+                            <span>Data Visualizations</span>
+                          </CardTitle>
+                          <p className="text-sm text-muted-foreground">
+                            Interactive charts and visualizations generated from your data
+                          </p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={downloadReportAsPDF}
+                            disabled={isDownloadingPDF}
+                          >
+                            {isDownloadingPDF ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Download className="h-4 w-4 mr-2" />
+                            )}
+                            PDF
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={saveReportToCloud}
+                            disabled={isSavingReport}
+                          >
+                            {isSavingReport ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Save className="h-4 w-4 mr-2" />
+                            )}
+                            Save
+                          </Button>
+                        </div>
+                      </div>
                     </CardHeader>
                     <CardContent className="px-8 py-6">
-                      <div className="min-h-[600px]">
+                      <div className="min-h-[600px]" ref={chartsContainerRef}>
                         {/* Display processed charts if available */}
                         {(geminiConfigs as any).processed_charts && (geminiConfigs as any).processed_charts.length > 0 ? (
-                      <ChartVisualizer 
+                      <div data-chart="processed-charts">
+                        <ChartVisualizer 
                             charts={(() => {
                               console.log('🚀 Charts being passed to ChartVisualizer (processed):', (geminiConfigs as any).processed_charts);
                               return (geminiConfigs as any).processed_charts;
@@ -1635,7 +2903,9 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                               return rows;
                             })()}
                           />
+                        </div>
                         ) : geminiConfigs.charts && geminiConfigs.charts.length > 0 ? (
+                          <div data-chart="regular-charts">
                           <ChartVisualizer
                             charts={(() => {
                               const transformed = transformChartsForVisualizer(geminiConfigs.charts, dynamicColumnMapping);
@@ -1679,6 +2949,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                           return rows;
                         })()}
                       />
+                        </div>
                         ) : (
                           <div className="text-center text-muted-foreground py-12">
                             <BarChart3 className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -1732,14 +3003,42 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                           <CheckCircle className="h-5 w-5 text-green-600" />
                           <span className="font-medium">Report Generated</span>
                         </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={copyGeneratedReport}
-                        >
-                          <Copy className="h-4 w-4 mr-2" />
-                          Copy
-                        </Button>
+                        <div className="flex items-center space-x-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={downloadReportAsPDF}
+                            disabled={isDownloadingPDF}
+                          >
+                            {isDownloadingPDF ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Download className="h-4 w-4 mr-2" />
+                            )}
+                            PDF
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={saveReportToCloud}
+                            disabled={isSavingReport}
+                          >
+                            {isSavingReport ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Save className="h-4 w-4 mr-2" />
+                            )}
+                            Save
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={copyGeneratedReport}
+                          >
+                            <Copy className="h-4 w-4 mr-2" />
+                            Copy
+                          </Button>
+                        </div>
                       </div>
                       
                       <ScrollArea className="h-64">

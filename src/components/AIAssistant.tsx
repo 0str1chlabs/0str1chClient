@@ -1979,7 +1979,7 @@ ${sampleRows.join('\n')}`;
                 </TooltipTrigger>
                 {(!isSchemaReady && !isDuckDBProcessing) && (
                   <TooltipContent>
-                    <p>Upload CSV to get started</p>
+                    <p>Upload CSV or add Data to get started</p>
                   </TooltipContent>
                 )}
               </Tooltip>
