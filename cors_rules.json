@@ -1,0 +1,39 @@
+[
+  {
+    "corsRuleName": "allowClientUploads",
+    "allowedOrigins": [
+      "http://localhost:8080",
+      "http://localhost:3000",
+      "https://yourdomain.com"
+    ],
+    "allowedHeaders": [
+      "authorization",
+      "content-type",
+      "x-bz-content-sha1",
+      "x-bz-file-name",
+      "x-bz-info-original-size",
+      "x-bz-info-compressed-size",
+      "x-bz-info-compression-ratio",
+      "x-bz-info-metadata"
+    ],
+    "allowedOperations": [
+      "b2_upload_file",
+      "b2_upload_part",
+      "b2_download_file_by_name",
+      "b2_download_file_by_id",
+      "b2_list_file_names",
+      "b2_list_file_versions",
+      "b2_delete_file_version",
+      "b2_get_upload_url",
+      "b2_authorize_account",
+      "b2_list_buckets",
+      "b2_get_account_info"
+    ],
+    "exposeHeaders": [
+      "x-bz-content-sha1",
+      "x-bz-file-id",
+      "x-bz-file-name"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

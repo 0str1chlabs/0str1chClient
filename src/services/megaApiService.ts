@@ -1,6 +1,6 @@
 import { gzip } from 'fflate';
 
-export interface SheetDataMega {
+export interface SheetDataBackblaze {
   userEmail: string;
   fileName: string;
   originalSize: number;
@@ -14,34 +14,34 @@ export interface SheetDataMega {
     headers: string[];
     dataTypes: string[];
   };
-  megaFileId?: string;
-  megaFileUrl?: string;
+  firebaseFilePath?: string;
+  firebaseFileURL?: string;
   filePath: string;
 }
 
-export class MegaApiService {
-  private static instance: MegaApiService;
+export class BackblazeApiService {
+  private static instance: BackblazeApiService;
   private baseUrl: string;
 
   private constructor() {
     // Use VITE_BACKEND_URL if available, otherwise fallback to localhost for development
     const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
-    this.baseUrl = backendUrl + '/api/mega';
-    console.log('🔧 MegaApiService initialized with baseUrl:', this.baseUrl);
+    this.baseUrl = backendUrl + '/api/backblaze';
+    console.log('🔧 BackblazeApiService initialized with baseUrl:', this.baseUrl);
     console.log('🔧 VITE_BACKEND_URL from env:', import.meta.env.VITE_BACKEND_URL);
   }
 
-  public static getInstance(): MegaApiService {
-    if (!MegaApiService.instance) {
-      MegaApiService.instance = new MegaApiService();
+  public static getInstance(): BackblazeApiService {
+    if (!BackblazeApiService.instance) {
+      BackblazeApiService.instance = new BackblazeApiService();
     }
-    return MegaApiService.instance;
+    return BackblazeApiService.instance;
   }
 
   /**
-   * Check if MEGA service is available and authenticated
+   * Check if Backblaze service is available and authenticated
    */
-  async checkMegaStatus(): Promise<{ success: boolean; message: string }> {
+  async checkBackblazeStatus(): Promise<{ success: boolean; message: string }> {
     try {
       const response = await fetch(`${this.baseUrl}/authenticate`, {
         method: 'POST',
@@ -53,10 +53,10 @@ export class MegaApiService {
       const result = await response.json();
       return result;
     } catch (error) {
-      console.error('❌ Error checking MEGA status:', error);
-      return { 
-        success: false, 
-        message: `Failed to check MEGA status: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      console.error('❌ Error checking Backblaze status:', error);
+      return {
+        success: false,
+        message: `Failed to check Backblaze status: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
@@ -105,7 +105,7 @@ export class MegaApiService {
   }
 
   /**
-   * Store sheet data via backend MEGA API
+   * Store sheet data via backend Backblaze API
    */
   async storeSheetData(
     userEmail: string,
@@ -186,7 +186,7 @@ export class MegaApiService {
         isCompressed: true
       };
 
-      console.log('🔄 Sending compressed sheet data to backend for MEGA storage...');
+      console.log('🔄 Sending compressed sheet data to backend for Backblaze storage...');
       
       // Prepare the request body with error handling
       let requestBody: string;
@@ -214,7 +214,7 @@ export class MegaApiService {
       const result = await response.json();
       
       if (result.success) {
-        console.log('✅ Sheet data successfully sent to backend for MEGA storage');
+        console.log('✅ Sheet data successfully sent to backend for Backblaze storage');
         return result;
       } else {
         console.error('❌ Backend failed to store sheet data:', result.message);
@@ -358,4 +358,4 @@ export class MegaApiService {
   }
 }
 
-export default MegaApiService.getInstance();
+export default BackblazeApiService.getInstance();

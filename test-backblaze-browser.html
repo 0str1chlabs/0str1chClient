@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backblaze B2 Client-Side Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+        }
+        .success { color: #22c55e; }
+        .error { color: #ef4444; }
+        .info { color: #3b82f6; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #2563eb; }
+        button:disabled { background: #9ca3af; cursor: not-allowed; }
+        input, select {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.success { background: #dcfce7; color: #166534; }
+        .status.error { background: #fef2f2; color: #991b1b; }
+        .status.info { background: #eff6ff; color: #1e40af; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗂️ Backblaze B2 Client-Side Test</h1>
+        <p class="info">Test the complete client-side Backblaze B2 integration flow</p>
+
+        <div class="test-section">
+            <h2>🔧 Configuration</h2>
+            <label>User Email: <input type="email" id="userEmail" value="test@example.com"></label><br>
+            <label>Backend URL: <input type="text" id="backendUrl" value="http://localhost:8090" size="30"></label><br>
+            <button onclick="updateConfig()">Update Config</button>
+        </div>
+
+        <div class="test-section">
+            <h2>🔍 Service Status</h2>
+            <button onclick="testServiceStatus()">Check Backblaze Status</button>
+            <div id="statusResult" class="status info">Not tested yet</div>
+        </div>
+
+        <div class="test-section">
+            <h2>📤 Upload Test Data</h2>
+            <button onclick="testUpload()">Upload Sample Data</button>
+            <div id="uploadResult" class="status info">Not tested yet</div>
+        </div>
+
+        <div class="test-section">
+            <h2>📁 List Files</h2>
+            <button onclick="testListFiles()">List User Files</button>
+            <div id="listResult" class="status info">Not tested yet</div>
+        </div>
+
+        <div class="test-section">
+            <h2>📥 Retrieve Data</h2>
+            <label>File Name: <input type="text" id="retrieveFileName" value="client-test-sample"></label>
+            <button onclick="testRetrieve()">Retrieve Data</button>
+            <div id="retrieveResult" class="status info">Not tested yet</div>
+        </div>
+
+        <div class="test-section">
+            <h2>🗑️ Delete Data</h2>
+            <label>File Name: <input type="text" id="deleteFileName" value="client-test-sample"></label>
+            <button onclick="testDelete()">Delete Data</button>
+            <div id="deleteResult" class="status info">Not tested yet</div>
+        </div>
+
+        <div class="test-section">
+            <h2>🧪 Run All Tests</h2>
+            <button onclick="runAllTests()">Run Complete Test Suite</button>
+            <div id="allTestsResult" class="status info">Not tested yet</div>
+        </div>
+
+        <div class="test-section">
+            <h2>📋 Test Log</h2>
+            <div id="testLog" class="log">Test log will appear here...</div>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import fflate for compression (you might need to adjust the path)
+        import { gzip } from './node_modules/fflate/esm/index.mjs';
+
+        class BackblazeBrowserTester {
+            constructor() {
+                this.backendUrl = 'http://localhost:8090';
+                this.baseUrl = this.backendUrl + '/api/backblaze';
+                this.userEmail = 'test@example.com';
+                this.log('🔧 Backblaze Browser Tester initialized');
+            }
+
+            updateConfig(userEmail, backendUrl) {
+                this.userEmail = userEmail;
+                this.backendUrl = backendUrl;
+                this.baseUrl = backendUrl + '/api/backblaze';
+                this.log(`🔄 Config updated: ${userEmail} @ ${backendUrl}`);
+            }
+
+            log(message) {
+                const logDiv = document.getElementById('testLog');
+                const timestamp = new Date().toLocaleTimeString();
+                logDiv.textContent += `[${timestamp}] ${message}\n`;
+                logDiv.scrollTop = logDiv.scrollHeight;
+                console.log(message);
+            }
+
+            updateStatus(elementId, message, type = 'info') {
+                const element = document.getElementById(elementId);
+                element.textContent = message;
+                element.className = `status ${type}`;
+            }
+
+            async makeRequest(endpoint, options = {}) {
+                try {
+                    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...options.headers
+                        },
+                        ...options
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    return await response.json();
+                } catch (error) {
+                    this.log(`❌ Request failed: ${error.message}`);
+                    throw error;
+                }
+            }
+
+            async testServiceStatus() {
+                this.log('🔍 Testing Backblaze service status...');
+                try {
+                    const result = await this.makeRequest('/authenticate', { method: 'POST' });
+
+                    if (result.success) {
+                        this.updateStatus('statusResult', '✅ Backblaze service available', 'success');
+                        this.log('✅ Backblaze service is available');
+                    } else {
+                        this.updateStatus('statusResult', `❌ Service unavailable: ${result.message}`, 'error');
+                        this.log(`❌ Backblaze service unavailable: ${result.message}`);
+                    }
+
+                    return result;
+                } catch (error) {
+                    this.updateStatus('statusResult', `❌ Connection failed: ${error.message}`, 'error');
+                    return { success: false, message: error.message };
+                }
+            }
+
+            async compressData(data) {
+                this.log('🗜️ Compressing data...');
+                const jsonData = JSON.stringify(data);
+                const originalSize = new Blob([jsonData]).size;
+
+                return new Promise((resolve, reject) => {
+                    gzip(
+                        new TextEncoder().encode(jsonData),
+                        { level: 6 },
+                        (err, compressed) => {
+                            if (err) {
+                                reject(err);
+                            } else {
+                                const compressedSize = compressed.length;
+                                const compressionRatio = ((originalSize - compressedSize) / originalSize) * 100;
+
+                                // Convert to base64
+                                const binaryString = Array.from(compressed, byte => String.fromCharCode(byte)).join('');
+                                const compressedBase64 = btoa(binaryString);
+
+                                resolve({
+                                    originalSize,
+                                    compressedSize,
+                                    compressionRatio,
+                                    compressedBase64,
+                                    metadata: {
+                                        totalRows: data.rowCount || 0,
+                                        totalColumns: data.colCount || 0,
+                                        compressionRatio,
+                                        compressionLevel: 6,
+                                        isCompressed: true
+                                    }
+                                });
+                            }
+                        }
+                    );
+                });
+            }
+
+            async testUpload() {
+                this.log('📤 Testing data upload...');
+                try {
+                    // Create sample data
+                    const sampleData = {
+                        cells: {
+                            'A1': { value: 'Name', colHeader: 'Name' },
+                            'B1': { value: 'Age', colHeader: 'Age' },
+                            'A2': { value: 'John Doe', colHeader: 'Name' },
+                            'B2': { value: 30, colHeader: 'Age' },
+                            'A3': { value: 'Jane Smith', colHeader: 'Name' },
+                            'B3': { value: 25, colHeader: 'Age' }
+                        },
+                        rowCount: 3,
+                        colCount: 2
+                    };
+
+                    // Compress data
+                    const compressedData = await this.compressData(sampleData);
+                    this.log(`📊 Compressed ${compressedData.originalSize} → ${compressedData.compressedSize} bytes (${compressedData.compressionRatio.toFixed(1)}%)`);
+
+                    // Upload
+                    const result = await this.makeRequest('/upload', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            userEmail: this.userEmail,
+                            fileName: 'client-test-sample',
+                            compressedData: compressedData.compressedBase64,
+                            metadata: compressedData.metadata
+                        })
+                    });
+
+                    if (result.success) {
+                        this.updateStatus('uploadResult', '✅ Data uploaded successfully', 'success');
+                        this.log('✅ Data uploaded successfully to Backblaze');
+                    } else {
+                        this.updateStatus('uploadResult', `❌ Upload failed: ${result.message}`, 'error');
+                        this.log(`❌ Upload failed: ${result.message}`);
+                    }
+
+                    return result;
+                } catch (error) {
+                    this.updateStatus('uploadResult', `❌ Upload error: ${error.message}`, 'error');
+                    return { success: false, message: error.message };
+                }
+            }
+
+            async testListFiles() {
+                this.log('📁 Testing file listing...');
+                try {
+                    const result = await this.makeRequest(`/files/${encodeURIComponent(this.userEmail)}`);
+
+                    if (result.success) {
+                        const fileCount = result.data?.length || 0;
+                        this.updateStatus('listResult', `✅ Found ${fileCount} files`, 'success');
+                        this.log(`📁 Found ${fileCount} files: ${result.data?.map(f => f.fileName).join(', ') || 'none'}`);
+                    } else {
+                        this.updateStatus('listResult', `❌ List failed: ${result.message}`, 'error');
+                        this.log(`❌ List failed: ${result.message}`);
+                    }
+
+                    return result;
+                } catch (error) {
+                    this.updateStatus('listResult', `❌ List error: ${error.message}`, 'error');
+                    return { success: false, message: error.message };
+                }
+            }
+
+            async testRetrieve(fileName = 'client-test-sample') {
+                this.log(`📥 Testing data retrieval: ${fileName}`);
+                try {
+                    const result = await this.makeRequest(`/retrieve/${encodeURIComponent(this.userEmail)}/${encodeURIComponent(fileName)}`);
+
+                    if (result.success && result.data) {
+                        this.updateStatus('retrieveResult', '✅ Data retrieved successfully', 'success');
+                        this.log(`✅ Data retrieved: ${JSON.stringify(result.data).substring(0, 200)}...`);
+                    } else {
+                        this.updateStatus('retrieveResult', `❌ Retrieve failed: ${result.message}`, 'error');
+                        this.log(`❌ Retrieve failed: ${result.message}`);
+                    }
+
+                    return result;
+                } catch (error) {
+                    this.updateStatus('retrieveResult', `❌ Retrieve error: ${error.message}`, 'error');
+                    return { success: false, message: error.message };
+                }
+            }
+
+            async testDelete(fileName = 'client-test-sample') {
+                this.log(`🗑️ Testing data deletion: ${fileName}`);
+                try {
+                    const result = await this.makeRequest(`/delete/${encodeURIComponent(this.userEmail)}/${encodeURIComponent(fileName)}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (result.success) {
+                        this.updateStatus('deleteResult', '✅ Data deleted successfully', 'success');
+                        this.log('✅ Data deleted successfully');
+                    } else {
+                        this.updateStatus('deleteResult', `❌ Delete failed: ${result.message}`, 'error');
+                        this.log(`❌ Delete failed: ${result.message}`);
+                    }
+
+                    return result;
+                } catch (error) {
+                    this.updateStatus('deleteResult', `❌ Delete error: ${error.message}`, 'error');
+                    return { success: false, message: error.message };
+                }
+            }
+
+            async runAllTests() {
+                this.log('🧪 Running complete test suite...');
+                this.updateStatus('allTestsResult', '🔄 Running tests...', 'info');
+
+                try {
+                    // Test 1: Service status
+                    const statusResult = await this.testServiceStatus();
+                    if (!statusResult.success) {
+                        throw new Error('Service status check failed');
+                    }
+
+                    // Test 2: Upload
+                    const uploadResult = await this.testUpload();
+                    if (!uploadResult.success) {
+                        throw new Error('Upload test failed');
+                    }
+
+                    // Test 3: List files
+                    const listResult = await this.testListFiles();
+                    if (!listResult.success) {
+                        throw new Error('List files test failed');
+                    }
+
+                    // Test 4: Retrieve
+                    const retrieveResult = await this.testRetrieve();
+                    if (!retrieveResult.success) {
+                        throw new Error('Retrieve test failed');
+                    }
+
+                    // Test 5: Delete (cleanup)
+                    const deleteResult = await this.testDelete();
+                    if (!deleteResult.success) {
+                        console.warn('Delete test failed, but continuing...');
+                    }
+
+                    this.updateStatus('allTestsResult', '✅ All tests passed!', 'success');
+                    this.log('🎉 Complete test suite passed successfully!');
+
+                    return { success: true, message: 'All tests passed' };
+
+                } catch (error) {
+                    this.updateStatus('allTestsResult', `❌ Tests failed: ${error.message}`, 'error');
+                    this.log(`💥 Test suite failed: ${error.message}`);
+                    return { success: false, message: error.message };
+                }
+            }
+        }
+
+        // Global tester instance
+        const tester = new BackblazeBrowserTester();
+
+        // Expose functions to window for button clicks
+        window.testServiceStatus = () => tester.testServiceStatus();
+        window.testUpload = () => tester.testUpload();
+        window.testListFiles = () => tester.testListFiles();
+        window.testRetrieve = () => {
+            const fileName = document.getElementById('retrieveFileName').value;
+            return tester.testRetrieve(fileName);
+        };
+        window.testDelete = () => {
+            const fileName = document.getElementById('deleteFileName').value;
+            return tester.testDelete(fileName);
+        };
+        window.runAllTests = () => tester.runAllTests();
+        window.updateConfig = () => {
+            const userEmail = document.getElementById('userEmail').value;
+            const backendUrl = document.getElementById('backendUrl').value;
+            tester.updateConfig(userEmail, backendUrl);
+        };
+        window.clearLog = () => {
+            document.getElementById('testLog').textContent = 'Test log cleared...\n';
+        };
+
+        // Initialize
+        console.log('🎯 Backblaze Browser Test Page Loaded');
+        console.log('💡 Use the buttons above to test different functionalities');
+        console.log('🔧 Make sure your backend is running on the specified URL');
+    </script>
+</body>
+</html>

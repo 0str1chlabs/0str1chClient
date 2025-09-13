@@ -33,13 +33,14 @@ import { InfiniteCanvas } from '@/components/InfiniteCanvas';
 import { StatisticalSummary } from '@/components/StatisticalSummary';
 
 import { AIReportGenerator } from '@/components/AIReportGenerator';
+import { SheetSelector } from '@/components/SheetSelector';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
 import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
-import MegaApiService from '../services/megaApiService';
+import BackblazeApiService from '../services/backblazeApiService';
 
 
 const Index: React.FC = () => {
@@ -76,7 +77,7 @@ const Index: React.FC = () => {
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [isAIMinimized, setIsAIMinimized] = useState(false);
   const [showPivotTable, setShowPivotTable] = useState(false);
-  const [showSheetSelector, setShowSheetSelector] = useState(false);
+  const [showSheetSelectionModal, setShowSheetSelectionModal] = useState(false);
   const [lastModifiedDate, setLastModifiedDate] = useState(null);
   const [availableSheets, setAvailableSheets] = useState([]);
   const [showAIReportGenerator, setShowAIReportGenerator] = useState(false);
@@ -111,8 +112,8 @@ const Index: React.FC = () => {
   const [csvUploaded, setCsvUploaded] = useState(false);
 
   // Loading state management
-  const [isCheckingMegaData, setIsCheckingMegaData] = useState(true);
-  const [hasCheckedMegaData, setHasCheckedMegaData] = useState(false);
+  const [isCheckingBackblazeData, setIsCheckingBackblazeData] = useState(true);
+  const [hasCheckedBackblazeData, setHasCheckedBackblazeData] = useState(false);
   const [isLoadingSheets, setIsLoadingSheets] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
 
@@ -121,7 +122,7 @@ const Index: React.FC = () => {
   const [cacheTimestamps, setCacheTimestamps] = useState<Map<string, number>>(new Map());
   const MAX_CACHE_SIZE = 3;
 
-  // MEGA storage state
+  // Backblaze storage state
 
 
   // Hook for efficient DuckDB updates
@@ -177,7 +178,7 @@ const Index: React.FC = () => {
 
   // Animate loading messages with slower transitions
   useEffect(() => {
-    if (isLoadingSheets || isCheckingMegaData || isProcessingSchema) {
+    if (isLoadingSheets || isCheckingBackblazeData || isProcessingSchema) {
       const interval = setInterval(() => {
         setCurrentMessageIndex(prev => (prev + 1) % loadingMessages.length);
       }, 2000); // Change message every 2 seconds (slower)
@@ -187,7 +188,7 @@ const Index: React.FC = () => {
       // Reset message index when not loading
       setCurrentMessageIndex(0);
     }
-  }, [isLoadingSheets, isCheckingMegaData, isProcessingSchema, loadingMessages.length]);
+  }, [isLoadingSheets, isCheckingBackblazeData, isProcessingSchema, loadingMessages.length]);
 
   // Monitor AI Assistant processing state
   useEffect(() => {
@@ -199,7 +200,6 @@ const Index: React.FC = () => {
 
       // If schema is ready, clear all loading states
       if (ready) {
-        setIsCheckingMegaData(false);
         setIsLoadingSheets(false);
         setIsProcessingSchema(false);
       }
@@ -219,36 +219,37 @@ const Index: React.FC = () => {
     };
   }, []);
 
-  // Check for existing sheet data in MEGA cloud storage on page load
+  // Check for existing sheet data in Backblaze cloud storage on page load
   useEffect(() => {
     const checkExistingSheetData = async () => {
-      setIsCheckingMegaData(true);
+      setIsCheckingBackblazeData(true);
       setIsLoadingSheets(true);
 
       if (user?.email) {
         try {
-          console.log('🔍 Checking for existing sheet data in MEGA cloud storage...');
+          console.log('🔍 Checking for existing sheet data in Backblaze cloud storage...');
 
-          // Check MEGA service status via backend
-          const megaStatus = await MegaApiService.checkMegaStatus();
-          if (!megaStatus.success) {
-            console.log('🔐 MEGA service not available');
-            setIsCheckingMegaData(false);
-            setHasCheckedMegaData(true);
+          // Check Backblaze service status directly (client-side)
+          const backblazeService = BackblazeApiService.getInstance();
+          const authResult = await backblazeService.authenticate();
+          if (!authResult.success) {
+            console.log('🔐 Backblaze authentication failed:', authResult.message);
+            setIsCheckingBackblazeData(false);
+            setHasCheckedBackblazeData(true);
             setIsLoadingSheets(false);
             return;
           }
 
-          const result = await MegaApiService.checkUserSheetData(user.email);
+          const result = await backblazeService.checkUserFiles(user.email);
 
-          if (result.success && result.hasData) {
-            console.log('📊 Found existing sheet data in MEGA cloud:', result.data);
+          if (result.success && result.hasFiles) {
+            console.log('📊 Found existing sheet data in Backblaze cloud');
             console.log('🎯 Loading only the most recent sheet for optimal startup performance...');
 
             // Load existing data directly without confirmation
             await loadExistingSheetData(user.email);
           } else {
-            console.log('📭 No existing sheet data found for user in MEGA cloud');
+            console.log('📭 No existing sheet data found for user in Backblaze cloud');
             console.log('📄 Starting with empty sheet - user can load sheets via "+" tab when needed');
           }
         } catch (error) {
@@ -256,13 +257,13 @@ const Index: React.FC = () => {
         }
       } else {
         // No user logged in, show empty sheet
-        setIsCheckingMegaData(false);
-        setHasCheckedMegaData(true);
+        setIsCheckingBackblazeData(false);
+        setHasCheckedBackblazeData(true);
         setIsLoadingSheets(false);
       }
 
-      setIsCheckingMegaData(false);
-      setHasCheckedMegaData(true);
+      setIsCheckingBackblazeData(false);
+      setHasCheckedBackblazeData(true);
       setIsLoadingSheets(false);
     };
 
@@ -531,74 +532,6 @@ const Index: React.FC = () => {
     setRowTooltip(prev => ({ ...prev, visible: false }));
   }, []);
 
-  const handleSheetSelection = useCallback(async (selectedSheet) => {
-    try {
-      setIsLoadingSheets(true);
-      console.log(`📂 Loading sheet from cloud: ${selectedSheet.fileName}`);
-
-      const result = await MegaApiService.retrieveSheetData(user?.email, selectedSheet.fileName);
-
-      if (result.success && result.data?.sheetData) {
-        const { sheetData } = result.data;
-        const fileName = result.data.fileName || selectedSheet.fileName; // Use backend fileName or fallback to original
-
-        // Convert sheet data to CSV format for addSheetFromCSV
-        const csvData: string[][] = [];
-        const { colCount, rowCount } = sheetData;
-
-        // Create header row
-        const headerRow: string[] = [];
-        for (let col = 0; col < colCount; col++) {
-          const colLetter = String.fromCharCode(65 + col);
-          const cellId = `${colLetter}1`;
-          const cell = sheetData.cells[cellId];
-          const headerValue = cell && cell.value ? String(cell.value) : colLetter;
-          headerRow.push(headerValue);
-        }
-        csvData.push(headerRow);
-
-        // Create data rows
-        for (let row = 2; row <= rowCount; row++) {
-          const dataRow: string[] = [];
-          for (let col = 0; col < colCount; col++) {
-            const colLetter = String.fromCharCode(65 + col);
-            const cellId = `${colLetter}${row}`;
-            const cell = sheetData.cells[cellId];
-            const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
-            dataRow.push(cellValue);
-          }
-          csvData.push(dataRow);
-        }
-
-        // Ensure fileName is valid before using
-        if (!fileName) {
-          console.error('❌ Invalid fileName received from backend, using fallback');
-          setShowSheetSelector(false);
-          return;
-        }
-
-        // Add the sheet using the hook method
-        addSheetFromCSV(csvData, fileName.replace('.csv.gz', ''));
-
-        // Cache the sheet data (using the current active sheet ID)
-        if (state.activeSheetId) {
-          updateSheetCache(state.activeSheetId, sheetData);
-        }
-
-        console.log(`✅ Loaded and cached sheet: ${fileName}`);
-        setShowSheetSelector(false);
-
-        // Trigger DuckDB reload
-        setCsvUploaded(true);
-      } else {
-        console.error(`❌ Failed to load sheet data for ${selectedSheet.fileName}:`, result.message);
-      }
-    } catch (error) {
-      console.error(`❌ Error loading sheet ${selectedSheet.fileName}:`, error);
-    } finally {
-      setIsLoadingSheets(false);
-    }
-  }, [user?.email, addSheetFromCSV, updateSheetCache]);
 
   const handleAddSheet = useCallback(() => {
     // Check if there are unloaded sheets from storage that we haven't loaded yet
@@ -609,15 +542,21 @@ const Index: React.FC = () => {
     });
 
     if (unloadedSheets.length > 0) {
-      // Show sheet selector modal for unloaded sheets
-      console.log(`📋 Found ${unloadedSheets.length} unloaded sheets, showing selector modal`);
-      setShowSheetSelector(true);
+      // Show sheet selection modal for unloaded sheets
+      console.log(`📋 Found ${unloadedSheets.length} unloaded sheets, showing selection modal`);
+      setShowSheetSelectionModal(true);
     } else {
-      // No unloaded sheets, create new empty sheet
-      console.log('📄 No unloaded sheets, creating new empty sheet');
-      addSheet();
+      // No unloaded sheets, show options modal
+      console.log('📄 No unloaded sheets, showing add sheet options');
+      setShowSheetSelectionModal(true);
     }
-  }, [addSheet, state.sheets, availableSheets]);
+  }, [state.sheets, availableSheets]);
+
+  const handleCreateBlankSheet = useCallback(() => {
+    console.log('📄 Creating new blank sheet');
+    addSheet();
+    setShowSheetSelectionModal(false);
+  }, [addSheet]);
 
   const handleTabSwitch = useCallback((index: number) => {
     // Bounds checking
@@ -722,17 +661,20 @@ const Index: React.FC = () => {
           }));
           bulkUpdateCells(updates);
 
-          // Store compressed sheet data in MEGA cloud storage
+          // Store compressed sheet data in Backblaze cloud storage (direct client-side)
           if (user?.email) {
             try {
-              // Check MEGA service status via backend
-              const megaStatus = await MegaApiService.checkMegaStatus();
-              if (!megaStatus.success) {
-                console.log('🔐 MEGA service not available');
+              console.log('🔄 Storing compressed sheet data directly to Backblaze cloud...');
+              
+              // Get Backblaze service instance
+              const backblazeService = BackblazeApiService.getInstance();
+              
+              // Authenticate with Backblaze
+              const authResult = await backblazeService.authenticate();
+              if (!authResult.success) {
+                console.log('🔐 Backblaze authentication failed:', authResult.message);
                 return;
               }
-              
-              console.log('🔄 Storing compressed sheet data via backend MEGA API...');
               
               const metadata = {
                 totalRows: dataRows.length,
@@ -754,7 +696,7 @@ const Index: React.FC = () => {
                 })
               };
 
-              const result = await MegaApiService.storeSheetData(
+              const result = await backblazeService.storeSheetData(
                 user.email,
                 file.name,
                 { cells, rowCount: maxRow, colCount: maxCol },
@@ -762,12 +704,13 @@ const Index: React.FC = () => {
               );
 
               if (result.success) {
-                console.log('✅ Sheet data successfully stored in MEGA cloud storage with proper folder structure');
+                console.log('✅ Sheet data successfully stored in Backblaze cloud storage');
+                console.log('📊 Compression stats:', result.data);
               } else {
-                console.error('❌ Failed to store sheet data in MEGA cloud storage:', result.message);
+                console.error('❌ Failed to store sheet data in Backblaze cloud storage:', result.message);
               }
             } catch (error) {
-              console.error('❌ Error storing sheet data in MEGA cloud storage:', error);
+              console.error('❌ Error storing sheet data in Backblaze cloud storage:', error);
             }
           }
 
@@ -856,123 +799,152 @@ const Index: React.FC = () => {
     // Save logic would go here
   }, []);
 
-  // Load existing sheet data from MEGA cloud storage
+  // Load existing sheet data from Backblaze cloud storage
   const loadExistingSheetData = useCallback(async (userEmail: string) => {
     try {
       setIsLoadingSheets(true);
-      console.log('🔄 Loading existing sheet data from MEGA cloud storage...');
+      console.log('🔄 Loading existing sheet data from Backblaze cloud storage...');
 
+      // Get Backblaze service instance
+      const backblazeService = BackblazeApiService.getInstance();
+      
       // Get list of user files to let them choose
-      const filesResult = await MegaApiService.listUserFiles(userEmail);
+      const filesResult = await backblazeService.listUserFiles(userEmail);
 
-      if (filesResult.success && filesResult.data && filesResult.data.length > 0) {
-        console.log(`📁 Found ${filesResult.data.length} files in MEGA cloud storage`);
+      if (filesResult.success && filesResult.files && filesResult.files.length > 0) {
+        console.log(`📁 Found ${filesResult.files.length} files in Backblaze cloud storage`);
 
         // Sort files by last modified date (most recent first)
-        const sortedFiles = filesResult.data.sort((a: any, b: any) => {
-          const dateA = new Date(a.lastModified || a.timestamp || 0);
-          const dateB = new Date(b.lastModified || b.timestamp || 0);
-          return dateB.getTime() - dateA.getTime();
+        const sortedFiles = filesResult.files.sort((a: any, b: any) => {
+          const timestampA = a.uploadTimestamp && a.uploadTimestamp > 0 ? a.uploadTimestamp : 0;
+          const timestampB = b.uploadTimestamp && b.uploadTimestamp > 0 ? b.uploadTimestamp : 0;
+          return timestampB - timestampA;
         });
-
-        // Only load the most recent sheet on startup for better performance
-        const sheetsToLoad = 1; // Only load the most recent sheet initially
-        console.log(`📊 Loading only the most recent sheet on startup (for better performance)`);
-
-        // Load only the most recent sheet
-        for (let i = 0; i < sheetsToLoad; i++) {
-          const file = sortedFiles[i];
-          try {
-            const result = await MegaApiService.retrieveSheetData(userEmail, file.fileName);
-
-                        if (result.success && result.data?.sheetData) {
-              const { sheetData } = result.data;
-              const fileName = result.data.fileName || file.fileName; // Use backend fileName or fallback to original
-
-              // Convert sheet data to CSV format for addSheetFromCSV
-              const csvData: string[][] = [];
-              const { colCount, rowCount } = sheetData;
-
-              // Create header row
-              const headerRow: string[] = [];
-              for (let col = 0; col < colCount; col++) {
-                const colLetter = String.fromCharCode(65 + col);
-                const cellId = `${colLetter}1`;
-                const cell = sheetData.cells[cellId];
-                const headerValue = cell && cell.value ? String(cell.value) : colLetter;
-                headerRow.push(headerValue);
-              }
-              csvData.push(headerRow);
-
-              // Create data rows
-              for (let row = 2; row <= rowCount; row++) {
-                const dataRow: string[] = [];
-                for (let col = 0; col < colCount; col++) {
-                  const colLetter = String.fromCharCode(65 + col);
-                  const cellId = `${colLetter}${row}`;
-                  const cell = sheetData.cells[cellId];
-                  const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
-                  dataRow.push(cellValue);
-                }
-                csvData.push(dataRow);
-              }
-
-              // Ensure fileName is valid before using
-              if (!fileName) {
-                console.error(`❌ Invalid fileName received from backend for ${file.fileName}, skipping`);
-                continue; // Skip this file and continue with others
-              }
-
-              // Add the new sheet using the hook method
-              addSheetFromCSV(csvData, fileName.replace('.csv.gz', ''));
-
-              // Cache the sheet data for future use (using the current active sheet ID)
-              if (state.activeSheetId) {
-                updateSheetCache(state.activeSheetId, sheetData);
-              }
-
-              console.log(`✅ Loaded and cached sheet: ${fileName} (last modified: ${file.lastModified || 'unknown'})`);
-            } else {
-              console.error(`❌ Failed to load sheet data for ${file.fileName}:`, result.message);
-            }
-          } catch (error) {
-            console.error(`❌ Error loading sheet ${file.fileName}:`, error);
-          }
-        }
 
         // Store all available sheets for later reference (popup selection)
         setAvailableSheets(sortedFiles.map(file => ({
-          fileName: file.fileName,
-          lastModified: file.lastModified || file.timestamp,
-          // We'll load sheetData on demand
+          fileName: file.fileName.replace('user_' + userEmail + '/', ''),
+          lastModified: file.uploadTimestamp && file.uploadTimestamp > 0 
+            ? new Date(file.uploadTimestamp).toISOString() 
+            : new Date().toISOString(), // Fallback to current time if invalid timestamp
+          size: file.size,
+          fileId: file.fileId
         })));
 
-        // Log what sheets are available vs loaded
-        const loadedSheetNames = state.sheets.map(sheet => sheet.name.toLowerCase());
-        const availableSheetNames = sortedFiles.map(file =>
-          file.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '').toLowerCase()
-        );
-
-        console.log(`📋 Available sheets in cloud: ${availableSheetNames.join(', ')}`);
-        console.log(`📊 Currently loaded sheets: ${loadedSheetNames.join(', ')}`);
-        console.log(`🎯 Active sheet: ${state.sheets.length > 0 ? state.sheets[0].name : 'None'}`);
-
-        // Set the most recent sheet as active (should be the first one loaded)
-        console.log('✅ Most recent sheet loaded as active sheet on startup');
-
-        // Trigger DuckDB reload
-        setCsvUploaded(true);
-
+        // If there's only one sheet, load it automatically
+        if (sortedFiles.length === 1) {
+          console.log(`📊 Found only 1 sheet - loading automatically`);
+          const file = sortedFiles[0];
+          await loadSingleSheet(userEmail, file);
+        } else {
+          // Multiple sheets found - show selection modal
+          console.log(`📊 Found ${sortedFiles.length} sheets - showing selection modal`);
+          setShowSheetSelectionModal(true);
+        }
       } else {
-        console.log('📭 No files found in MEGA cloud storage');
-        setAvailableSheets([]); // Clear any stale data
+        console.log('📭 No files found in Backblaze cloud storage');
       }
     } catch (error) {
       console.error('❌ Error loading existing sheet data:', error);
     } finally {
       setIsLoadingSheets(false);
     }
-  }, [MAX_CACHE_SIZE, updateSheetCache]);
+  }, [addSheetFromCSV, updateSheetCache, state.activeSheetId]);
+
+  // Helper function to load a single sheet
+  const loadSingleSheet = useCallback(async (userEmail: string, file: any) => {
+    try {
+      const backblazeService = BackblazeApiService.getInstance();
+      // Extract just the base filename (remove user prefix if present)
+      const baseFileName = file.fileName.replace(`user_${userEmail}/`, '');
+      const result = await backblazeService.retrieveSheetData(userEmail, baseFileName);
+
+      if (result.success && result.data) {
+        const sheetData = result.data as any;
+        const fileName = file.fileName.replace('user_' + userEmail + '/', ''); // Remove user prefix
+
+        // Convert sheet data to CSV format for addSheetFromCSV
+        const csvData: string[][] = [];
+        const { colCount, rowCount } = sheetData;
+
+        // Create header row
+        const headerRow: string[] = [];
+        for (let col = 0; col < colCount; col++) {
+          const colLetter = String.fromCharCode(65 + col);
+          const cellId = `${colLetter}1`;
+          const cell = sheetData.cells[cellId];
+          const headerValue = cell && cell.value ? String(cell.value) : colLetter;
+          headerRow.push(headerValue);
+        }
+        csvData.push(headerRow);
+
+        // Create data rows
+        for (let row = 2; row <= rowCount; row++) {
+          const dataRow: string[] = [];
+          for (let col = 0; col < colCount; col++) {
+            const colLetter = String.fromCharCode(65 + col);
+            const cellId = `${colLetter}${row}`;
+            const cell = sheetData.cells[cellId];
+            const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
+            dataRow.push(cellValue);
+          }
+          csvData.push(dataRow);
+        }
+
+        // Ensure fileName is valid before using
+        if (!fileName) {
+          console.error(`❌ Invalid fileName received for ${file.fileName}, skipping`);
+          return;
+        }
+
+        // Add the new sheet using the hook method
+        addSheetFromCSV(csvData, fileName.replace('.csv.gz', ''));
+
+        // Cache the sheet data for future use (using the current active sheet ID)
+        if (state.activeSheetId) {
+          updateSheetCache(state.activeSheetId, sheetData);
+        }
+
+        const uploadDate = file.uploadTimestamp && file.uploadTimestamp > 0 
+          ? new Date(file.uploadTimestamp).toLocaleString() 
+          : 'Unknown date';
+        console.log(`✅ Loaded and cached sheet: ${fileName} (uploaded: ${uploadDate})`);
+      } else {
+        console.error(`❌ Failed to load sheet data for ${file.fileName}:`, result.message);
+      }
+    } catch (error) {
+      console.error(`❌ Error loading sheet ${file.fileName}:`, error);
+    }
+  }, [addSheetFromCSV, updateSheetCache, state.activeSheetId]);
+
+  // Handle sheet selection from modal
+  const handleSheetSelection = useCallback(async (fileName: string) => {
+    if (!user?.email) return;
+    
+    try {
+      setIsLoadingSheets(true);
+      console.log(`🔄 Loading selected sheet: ${fileName}`);
+      
+      // Find the file in availableSheets
+      const selectedFile = availableSheets.find(sheet => sheet.fileName === fileName);
+      if (selectedFile) {
+        // Convert to the format expected by loadSingleSheet
+        const file = {
+          fileName: selectedFile.fileName, // Use the filename as-is from availableSheets
+          uploadTimestamp: selectedFile.lastModified ? new Date(selectedFile.lastModified).getTime() : Date.now(),
+          size: selectedFile.size,
+          fileId: selectedFile.fileId
+        };
+        
+        await loadSingleSheet(user.email, file);
+        setShowSheetSelectionModal(false);
+      }
+    } catch (error) {
+      console.error('❌ Error loading selected sheet:', error);
+    } finally {
+      setIsLoadingSheets(false);
+    }
+  }, [user?.email, availableSheets, loadSingleSheet]);
 
   const handleFormat = useCallback((action: string, value?: string) => {
     console.log('Format action:', action, value);
@@ -1344,7 +1316,7 @@ const Index: React.FC = () => {
       {/* Main Content */}
       <div className="relative h-[calc(100vh-120px)] mt-20 main-canvas-area">
         {/* Full Screen Loading Overlay */}
-        {(isCheckingMegaData || isLoadingSheets || isProcessingSchema) && !isSchemaReady && (
+        {(isCheckingBackblazeData || isLoadingSheets || isProcessingSchema) && !isSchemaReady && (
           <div className="fixed inset-0 bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 z-[100] flex items-center justify-center">
             <div className="text-center">
               {/* Animated Ostrich Logo/Icon */}
@@ -1378,7 +1350,7 @@ const Index: React.FC = () => {
               </div>
 
               <p className="text-gray-600 dark:text-gray-400 text-sm transition-all duration-500 ease-in-out">
-                {isCheckingMegaData
+                {isCheckingBackblazeData
                   ? 'Connecting to your cloud storage...'
                   : isProcessingSchema
                     ? 'Generating AI schema and preparing analysis...'
@@ -1392,13 +1364,13 @@ const Index: React.FC = () => {
                   <div
                     className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-1000 ease-out"
                     style={{
-                      width: isCheckingMegaData ? '40%' : isProcessingSchema ? '70%' : '95%',
+                      width: isCheckingBackblazeData ? '40%' : isProcessingSchema ? '70%' : '95%',
                       animation: isSchemaReady ? 'pulse 2s infinite' : 'none'
                     }}
                   ></div>
                 </div>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 transition-all duration-500 ease-in-out">
-                  {isCheckingMegaData
+                  {isCheckingBackblazeData
                     ? 'Checking your data...'
                     : isProcessingSchema
                       ? 'Processing schema...'
@@ -1413,7 +1385,7 @@ const Index: React.FC = () => {
         )}
 
         {/* Mega Cloud Data Loading Overlay (smaller, for specific operations) */}
-        {isCheckingMegaData && !isLoadingSheets && (
+        {isCheckingBackblazeData && !isLoadingSheets && (
           <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 z-50 flex items-center justify-center">
             <div className="text-center">
               <LoaderCircle className="h-12 w-12 animate-spin text-green-600 mx-auto mb-4" />
@@ -1421,7 +1393,7 @@ const Index: React.FC = () => {
                 Checking Cloud Storage
               </h3>
               <p className="text-gray-600 dark:text-gray-400">
-                Loading your sheets from MEGA cloud storage...
+                Loading your sheets from Backblaze cloud storage...
               </p>
             </div>
           </div>
@@ -1544,59 +1516,6 @@ const Index: React.FC = () => {
 
 
 
-      {/* Sheet Selector Modal */}
-      {showSheetSelector && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
-              Load Sheet from Cloud Storage
-            </h3>
-
-            <div className="space-y-2 mb-4">
-              {availableSheets
-                .filter(sheet => {
-                  const cleanName = sheet.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '').toLowerCase();
-                  const loadedNames = state.sheets.map(s => s.name.toLowerCase());
-                  return !loadedNames.includes(cleanName);
-                })
-                .map((sheet, index) => (
-                  <button
-                    key={`unloaded-${index}`}
-                    onClick={() => handleSheetSelection({ fileName: sheet.fileName })}
-                    className="w-full text-left p-3 rounded border hover:bg-gray-50 dark:hover:bg-gray-700 dark:border-gray-600 dark:text-white transition-colors"
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="font-medium">
-                        {sheet.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '')}
-                      </span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {sheet.lastModified ? new Date(sheet.lastModified).toLocaleDateString() : 'Unknown'}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-            </div>
-
-            <div className="flex space-x-3">
-              <button
-                onClick={() => {
-                  addSheet();
-                  setShowSheetSelector(false);
-                }}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
-              >
-                Create Empty Sheet
-              </button>
-              <button
-                onClick={() => setShowSheetSelector(false)}
-                className="flex-1 bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* AI Report Generator Modal */}
       <AIReportGenerator
@@ -1637,6 +1556,15 @@ const Index: React.FC = () => {
           className="fixed top-20 right-4 z-40 max-w-sm"
         />
       )}
+
+      {/* Sheet Selection Modal */}
+      <SheetSelector
+        sheets={availableSheets}
+        onSelectSheet={handleSheetSelection}
+        onCreateBlankSheet={handleCreateBlankSheet}
+        onClose={() => setShowSheetSelectionModal(false)}
+        isOpen={showSheetSelectionModal}
+      />
 
     </div>
   );

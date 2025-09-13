@@ -8,7 +8,12 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:client-backblaze": "node test-client-backblaze.js",
+    "test:direct-backblaze": "node test-direct-backblaze.js",
+    "test:backend-proxy": "node test-backend-proxy.js",
+    "test:cors-setup": "node test-cors-setup.js",
+    "test:hybrid-backblaze": "node test-hybrid-backblaze.js"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.29.1-dev132.0",

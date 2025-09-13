@@ -4,15 +4,15 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Cloud, Lock, User, X, CheckCircle, AlertCircle } from 'lucide-react';
-import MegaApiService from '../services/megaApiService';
+import BackblazeApiService from '../services/backblazeApiService';
 
-interface MegaAuthModalProps {
+interface BackblazeAuthModalProps {
   isVisible: boolean;
   onClose: () => void;
   onAuthSuccess: () => void;
 }
 
-export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
+export const BackblazeAuthModal: React.FC<BackblazeAuthModalProps> = ({
   isVisible,
   onClose,
   onAuthSuccess
@@ -31,8 +31,8 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
     setErrorMessage('');
 
     try {
-      // Check MEGA service status via backend
-      const result = await MegaApiService.checkMegaStatus();
+      // Check Backblaze service status via backend
+      const result = await BackblazeApiService.checkBackblazeStatus();
       
       if (result.success) {
         setAuthStatus('success');
@@ -46,7 +46,7 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
       }
     } catch (error) {
       setAuthStatus('error');
-      setErrorMessage('Authentication failed. Please check your MEGA configuration in mega-config.js');
+      setErrorMessage('Authentication failed. Please check your Backblaze configuration in the backend.');
     } finally {
       setIsLoading(false);
     }
@@ -94,10 +94,10 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
               </motion.div>
               <div>
                 <h2 className="text-xl font-bold text-gray-800 dark:text-gray-200">
-                  MEGA Cloud Storage
+                  Backblaze B2 Cloud Storage
                 </h2>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Connect your MEGA account
+                  Connect your Backblaze B2 account
                 </p>
               </div>
             </div>
@@ -118,7 +118,7 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
                 {/* Email Input */}
                 <div className="space-y-2">
                   <label htmlFor="mega-email" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    MEGA Email
+                    Backblaze Account ID
                   </label>
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -138,14 +138,14 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
                 {/* Password Input */}
                 <div className="space-y-2">
                   <label htmlFor="mega-password" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    MEGA Password
+                    Backblaze Application Key
                   </label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                     <Input
                       id="mega-password"
                       type="password"
-                      placeholder="Your MEGA password"
+                      placeholder="Your Backblaze Application Key"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       disabled={isLoading}
@@ -200,7 +200,7 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
                   ) : (
                     <div className="flex items-center gap-2">
                       <Cloud className="h-4 w-4" />
-                      Connect to MEGA
+                      Connect to Backblaze B2
                     </div>
                   )}
                 </Button>
@@ -209,7 +209,7 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
               {/* Info Section */}
               <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                 <h3 className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">
-                  Why MEGA Cloud Storage?
+                  Why Backblaze B2 Cloud Storage?
                 </h3>
                 <ul className="text-xs text-blue-700 dark:text-blue-300 space-y-1">
                   <li>• 50GB free storage space</li>
@@ -224,7 +224,7 @@ export const MegaAuthModal: React.FC<MegaAuthModalProps> = ({
               <div className="mt-4 text-xs text-gray-500 dark:text-gray-400 text-center">
                 Your credentials are stored locally and never sent to our servers.
                 <br />
-                We only use them to authenticate with MEGA's secure API.
+                We only use them to authenticate with Backblaze B2's secure API.
               </div>
             </CardContent>
           </Card>
