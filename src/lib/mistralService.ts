@@ -104,21 +104,26 @@ Select 5-15 most business-relevant columns only. [/INST]`;
   }
 
   /**
-   * Call local Mistral:instruct API with the given prompt
+   * Call OpenRouter Mistral API with the given prompt
    */
   async callMistralAPI(prompt: string): Promise<string> {
     try {
-      // For local Mistral:instruct, we don't need an API key
-      const baseUrl = this.config.baseUrl || 'http://localhost:11434';
-      const model = this.config.model || 'mistral:instruct';
+      const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
+      
+      if (!OPENROUTER_API_KEY) {
+        throw new Error('OpenRouter API key not configured');
+      }
 
-      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://aisheets.app',
+          'X-Title': 'AI Sheets'
         },
         body: JSON.stringify({
-          model: model,
+          model: 'mistralai/mistral-7b-instruct:free',
           messages: [
             {
               role: 'user',
@@ -134,20 +139,20 @@ Select 5-15 most business-relevant columns only. [/INST]`;
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Local Mistral error: ${response.status} ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
       }
 
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content;
       
       if (!content) {
-        throw new Error('No content received from local Mistral');
+        throw new Error('No content received from OpenRouter API');
       }
 
       return content;
 
     } catch (error) {
-      console.error('❌ Local Mistral API call failed:', error);
+      console.error('❌ OpenRouter API call failed:', error);
       throw error;
     }
   }
@@ -179,6 +184,10 @@ Select 5-15 most business-relevant columns only. [/INST]`;
       }));
 
       return {
+        insights: parsed.insights || [],
+        data_quality_issues: parsed.data_quality_issues || [],
+        business_context: parsed.business_context || 'General business context',
+        focus_areas: parsed.focus_areas || [],
         selected_columns: validatedColumns,
         excluded_count: parsed.excluded_count || 0,
         selection_rationale: parsed.selection_rationale || 'Analysis completed'
@@ -190,6 +199,10 @@ Select 5-15 most business-relevant columns only. [/INST]`;
       
       // Return a fallback response
       return {
+        insights: [],
+        data_quality_issues: [],
+        business_context: 'Fallback analysis - unable to parse AI response',
+        focus_areas: [],
         selected_columns: [],
         excluded_count: 0,
         selection_rationale: 'Failed to parse AI response - using fallback analysis'
@@ -217,6 +230,11 @@ Select 5-15 most business-relevant columns only. [/INST]`;
 
       // Ensure all required fields are present with defaults
       return {
+        focus_areas: parsed.focus_areas || [],
+        recommendations: parsed.recommendations || [],
+        template_structure: parsed.template_structure || {},
+        business_objectives: parsed.business_objectives || [],
+        analysis_framework: parsed.analysis_framework || {},
         report_type: parsed.report_type || 'OPERATIONS',
         primary_focus: parsed.primary_focus || 'General business analysis',
         kpi_cards: Array.isArray(parsed.kpi_cards) ? parsed.kpi_cards.map((kpi: any) => ({
@@ -240,6 +258,11 @@ Select 5-15 most business-relevant columns only. [/INST]`;
       
       // Return a fallback response
       return {
+        focus_areas: [],
+        recommendations: [],
+        template_structure: {},
+        business_objectives: [],
+        analysis_framework: {},
         report_type: 'OPERATIONS',
         primary_focus: 'General business analysis',
         kpi_cards: [],
@@ -337,23 +360,42 @@ Return JSON format:
   }
 
   /**
-   * Test the local Mistral:instruct connection
+   * Test the OpenRouter API connection
    */
   async testConnection(): Promise<boolean> {
     try {
-      // Test if the local Ollama server is running
-      const baseUrl = this.config.baseUrl || 'http://localhost:11434';
-      const response = await fetch(`${baseUrl}/v1/models`);
+      const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
+      
+      if (!OPENROUTER_API_KEY) {
+        console.log('❌ OpenRouter API key not configured');
+        return false;
+      }
+
+      // Test with a simple API call
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://aisheets.app',
+          'X-Title': 'AI Sheets'
+        },
+        body: JSON.stringify({
+          model: 'mistralai/mistral-7b-instruct:free',
+          messages: [{ role: 'user', content: 'Test connection' }],
+          max_tokens: 10
+        })
+      });
       
       if (response.ok) {
-        console.log('✅ Local Mistral:instruct server is running');
+        console.log('✅ OpenRouter API is accessible');
         return true;
       } else {
-        console.log('❌ Local Mistral:instruct server is not responding');
+        console.log('❌ OpenRouter API is not responding');
         return false;
       }
     } catch (error) {
-      console.error('❌ Local Mistral:instruct connection test failed:', error);
+      console.error('❌ OpenRouter API connection test failed:', error);
       return false;
     }
   }
@@ -361,9 +403,9 @@ Return JSON format:
 
 // Export a singleton instance
 export const mistralService = new MistralService({
-  apiKey: '', // No API key needed for local Mistral:instruct
-  model: 'mistral:instruct',
-  baseUrl: import.meta.env.VITE_MISTRAL_BASE_URL || 'http://localhost:11434'
+  apiKey: import.meta.env.VITE_OPENROUTER_API_KEY || '',
+  model: 'mistralai/mistral-7b-instruct:free',
+  baseUrl: 'https://openrouter.ai/api/v1/chat/completions'
 });
 
 export default MistralService;
