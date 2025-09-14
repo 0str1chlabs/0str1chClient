@@ -34,14 +34,17 @@ import { StatisticalSummary } from '@/components/StatisticalSummary';
 
 import { AIReportGenerator } from '@/components/AIReportGenerator';
 import { SheetSelector } from '@/components/SheetSelector';
+import { ResearchModal } from '@/components/ResearchModal';
+import { NotificationManager, NotificationProps } from '@/components/NotificationToast';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain } from 'lucide-react';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain, Search } from 'lucide-react';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
 import { getCurrentSheetAISchema } from '@/lib/utils';
 import { useDuckDBMapping } from '@/hooks/useDuckDBMapping';
+import { ResearchService } from '@/lib/researchService';
 import BackblazeApiService from '../services/backblazeApiService';
 
 
@@ -80,9 +83,21 @@ const Index: React.FC = () => {
   const [isAIMinimized, setIsAIMinimized] = useState(false);
   const [showPivotTable, setShowPivotTable] = useState(false);
   const [showSheetSelectionModal, setShowSheetSelectionModal] = useState(false);
+  const [showResearchModal, setShowResearchModal] = useState(false);
   const [lastModifiedDate, setLastModifiedDate] = useState(null);
   const [availableSheets, setAvailableSheets] = useState([]);
   const [showAIReportGenerator, setShowAIReportGenerator] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationProps[]>([]);
+
+  // Notification helper functions
+  const addNotification = useCallback((notification: Omit<NotificationProps, 'id'>) => {
+    const id = Date.now().toString();
+    setNotifications(prev => [...prev, { ...notification, id }]);
+  }, []);
+
+  const removeNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
 
   // Column/Row AI Update Tooltip state
   const [columnTooltip, setColumnTooltip] = useState<{
@@ -571,6 +586,77 @@ const Index: React.FC = () => {
     addSheet();
     setShowSheetSelectionModal(false);
   }, [addSheet]);
+
+  const handleResearchComplete = useCallback((researchData: any) => {
+    console.log('Research completed:', researchData);
+    
+    // Check for success - handle both old format (with success property) and new multi-agent format
+    const isSuccess = researchData.success || (researchData.spreadsheetData && researchData.sources);
+    
+    if (!isSuccess) {
+      addNotification({
+        type: 'error',
+        title: 'Research Failed',
+        message: 'Research failed. Please try again.',
+        duration: 5000
+      });
+      return;
+    }
+    
+    // Embed research data into the current sheet
+    const currentSheet = state.sheets[activeSheetIndex];
+    if (currentSheet) {
+      try {
+        console.log('📊 Embedding research data into sheet:', currentSheet.id);
+        console.log('📊 Current sheet structure:', {
+          id: currentSheet.id,
+          rowCount: currentSheet.rowCount,
+          colCount: currentSheet.colCount,
+          cellCount: Object.keys(currentSheet.cells).length
+        });
+        console.log('📊 Research data structure:', {
+          hasSpreadsheetData: !!researchData.spreadsheetData,
+          hasSources: !!researchData.sources,
+          hasResearchPlan: !!researchData.researchPlan,
+          spreadsheetDataKeys: researchData.spreadsheetData ? Object.keys(researchData.spreadsheetData) : 'none',
+          sourcesLength: researchData.sources?.length || 0
+        });
+        const updatedSheet = ResearchService.embedResearchData(currentSheet, researchData);
+        
+        // Update the sheet in the state
+        updateExistingSheet(currentSheet.id, {
+          cells: updatedSheet.cells,
+          rowCount: updatedSheet.rowCount,
+          colCount: updatedSheet.colCount,
+          name: updatedSheet.name
+        });
+        
+        // Show success notification
+        const sourceCount = researchData.sources?.length || researchData.spreadsheetData?.metadata?.sourceCount || 0;
+        addNotification({
+          type: 'success',
+          title: 'Research Completed!',
+          message: `Found ${sourceCount} sources. Data has been embedded into your spreadsheet.`,
+          duration: 7000
+        });
+      } catch (error) {
+        console.error('❌ Error embedding research data:', error);
+        addNotification({
+          type: 'error',
+          title: 'Embedding Failed',
+          message: `Failed to embed research data: ${error.message}`,
+          duration: 7000
+        });
+      }
+    } else {
+      addNotification({
+        type: 'warning',
+        title: 'No Active Sheet',
+        message: 'No active sheet found. Please create a sheet first.',
+        duration: 5000
+      });
+    }
+  }, [state.sheets, activeSheetIndex, updateExistingSheet, addNotification]);
 
   const handleTabSwitch = useCallback((index: number) => {
     // Bounds checking
@@ -1234,6 +1320,17 @@ const Index: React.FC = () => {
               <span className="sm:hidden">Pivot</span>
             </Button>
             
+            {/* Research Button */}
+            <Button
+              onClick={() => setShowResearchModal(true)}
+              size="sm"
+              className="bg-green-600 hover:bg-green-700 text-white transition-all duration-200 hover:scale-105 text-xs sm:text-sm"
+            >
+              <Search className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">Research</span>
+              <span className="sm:hidden">Research</span>
+            </Button>
+
             {/* AI Report Generator Button */}
             <Button
               onClick={() => {
@@ -1550,6 +1647,12 @@ const Index: React.FC = () => {
         />
       )}
 
+      {/* Notification Manager */}
+      <NotificationManager
+        notifications={notifications}
+        onRemoveNotification={removeNotification}
+      />
+
       {/* Floating AI Assistant Toggle Button */}
       <div className="fixed bottom-6 right-6 z-50">
         <Button
@@ -1572,6 +1675,13 @@ const Index: React.FC = () => {
         onCreateBlankSheet={handleCreateBlankSheet}
         onClose={() => setShowSheetSelectionModal(false)}
         isOpen={showSheetSelectionModal}
+      />
+
+      {/* Research Modal */}
+      <ResearchModal
+        isOpen={showResearchModal}
+        onClose={() => setShowResearchModal(false)}
+        onResearchComplete={handleResearchComplete}
       />
 
     </div>

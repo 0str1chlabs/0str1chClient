@@ -108,51 +108,42 @@ Select 5-15 most business-relevant columns only. [/INST]`;
    */
   async callMistralAPI(prompt: string): Promise<string> {
     try {
-      const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
+      // Use backend endpoint instead of calling OpenRouter directly
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
       
-      if (!OPENROUTER_API_KEY) {
-        throw new Error('OpenRouter API key not configured');
-      }
-
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const response = await fetch(`${backendUrl}/api/ai/ai1`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'HTTP-Referer': 'https://aisheets.app',
-          'X-Title': 'AI Sheets'
         },
         body: JSON.stringify({
-          model: 'mistralai/mistral-7b-instruct:free',
-          messages: [
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          temperature: 0.1, // Low temperature for consistent schema analysis
-          max_tokens: 2000,
-          top_p: 0.9,
-          stream: false
+          message: prompt,
+          userEmail: 'research@system.local', // Dummy email for research planner
+          context: '',
+          selectionContext: '',
+          sheetInfo: {}
         })
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`Backend API error: ${response.status} ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
       }
 
       const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
+      console.log('🔍 Backend API Response Data:', data);
+      
+      const content = data.response_to_user || data.response || data.message || data.content || data.answer;
       
       if (!content) {
-        throw new Error('No content received from OpenRouter API');
+        console.error('❌ No content found in response. Available fields:', Object.keys(data));
+        throw new Error(`No content received from backend API. Response structure: ${JSON.stringify(data)}`);
       }
 
       return content;
 
     } catch (error) {
-      console.error('❌ OpenRouter API call failed:', error);
+      console.error('❌ Backend API call failed:', error);
       throw error;
     }
   }

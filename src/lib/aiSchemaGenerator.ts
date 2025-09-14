@@ -117,7 +117,18 @@ function inferDataTypeFallback(samples: any[]): 'VARCHAR' | 'INTEGER' | 'DOUBLE'
       return Number.isInteger(Number(str));
     });
 
-    return allIntegers ? 'INTEGER' : 'DOUBLE';
+    if (allIntegers) {
+      // Check if any integers are too large for DuckDB INT32
+      const hasLargeNumbers = numericSamples.some(s => {
+        const str = String(s).replace(/[,$%]/g, '');
+        const num = parseInt(str, 10);
+        return num > 2147483647 || num < -2147483648;
+      });
+      
+      return hasLargeNumbers ? 'VARCHAR' : 'INTEGER';
+    }
+
+    return 'DOUBLE';
   }
 
   return 'VARCHAR';
@@ -169,7 +180,11 @@ function convertValueForSchema(value: any, schema: ColumnSchema): any {
       // Remove formatting characters and convert to integer
       const cleanInt = str.replace(/[,$%]/g, '');
       const intVal = parseInt(cleanInt, 10);
-      return isNaN(intVal) ? null : intVal;
+      // Check if value is too large for DuckDB INT32 (max value: 2,147,483,647)
+      if (isNaN(intVal) || intVal > 2147483647 || intVal < -2147483648) {
+        return str; // Return as string if too large
+      }
+      return intVal;
 
     case 'DOUBLE':
       // Remove formatting characters and convert to double

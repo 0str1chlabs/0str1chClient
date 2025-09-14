@@ -204,6 +204,13 @@ Return JSON format:
   }
 
   /**
+   * Generate response using Gemini API for general prompts
+   */
+  async generateResponse(prompt: string): Promise<string> {
+    return await this.callGeminiAPI(prompt);
+  }
+
+  /**
    * Test the AISERVER connection
    */
   async testConnection(): Promise<boolean> {

@@ -422,7 +422,14 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
               return `'${val}'`; // Date as string
             case 'VARCHAR':
             default:
-              const cleanVal = String(val).replace(/'/g, "''");
+              // Properly escape SQL strings including emojis and special characters
+              const cleanVal = String(val)
+                .replace(/\\/g, '\\\\')  // Escape backslashes first
+                .replace(/'/g, "''")     // Escape single quotes
+                .replace(/\0/g, '\\0')   // Escape null bytes
+                .replace(/\n/g, '\\n')   // Escape newlines
+                .replace(/\r/g, '\\r')   // Escape carriage returns
+                .replace(/\t/g, '\\t');  // Escape tabs
               return `'${cleanVal}'`;
           }
         }).join(', ');

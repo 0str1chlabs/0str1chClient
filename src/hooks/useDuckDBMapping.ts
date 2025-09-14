@@ -146,7 +146,16 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
         return false;
       });
 
-      if (hasActualData) {
+      // Skip processing if this looks like research data (contains emojis and research keywords)
+      const hasResearchData = Object.values(activeSheet.cells).some(cell => {
+        if (cell && typeof cell === 'object' && cell !== null && 'value' in cell) {
+          const value = String(cell.value);
+          return value.includes('🔍') || value.includes('RESEARCH') || value.includes('📚') || value.includes('📊');
+        }
+        return false;
+      });
+
+      if (hasActualData && !hasResearchData) {
         // Only process if this is a new sheet or if schema doesn't exist yet
         const shouldProcess = !currentSchema || csvUploaded;
 
