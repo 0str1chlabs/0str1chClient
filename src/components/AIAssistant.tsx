@@ -44,6 +44,11 @@ interface AIAssistantProps {
   createAIUpdates?: (updates: any[]) => void;
   // Cell selection management
   onDeselectCells?: () => void;
+  // DuckDB mapping props from parent
+  isDuckDBProcessing?: boolean;
+  isSchemaReady?: boolean;
+  currentSchema?: string | null;
+  ensureSheetLoadedInDuckDB?: () => Promise<any>;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -63,7 +68,12 @@ export const AIAssistant = ({
   resetCsvUploadFlag,
   setIsProcessingCSV,
   createAIUpdates,
-  onDeselectCells
+  onDeselectCells,
+  // DuckDB mapping props from parent
+  isDuckDBProcessing: parentIsDuckDBProcessing,
+  isSchemaReady: parentIsSchemaReady,
+  currentSchema: parentCurrentSchema,
+  ensureSheetLoadedInDuckDB: parentEnsureSheetLoadedInDuckDB
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -73,8 +83,9 @@ export const AIAssistant = ({
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isDuckDBProcessing, setIsDuckDBProcessing] = useState(false);
-  const [isSchemaReady, setIsSchemaReady] = useState(false);
+  // Use DuckDB state from parent instead of managing internally
+  const isDuckDBProcessing = parentIsDuckDBProcessing || false;
+  const isSchemaReady = parentIsSchemaReady || false;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [position, setPosition] = useState({ x: 200, y: 100 });
   const [dragging, setDragging] = useState(false);
@@ -90,7 +101,8 @@ export const AIAssistant = ({
   const [pendingActionType, setPendingActionType] = useState<'update' | 'reply' | null>(null);
   const [pendingActionReason, setPendingActionReason] = useState<string | null>(null);
   const [pendingReplyResult, setPendingReplyResult] = useState<string | null>(null);
-  const [currentSchema, setCurrentSchema] = useState<string | null>(null);
+  // Use schema from parent instead of managing internally
+  const currentSchema = parentCurrentSchema;
   const [selectionContext, setSelectionContext] = useState<CellSelectionContext | null>(null);
   const [lastProcessedSheetId, setLastProcessedSheetId] = useState<string | null>(null);
 
@@ -398,30 +410,13 @@ ${sampleRows.join('\n')}`;
     return schema;
   };
 
-  // Function to update schema when table is modified
-  const updateSchemaAfterModification = async () => {
-    try {
-      setIsDuckDBProcessing(true);
-      const { extractDuckDBSchemaSummary } = await import('../lib/utils');
-      const tableName = getCurrentTableName();
-      const schema = await extractDuckDBSchemaSummary(window.duckDB, tableName, 3);
-
-      setCurrentSchema(schema);
-      setIsDuckDBProcessing(false);
-      setIsSchemaReady(true);
-      return schema;
-    } catch (error) {
-      console.error('Error updating schema after modification:', error);
-      setIsDuckDBProcessing(false);
-      setIsSchemaReady(false);
-      return null;
-    }
-  };
+  // Schema updates are now handled by parent component
 
   // Helper function to get current sheet's table name
   const getCurrentTableName = () => {
     if (!activeSheet) return 'sheet_data';
-    return `sheet_${activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+    return cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
   };
 
   // Refresh spreadsheet data from DuckDB after SQL updates
@@ -522,123 +517,7 @@ ${sampleRows.join('\n')}`;
     }
   }, [csvUploaded, setIsProcessingCSV]);
 
-  // Auto-load sheet into DuckDB and generate schema when activeSheet changes or CSV is uploaded
-  useEffect(() => {
-    // Only regenerate schema if we have actual data and this is truly a new sheet or data change
-    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0) {
-      // Check if we have actual data (not just empty cells)
-      const hasActualData = Object.values(activeSheet.cells).some(cell => {
-        if (cell && typeof cell === 'object' && cell !== null && 'value' in cell) {
-          return cell.value !== undefined && cell.value !== '';
-        }
-        return false;
-      });
-
-      if (hasActualData) {
-        // Only process if this is a new sheet or if schema doesn't exist yet
-        const shouldProcess = !currentSchema || csvUploaded;
-
-        if (shouldProcess) {
-          console.log(`🔄 Processing new sheet data for: ${activeSheet.name} (${activeSheet.id})`);
-
-          verifySheetData();
-
-          // Set DuckDB processing state
-          setIsDuckDBProcessing(true);
-          setIsSchemaReady(false);
-
-          // Dispatch event to show loading overlay
-          window.dispatchEvent(new CustomEvent('duckdbProcessing', {
-            detail: { processing: true }
-          }));
-
-                  // Process immediately without delay
-          (async () => {
-            try {
-              // First, load data into DuckDB
-              const { headerRow, schema } = await ensureSheetLoadedInDuckDB();
-
-              // Only verify if we have a schema (meaning the table was created successfully)
-              if (schema) {
-                try {
-                  // Use the same DuckDB instance and connection pattern as loadSheetToDuckDB
-                  console.log('=== CHECKING WHAT TABLES EXIST ===');
-                  if (!window.duckDB) {
-                    throw new Error('DuckDB not initialized for verification');
-                  }
-
-                  const conn = await window.duckDB.connect();
-                  try {
-                    // First, let's see what tables actually exist
-                    const tablesResult = await conn.query('SHOW TABLES');
-                    console.log('Available tables:', tablesResult.toArray());
-
-                    // Now try to verify the specific table using dynamic table name
-                    const tableName = getCurrentTableName();
-                    console.log(`=== VERIFYING "${tableName}" TABLE ===`);
-                    const verifyResult = await conn.query(`SELECT COUNT(*) as count FROM "${tableName}"`);
-                    console.log('Table verification successful:', verifyResult.toArray());
-
-                    // Also try to get a sample of data
-                    const sampleResult = await conn.query(`SELECT * FROM "${tableName}" LIMIT 3`);
-                    console.log('Sample data retrieved successfully:', sampleResult.toArray());
-                  } finally {
-                    await conn.close();
-                  }
-                } catch (verifyError) {
-                  console.error('Error verifying table (but schema exists):', verifyError);
-                  // Don't fail completely if verification fails but schema exists
-                }
-
-                setIsSchemaReady(true);
-
-                // Dispatch event to update loading overlay
-                window.dispatchEvent(new CustomEvent('schemaProcessing', {
-                  detail: { processing: false, ready: true }
-                }));
-
-                if (csvUploaded) {
-                  // Reset the CSV upload flag and processing state
-                  resetCsvUploadFlag?.();
-                } else {
-                  addMessage('ai', `✅ Data processed and schema generated for ${activeSheet.name}! I'm ready to help you analyze your data.`);
-                }
-              } else {
-                console.warn('No schema generated, this might cause issues with AI processing');
-                addMessage('ai', '⚠️ Data loaded but schema generation failed. Some AI features may be limited.');
-              }
-            } catch (error) {
-              console.error('Error loading sheet into DuckDB:', error);
-              addMessage('ai', '❌ Error processing data. Please try uploading your data again.');
-            } finally {
-              setIsDuckDBProcessing(false);
-
-              // Dispatch event to hide loading overlay
-              window.dispatchEvent(new CustomEvent('schemaProcessing', {
-                detail: { processing: false, ready: false }
-              }));
-            }
-          })();
-        } else {
-          // Sheet already has schema, just mark as ready
-          console.log(`✅ Using existing schema for: ${activeSheet.name} (${activeSheet.id})`);
-          setIsDuckDBProcessing(false);
-          setIsSchemaReady(true);
-        }
-      } else {
-        setIsDuckDBProcessing(false);
-        setIsSchemaReady(false);
-      }
-    } else if (activeSheet && !currentSchema) {
-      // Sheet exists but no schema - this might be a new empty sheet
-      setIsDuckDBProcessing(false);
-      setIsSchemaReady(false);
-    } else if (!activeSheet) {
-      // No active sheet
-      setIsDuckDBProcessing(false);
-      setIsSchemaReady(false);
-    }
-  }, [activeSheet?.id, activeSheet?.name, csvUploaded, resetCsvUploadFlag]); // Added activeSheet?.name to trigger on sheet name changes too
+  // DuckDB mapping is now handled by parent component - no longer needed here
 
   const handleSendMessage = async () => {
     if (!message.trim() || !activeSheet) return;
@@ -1044,8 +923,7 @@ ${sampleRows.join('\n')}`;
             }
           }
           
-          // Update schema after modification
-          await updateSchemaAfterModification();
+          // Schema updates are now handled by parent component
         } else {
           addMessage('ai', `✅ SQL executed successfully, but no rows were modified.`);
         }
@@ -1203,146 +1081,8 @@ ${sampleRows.join('\n')}`;
     return fixedSql;
   };
 
-    // Helper function to ensure sheet data is loaded into DuckDB
-  const ensureSheetLoadedInDuckDB = async () => {
-    if (!activeSheet || !activeSheet.cells) {
-      throw new Error('No active sheet data available');
-    }
-
-    console.log('=== ENSURING SHEET LOADED IN DUCKDB ===');
-    console.log('Active sheet:', {
-      name: activeSheet.name,
-      id: activeSheet.id,
-      rowCount: activeSheet.rowCount,
-      colCount: activeSheet.colCount,
-      cellsCount: Object.keys(activeSheet.cells).length
-    });
-
-    // Import the DuckDB utilities
-    const { loadSheetToDuckDB, extractDuckDBSchemaSummary } = await import('../lib/utils');
-
-    // Create sheet-specific table name
-    const tableName = `sheet_${activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    console.log(`Using table name: ${tableName} for sheet: ${activeSheet.name}`);
-
-    // Check if this sheet's table already exists in DuckDB
-    if (window.duckDB) {
-      try {
-        const conn = await window.duckDB.connect();
-        try {
-          const tablesResult = await conn.query('SHOW TABLES');
-          const existingTables = tablesResult.toArray().map(row => row[0]);
-          console.log('Existing tables:', existingTables);
-
-          if (existingTables.includes(tableName)) {
-            console.log(`✅ Table ${tableName} already exists for sheet ${activeSheet.name} - using existing table`);
-
-            // Generate schema from existing table (efficient - no recreation needed)
-            const schema = await extractDuckDBSchemaSummary(window.duckDB, tableName, 3);
-            setCurrentSchema(schema);
-
-            return { headerRow: [], schema };
-          } else {
-            console.log(`📝 Table ${tableName} doesn't exist for sheet ${activeSheet.name} - creating new table`);
-          }
-        } finally {
-          await conn.close();
-        }
-      } catch (error) {
-        console.log('Error checking existing tables:', error);
-        // Continue with table creation if check fails
-      }
-    }
-    
-    // Convert sheet data to 2D array format for DuckDB
-    const { colCount, rowCount } = activeSheet;
-    const sheetData: string[][] = [];
-    
-    // Create header row
-    const headerRow: string[] = [];
-    for (let col = 0; col < colCount; col++) {
-      const colLetter = String.fromCharCode(65 + col);
-      const cellId = `${colLetter}1`;
-      const cell = activeSheet.cells[cellId];
-      const headerValue = cell && cell.value ? String(cell.value) : colLetter;
-      headerRow.push(headerValue);
-    }
-    sheetData.push(headerRow);
-    
-    console.log('Header row for DuckDB:', headerRow);
-    console.log('Header row length:', headerRow.length);
-    
-    // Create data rows
-    let dataRowCount = 0;
-    let actualDataFound = false;
-    for (let row = 2; row <= rowCount; row++) {
-      const dataRow: string[] = [];
-      let rowHasData = false;
-      
-      for (let col = 0; col < colCount; col++) {
-        const colLetter = String.fromCharCode(65 + col);
-        const cellId = `${colLetter}${row}`;
-        const cell = activeSheet.cells[cellId];
-        const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
-        dataRow.push(cellValue);
-        
-        if (cellValue && cellValue.trim() !== '') {
-          rowHasData = true;
-        }
-      }
-      
-      if (rowHasData) {
-        sheetData.push(dataRow);
-        dataRowCount++;
-        actualDataFound = true;
-        
-        if (dataRowCount <= 3) {
-          console.log(`Data row ${row}:`, dataRow);
-        }
-      }
-    }
-
-    console.log(`Converted ${dataRowCount} data rows for DuckDB`);
-    console.log('Total sheet data array length:', sheetData.length);
-    console.log('Actual data found:', actualDataFound);
-    console.log('Sheet data for DuckDB (first 3 rows):', sheetData.slice(0, 3));
-
-    if (!actualDataFound) {
-      console.error('ERROR: No actual data found in sheet cells!');
-      throw new Error('No data found in sheet cells');
-    }
-
-    // Load data into DuckDB with sheet-specific table name
-    console.log(`🎯 Loading data for ACTIVE SHEET: ${activeSheet.name} (${activeSheet.id}) into table: ${tableName}`);
-    await loadSheetToDuckDB(tableName, sheetData);
-    console.log(`✅ Successfully loaded data for sheet: ${activeSheet.name} into DuckDB table: ${tableName}`);
-
-    // Generate and log schema immediately after loading
-    try {
-      console.log(`🔍 Generating schema for ACTIVE SHEET: ${activeSheet.name} (${activeSheet.id})`);
-      const schema = await extractDuckDBSchemaSummary(window.duckDB, tableName, 3);
-      console.log(`=== DUCKDB SCHEMA GENERATED FOR: ${activeSheet.name} ===`);
-      console.log(schema);
-      console.log('=== END SCHEMA ===');
-
-      // Store schema in component state for AI processing
-      setCurrentSchema(schema);
-
-      // Set final states
-      setIsDuckDBProcessing(false);
-      if (schema) {
-        setIsSchemaReady(true);
-        console.log(`🎉 Schema ready for ACTIVE SHEET: ${activeSheet.name} - AI can now process queries`);
-      }
-
-      return { headerRow, schema };
-    } catch (error) {
-      console.error('Error generating schema:', error);
-      setIsDuckDBProcessing(false);
-      setIsSchemaReady(false);
-      return { headerRow, schema: null };
-    }
-  };
+  // Use DuckDB mapping function from parent instead of managing internally
+  const ensureSheetLoadedInDuckDB = parentEnsureSheetLoadedInDuckDB;
 
   // Execute SQL query
   const executeSQLQuery = async (
@@ -1365,8 +1105,7 @@ ${sampleRows.join('\n')}`;
           // This would need to be implemented based on your sheet update logic
           console.log('Sheet updated with new data:', result);
           
-          // Update schema after modification
-          await updateSchemaAfterModification();
+          // Schema updates are now handled by parent component
           
           if (!options?.suppressOutput) {
             addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);

@@ -34,8 +34,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
 
-  // Hardcoded login state
-  const [hardcodedEmail, setHardcodedEmail] = useState('');
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,23 +77,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
     }
   };
 
-  const handleHardcodedLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await authService.hardcodedLogin(hardcodedEmail, rememberMe);
-      setSuccess('Quick login successful!');
-      setTimeout(() => {
-        onLoginSuccess(response.user);
-      }, 1000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Quick login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleGoogleSuccess = async (credentialResponse: any) => {
     setLoading(true);
@@ -123,17 +104,16 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold">Welcome to Sheet Scribe AI</CardTitle>
+          <CardTitle className="text-2xl font-bold">Welcome to 0str1ch</CardTitle>
           <CardDescription>
             Sign in to your account or create a new one
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
-              <TabsTrigger value="quick">Quick Login</TabsTrigger>
             </TabsList>
 
             {error && (
@@ -282,47 +262,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
               </form>
             </TabsContent>
 
-            <TabsContent value="quick" className="mt-6">
-              <div className="text-center space-y-4">
-                <div className="text-sm text-muted-foreground">
-                  Quick login with hardcoded password (password@123)
-                </div>
-                
-                <form onSubmit={handleHardcodedLogin} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="hardcoded-email">Email</Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="hardcoded-email"
-                        type="email"
-                        placeholder="Enter your email"
-                        value={hardcodedEmail}
-                        onChange={(e) => setHardcodedEmail(e.target.value)}
-                        className="pl-10"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="remember-me-quick"
-                      checked={rememberMe}
-                      onCheckedChange={(checked) => setRememberMe(checked as boolean)}
-                    />
-                    <Label htmlFor="remember-me-quick" className="text-sm">
-                      Remember me
-                    </Label>
-                  </div>
-
-                  <Button type="submit" className="w-full" disabled={loading}>
-                    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Quick Login
-                  </Button>
-                </form>
-              </div>
-            </TabsContent>
           </Tabs>
 
           <div className="mt-6 text-center">

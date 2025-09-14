@@ -40,6 +40,8 @@ import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, 
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
+import { getCurrentSheetAISchema } from '@/lib/utils';
+import { useDuckDBMapping } from '@/hooks/useDuckDBMapping';
 import BackblazeApiService from '../services/backblazeApiService';
 
 
@@ -155,6 +157,18 @@ const Index: React.FC = () => {
   const [isProcessingSchema, setIsProcessingSchema] = useState(false);
   const [isSchemaReady, setIsSchemaReady] = useState(false);
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
+
+  // DuckDB mapping hook - independent of AI Assistant
+  const { 
+    isDuckDBProcessing, 
+    isSchemaReady: duckDBSchemaReady, 
+    currentSchema, 
+    ensureSheetLoadedInDuckDB 
+  } = useDuckDBMapping({ 
+    activeSheet, 
+    csvUploaded, 
+    resetCsvUploadFlag: () => setCsvUploaded(false) 
+  });
 
   // Animated loading messages - different sets for different stages
   const initialLoadingMessages = [
@@ -1134,51 +1148,55 @@ const Index: React.FC = () => {
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-950">
       {/* Top Navigation Bar */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-4">
-        <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-gray-900 dark:text-white">Ostr1ch</h1>
-            <div className="h-6 w-px bg-gray-300 dark:bg-gray-600"></div>
-            <span className="text-sm text-gray-600 dark:text-gray-400">Welcome, {user.email}</span>
+      <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-3 sm:px-6 py-2 sm:py-4">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 lg:gap-0">
+          {/* Left side - Brand and User */}
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white truncate">Ostr1ch</h1>
+            <div className="hidden sm:block h-6 w-px bg-gray-300 dark:bg-gray-600"></div>
+            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate max-w-[200px] sm:max-w-none">
+              Welcome, {user.email}
+            </span>
           </div>
           
-          <div className="flex items-center gap-3">
+          {/* Right side - Controls and Actions */}
+          <div className="flex items-center gap-1 sm:gap-3 flex-wrap">
             {/* Canvas Controls */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2">
               <button
                 onClick={() => canvasRef.current?.zoomIn()}
-                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                className="p-1.5 sm:p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Zoom In"
               >
-                <ZoomIn className="h-4 w-4" />
+                <ZoomIn className="h-3 w-3 sm:h-4 sm:w-4" />
               </button>
               <button
                 onClick={() => canvasRef.current?.zoomOut()}
-                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                className="p-1.5 sm:p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Zoom Out"
               >
-                <ZoomOut className="h-4 w-4" />
+                <ZoomOut className="h-3 w-3 sm:h-4 sm:w-4" />
               </button>
               <button
                 onClick={() => canvasRef.current?.resetTransform()}
-                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                className="hidden sm:block p-1.5 sm:p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Reset Zoom"
               >
-                <RotateCcw className="h-4 w-4" />
+                <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4" />
               </button>
               <button
                 onClick={handleRearrangeLayout}
-                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                className="hidden md:block p-1.5 sm:p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Rearrange Layout"
               >
-                <LayoutGrid className="h-4 w-4" />
+                <LayoutGrid className="h-3 w-3 sm:h-4 sm:w-4" />
               </button>
               <button
                 onClick={triggerDuckDBReload}
-                className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                className="hidden lg:block p-1.5 sm:p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Reload DuckDB"
               >
-                <Database className="h-4 w-4" />
+                <Database className="h-3 w-3 sm:h-4 sm:w-4" />
               </button>
               
               {/* CSV Processing Loader */}
@@ -1190,26 +1208,16 @@ const Index: React.FC = () => {
               )}
             </div>
             
-            {/* Rearrange Layout Button */}
-            <Button
-              onClick={handleRearrangeLayout}
-              variant="outline"
-              className="border-blue-500 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
-            >
-              <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-              </svg>
-              Rearrange Layout
-            </Button>
-            
             {/* Upload CSV Button */}
             <Button
               onClick={handleUploadCSV}
               disabled={isProcessingCSV}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+              size="sm"
+              className="flex items-center gap-1 sm:gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm"
             >
-              <Upload className="h-4 w-4" />
-              Upload CSV
+              <Upload className="h-3 w-3 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">Upload CSV</span>
+              <span className="sm:hidden">CSV</span>
             </Button>
             
             {/* Pivot Table Button */}
@@ -1218,10 +1226,12 @@ const Index: React.FC = () => {
                 setShowPivotTable(true);
                 setIsAIMinimized(true);
               }}
-              className="bg-blue-600 hover:bg-blue-700 text-white transition-all duration-200 hover:scale-105"
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white transition-all duration-200 hover:scale-105 text-xs sm:text-sm"
             >
-              <BarChart3 className="h-4 w-4 mr-2" />
-              Pivot Table
+              <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">Pivot Table</span>
+              <span className="sm:hidden">Pivot</span>
             </Button>
             
             {/* AI Report Generator Button */}
@@ -1230,51 +1240,51 @@ const Index: React.FC = () => {
                 setShowAIReportGenerator(true);
                 setIsAIMinimized(true);
               }}
-              className="bg-purple-600 hover:bg-purple-700 text-white transition-all duration-200 hover:scale-105"
+              size="sm"
+              className="bg-purple-600 hover:bg-purple-700 text-white transition-all duration-200 hover:scale-105 text-xs sm:text-sm"
             >
-              <Brain className="h-4 w-4 mr-2" />
-              AI Report
+              <Brain className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">AI Report</span>
+              <span className="sm:hidden">AI</span>
             </Button>
             
-            {/* AI Chatbox Toggle */}
-            <Button
-              variant="ghost"
-              onClick={() => setIsAIMinimized(!isAIMinimized)}
-              className="hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200"
-            >
-              <MessageCircle className="h-4 w-4" />
-            </Button>
             
-            <Button variant="outline" onClick={logout} className="transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-700">
-              Logout
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={logout} 
+              className="transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-xs sm:text-sm"
+            >
+              <span className="hidden sm:inline">Logout</span>
+              <span className="sm:hidden">Exit</span>
             </Button>
           </div>
         </div>
       </div>
 
       {/* Sheet Tabs */}
-      <div className="fixed top-20 left-0 right-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6">
-        <div className="flex items-center gap-2 py-2">
+      <div className="fixed top-16 sm:top-20 left-0 right-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-3 sm:px-6">
+        <div className="flex items-center gap-1 sm:gap-2 py-2 overflow-x-auto">
           {state.sheets.map((sheet, index) => (
             <div
               key={sheet.id}
-              className={`flex items-center gap-2 px-4 py-2 rounded-t-lg border-b-2 transition-all duration-200 cursor-pointer ${
+              className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-t-lg border-b-2 transition-all duration-200 cursor-pointer whitespace-nowrap ${
                 index === activeSheetIndex
                   ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
                   : 'border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
               }`}
               onClick={() => handleTabSwitch(index)}
             >
-              <span className="text-sm font-medium">{sheet.name}</span>
+              <span className="text-xs sm:text-sm font-medium truncate max-w-[120px] sm:max-w-none">{sheet.name}</span>
               {state.sheets.length > 1 && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleRemoveSheet(index);
                   }}
-                  className="ml-2 p-1 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition-colors"
+                  className="ml-1 sm:ml-2 p-0.5 sm:p-1 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition-colors"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                 </button>
               )}
             </div>
@@ -1283,16 +1293,16 @@ const Index: React.FC = () => {
           {/* Add New Sheet Button */}
           <button
             onClick={handleAddSheet}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-green-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-all duration-200"
+            className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-green-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-all duration-200 whitespace-nowrap"
           >
-            <Plus className="h-4 w-4" />
-            <span className="text-sm">Add Sheet</span>
+            <Plus className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="text-xs sm:text-sm">Add Sheet</span>
           </button>
         </div>
       </div>
       
       {/* Main Content */}
-      <div className="relative h-[calc(100vh-120px)] mt-20 main-canvas-area">
+      <div className="relative h-[calc(100vh-100px)] sm:h-[calc(100vh-120px)] mt-16 sm:mt-20 main-canvas-area">
         {/* Full Screen Loading Overlay */}
         {(isCheckingBackblazeData || isLoadingSheets || isProcessingSchema) && !isSchemaReady && (
           <div className="fixed inset-0 bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 z-[100] flex items-center justify-center">
@@ -1458,7 +1468,11 @@ const Index: React.FC = () => {
           setIsProcessingCSV={setIsProcessingCSV}
           createAIUpdates={createAIUpdates}
           onDeselectCells={() => setSelectedCells([])}
-
+          // DuckDB mapping props from parent
+          isDuckDBProcessing={isDuckDBProcessing}
+          isSchemaReady={duckDBSchemaReady}
+          currentSchema={currentSchema}
+          ensureSheetLoadedInDuckDB={ensureSheetLoadedInDuckDB}
         />
         )}
 
@@ -1477,6 +1491,7 @@ const Index: React.FC = () => {
           selectedCells={selectedCells}
           activeSheet={activeSheet}
           isVisible={selectedCells && selectedCells.length > 0}
+          aiSchema={getCurrentSheetAISchema(activeSheet)}
         />
       </div>
 
@@ -1534,6 +1549,21 @@ const Index: React.FC = () => {
           className="fixed top-20 right-4 z-40 max-w-sm"
         />
       )}
+
+      {/* Floating AI Assistant Toggle Button */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <Button
+          onClick={() => setIsAIMinimized(!isAIMinimized)}
+          className={`w-14 h-14 rounded-full shadow-lg transition-all duration-300 hover:scale-110 ${
+            isAIMinimized 
+              ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+              : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+          }`}
+          title={isAIMinimized ? 'Open AI Assistant' : 'Close AI Assistant'}
+        >
+          <MessageCircle className="h-6 w-6" />
+        </Button>
+      </div>
 
       {/* Sheet Selection Modal */}
       <SheetSelector

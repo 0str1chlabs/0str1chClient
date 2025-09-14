@@ -186,6 +186,26 @@ if (typeof window !== 'undefined') {
   (window as any).suppressDuckDBLogs = suppressDuckDBLogs;
 }
 
+// Store AI schema information for each table
+const aiSchemaCache = new Map<string, any>();
+
+/**
+ * Get AI schema for a table
+ */
+export function getAISchema(tableName: string): any {
+  return aiSchemaCache.get(tableName);
+}
+
+/**
+ * Get AI schema for current sheet
+ */
+export function getCurrentSheetAISchema(activeSheet: any): any {
+  if (!activeSheet) return null;
+  const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+  const tableName = cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
+  return getAISchema(tableName);
+}
+
 export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
 
 
@@ -278,7 +298,7 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
       throw new Error('No header row found in data');
     }
     
-    // Prepare SQL table
+    // Prepare SQL table with AI-generated schema
     const header = data[0];
     console.log('Original header:', header);
     
@@ -295,10 +315,41 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
     
     console.log('Cleaned header:', cleanHeader);
     
-    const columns = cleanHeader.map(col => `"${col}" VARCHAR`).join(', ');
-    const createTableSQL = `CREATE TABLE "${tableName}" (${columns});`;
+    // Generate AI-powered schema
+    console.log('Generating AI-powered schema...');
+    const { generateAISchema, generateDuckDBSQL, cleanDataForSchema } = await import('./aiSchemaGenerator');
     
-    console.log('Creating table with SQL:', createTableSQL);
+    let schema;
+    let cleanedData = data;
+    
+    try {
+      schema = await generateAISchema(tableName, data, 20); // Analyze up to 20 sample rows
+      console.log('AI Schema generated:', schema);
+      
+      // Store schema in cache for later use
+      aiSchemaCache.set(tableName, schema);
+      
+      // Clean data based on schema
+      cleanedData = [data[0], ...cleanDataForSchema(data, schema)];
+      console.log('Data cleaned based on schema');
+    } catch (error) {
+      console.warn('AI schema generation failed, using fallback:', error);
+      // Fallback to VARCHAR for all columns
+      schema = {
+        columns: cleanHeader.map(name => ({
+          name,
+          type: 'VARCHAR' as const,
+          nullable: true,
+          sampleValues: [],
+          originalValues: []
+        })),
+        tableName,
+        totalRows: data.length - 1
+      };
+    }
+    
+    const createTableSQL = generateDuckDBSQL(schema);
+    console.log('Creating table with AI-generated SQL:', createTableSQL);
     // Try to create the table, with fallback to truncating if it exists
     try {
       await conn.query(createTableSQL);
@@ -341,20 +392,39 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
     await new Promise(resolve => setTimeout(resolve, 100));
 
 
-    // Insert data rows
+    // Insert data rows using cleaned data
     let insertedRows = 0;
-    console.log(`Inserting ${data.length - 1} data rows...`);
+    console.log(`Inserting ${cleanedData.length - 1} data rows...`);
     
-    for (let i = 1; i < data.length; i++) {
+    for (let i = 1; i < cleanedData.length; i++) {
       try {
         // Pad or truncate the row to match the header length
-        const row = data[i].slice(0, cleanHeader.length);
+        const row = cleanedData[i].slice(0, cleanHeader.length);
         while (row.length < cleanHeader.length) row.push('');
         
-        // Clean and escape values
-        const values = row.map(val => {
-          const cleanVal = String(val ?? '').replace(/'/g, "''");
-          return `'${cleanVal}'`;
+        // Clean and escape values based on schema
+        const values = row.map((val, index) => {
+          const columnName = cleanHeader[index];
+          const columnSchema = schema.columns.find(col => col.name === columnName);
+          
+          if (val === null || val === undefined || val === '') {
+            return 'NULL';
+          }
+          
+          // Handle different data types
+          switch (columnSchema?.type) {
+            case 'INTEGER':
+            case 'DOUBLE':
+              return val; // Numbers don't need quotes
+            case 'BOOLEAN':
+              return val ? 'true' : 'false'; // Boolean values
+            case 'DATE':
+              return `'${val}'`; // Date as string
+            case 'VARCHAR':
+            default:
+              const cleanVal = String(val).replace(/'/g, "''");
+              return `'${cleanVal}'`;
+          }
         }).join(', ');
         
         const insertSQL = `INSERT INTO "${tableName}" VALUES (${values});`;
@@ -429,6 +499,119 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
  * @returns {Promise<string>} - A summary block suitable for duckdb-nsql prompts
  */
 export async function extractDuckDBSchemaSummary(db: any, tableName: string, sampleSize: number = 5): Promise<string> {
+  // Try to use AI schema if available
+  const aiSchema = aiSchemaCache.get(tableName);
+  if (aiSchema) {
+    return generateSchemaSummaryFromAI(aiSchema, db, tableName, sampleSize);
+  }
+  
+  // Fallback to original method
+  return extractDuckDBSchemaSummaryOriginal(db, tableName, sampleSize);
+}
+
+/**
+ * Generate schema summary using AI-generated schema information
+ */
+async function generateSchemaSummaryFromAI(
+  aiSchema: any, 
+  db: any, 
+  tableName: string, 
+  sampleSize: number
+): Promise<string> {
+  const conn = await db.connect();
+  
+  try {
+    // Get row count
+    const countResult = await conn.query(`SELECT COUNT(*) as count FROM "${tableName}"`);
+    const countArray = countResult.toArray();
+    const rowCount = countArray[0]?.[0] || 0;
+    
+    // Get sample data for each column
+    const sampleData: { [key: string]: any[] } = {};
+    
+    for (const column of aiSchema.columns) {
+      try {
+        const sampleResult = await conn.query(
+          `SELECT "${column.name}" FROM "${tableName}" WHERE "${column.name}" IS NOT NULL LIMIT ${sampleSize}`
+        );
+        const sampleArray = sampleResult.toArray();
+        sampleData[column.name] = sampleArray.map(row => row[0]);
+      } catch (error) {
+        console.warn(`Could not get sample data for column ${column.name}:`, error);
+        sampleData[column.name] = [];
+      }
+    }
+    
+    // Generate schema summary
+    let schema = `Schema:
+Table: ${tableName}
+Rows: ${rowCount}
+Columns:
+`;
+
+    aiSchema.columns.forEach((column: any, index: number) => {
+      const samples = sampleData[column.name] || [];
+      const sampleText = samples.slice(0, 3).map(v => JSON.stringify(v)).join(', ');
+      const excelLetter = String.fromCharCode(65 + index);
+      
+      schema += `- ${excelLetter} (${column.type}) e.g. ${sampleText}`;
+      if (column.displayFormat) {
+        schema += ` [Display: ${column.displayFormat}]`;
+      }
+      schema += '\n';
+    });
+
+    schema += `\nColumn Mapping (Excel Letter → Actual Column Name):
+`;
+    aiSchema.columns.forEach((column: any, index: number) => {
+      const excelLetter = String.fromCharCode(65 + index);
+      schema += `-- ${excelLetter} → "${column.name}"\n`;
+    });
+
+    schema += `\nIMPORTANT: Use exact column names in SQL queries, NOT Excel letters or numeric values.
+
+DATA TYPE INFORMATION:
+- INTEGER columns: Store numeric values without formatting (e.g., 50000, not "$50000")
+- DOUBLE columns: Store decimal values without formatting (e.g., 15.5, not "15.5%")
+- VARCHAR columns: Store text values
+- For aggregations (SUM, AVG, MAX, MIN) on INTEGER/DOUBLE columns, use the column directly
+- The data is already cleaned and stored with proper types in DuckDB
+
+Sample Data:
+`;
+
+    // Get sample rows
+    try {
+      const sampleResult = await conn.query(`SELECT * FROM "${tableName}" LIMIT ${sampleSize}`);
+      const sampleRows = sampleResult.toArray();
+      
+      sampleRows.forEach((row: any[], index: number) => {
+        const rowData = row.map((val, colIndex) => {
+          const column = aiSchema.columns[colIndex];
+          if (!column) return JSON.stringify(val);
+          
+          // Use display format if available
+          if (column.displayFormat && (column.type === 'INTEGER' || column.type === 'DOUBLE')) {
+            return `${column.displayFormat}${val}`;
+          }
+          
+          return JSON.stringify(val);
+        });
+        
+        schema += `Row ${index + 1}: [${rowData.join(', ')}]\n`;
+      });
+    } catch (error) {
+      console.warn('Could not get sample rows:', error);
+      schema += 'Sample data not available\n';
+    }
+
+    return schema;
+  } finally {
+    await conn.close();
+  }
+}
+
+export async function extractDuckDBSchemaSummaryOriginal(db: any, tableName: string, sampleSize: number = 5): Promise<string> {
 
   
   let rowCount = 0; // Declare rowCount at the top

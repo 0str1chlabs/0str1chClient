@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronDown, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import * as dfd from 'danfojs';
+import { calculateSmartStatistics, getEnhancedStatOptions, getDataTypeIcon, getDataTypeDescription } from '../lib/smartStatistics';
 
 interface StatisticalSummaryProps {
   selectedCells: string[];
   activeSheet: any;
   isVisible: boolean;
+  aiSchema?: any; // AI-generated schema for smart data type detection
 }
 
 type StatType = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'countNumbers';
@@ -14,115 +15,24 @@ type StatType = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'countNumbers';
 export const StatisticalSummary: React.FC<StatisticalSummaryProps> = ({
   selectedCells,
   activeSheet,
-  isVisible
+  isVisible,
+  aiSchema
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedStat, setSelectedStat] = useState<StatType>('sum');
 
-  // Calculate statistics for selected cells using danfojs
+  // Calculate smart statistics using AI schema
   const stats = useMemo(() => {
-    if (!selectedCells || selectedCells.length === 0 || !activeSheet) {
-      return null;
-    }
-
-    try {
-      // Extract cell values and filter out undefined/empty values
-      const cellValues = selectedCells.map(cellId => {
-        const cell = activeSheet.cells[cellId];
-        return cell?.value;
-      }).filter(value => value !== undefined && value !== '');
-
-      if (cellValues.length === 0) return null;
-
-      // Check if all values are numbers
-      const numericValues = cellValues.filter(value => !isNaN(Number(value)) && value !== '');
-      const allNumeric = numericValues.length === cellValues.length;
-
-      if (allNumeric && numericValues.length > 0) {
-        // Use danfojs for accurate statistical calculations
-        const series = new dfd.Series(numericValues.map(v => Number(v)));
-        
-        const sum = series.sum();
-        const avg = series.mean();
-        const min = series.min();
-        const max = series.max();
-        const count = cellValues.length;
-        const countNumbers = numericValues.length;
-
-        return {
-          sum: sum.toFixed(2),
-          avg: avg.toFixed(2),
-          min: min.toFixed(2),
-          max: max.toFixed(2),
-          count,
-          countNumbers,
-          allNumeric
-        };
-      } else {
-        // Mixed content - only show count
-        return {
-          sum: '0.00',
-          avg: '0.00',
-          min: '0.00',
-          max: '0.00',
-          count: cellValues.length,
-          countNumbers: numericValues.length,
-          allNumeric: false
-        };
-      }
-    } catch (error) {
-      console.error('Error calculating statistics:', error);
-      // Fallback to basic calculations if danfojs fails
-      const cellValues = selectedCells.map(cellId => {
-        const cell = activeSheet.cells[cellId];
-        return cell?.value;
-      }).filter(value => value !== undefined && value !== '');
-
-      const numericValues = cellValues.filter(value => !isNaN(Number(value)) && value !== '');
-      const allNumeric = numericValues.length === cellValues.length;
-
-      if (allNumeric && numericValues.length > 0) {
-        const sum = numericValues.reduce((acc, val) => acc + Number(val), 0);
-        const avg = sum / numericValues.length;
-        const min = Math.min(...numericValues.map(v => Number(v)));
-        const max = Math.max(...numericValues.map(v => Number(v)));
-
-        return {
-          sum: sum.toFixed(2),
-          avg: avg.toFixed(2),
-          min: min.toFixed(2),
-          max: max.toFixed(2),
-          count: cellValues.length,
-          countNumbers: numericValues.length,
-          allNumeric
-        };
-      } else {
-        return {
-          sum: '0.00',
-          avg: '0.00',
-          min: '0.00',
-          max: '0.00',
-          count: cellValues.length,
-          countNumbers: numericValues.length,
-          allNumeric: false
-        };
-      }
-    }
-  }, [selectedCells, activeSheet]);
+    return calculateSmartStatistics(selectedCells, activeSheet, aiSchema);
+  }, [selectedCells, activeSheet, aiSchema]);
 
   // Don't render if not visible or no stats
   if (!isVisible || !stats) {
     return null;
   }
 
-  const statOptions: { value: StatType; label: string; display: string }[] = [
-    { value: 'sum', label: 'Sum', display: stats.sum },
-    { value: 'avg', label: 'Avg', display: stats.avg },
-    { value: 'min', label: 'Min', display: stats.min },
-    { value: 'max', label: 'Max', display: stats.max },
-    { value: 'count', label: 'Count', display: stats.count.toString() },
-    { value: 'countNumbers', label: 'Count Numbers', display: stats.countNumbers.toString() }
-  ];
+  // Get enhanced stat options with data type awareness
+  const statOptions = getEnhancedStatOptions(stats);
 
   // If not all numeric, show only count and disable dropdown
   if (!stats.allNumeric) {
@@ -134,6 +44,11 @@ export const StatisticalSummary: React.FC<StatisticalSummaryProps> = ({
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
               Count: {stats.count}
             </span>
+            {stats.dataType && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {getDataTypeIcon(stats.dataType)} {getDataTypeDescription(stats.dataType)}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -155,6 +70,13 @@ export const StatisticalSummary: React.FC<StatisticalSummaryProps> = ({
           </span>
           <ChevronDown className={`h-4 w-4 ml-2 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
         </Button>
+
+        {/* Data type indicator */}
+        {stats.dataType && (
+          <div className="absolute -top-8 right-0 bg-gray-100 dark:bg-gray-700 text-xs px-2 py-1 rounded">
+            {getDataTypeIcon(stats.dataType)} {getDataTypeDescription(stats.dataType)}
+          </div>
+        )}
 
         {/* Dropdown */}
         {isDropdownOpen && (

@@ -329,4 +329,4 @@ For issues with Backblaze B2 integration:
 
 ---
 
-**🎉 Your Sheet Scribe AI now has robust Backblaze B2 integration with client-side testing!**
+**🎉 Your 0str1ch now has robust Backblaze B2 integration with client-side testing!**
