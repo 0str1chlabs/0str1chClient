@@ -49,6 +49,8 @@ interface AIAssistantProps {
   isSchemaReady?: boolean;
   currentSchema?: string | null;
   ensureSheetLoadedInDuckDB?: () => Promise<any>;
+  // CSV processing state
+  isProcessingCSV?: boolean;
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
@@ -73,7 +75,9 @@ export const AIAssistant = ({
   isDuckDBProcessing: parentIsDuckDBProcessing,
   isSchemaReady: parentIsSchemaReady,
   currentSchema: parentCurrentSchema,
-  ensureSheetLoadedInDuckDB: parentEnsureSheetLoadedInDuckDB
+  ensureSheetLoadedInDuckDB: parentEnsureSheetLoadedInDuckDB,
+  // CSV processing state
+  isProcessingCSV
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -1417,7 +1421,7 @@ ${sampleRows.join('\n')}`;
           position: 'fixed',
           right: 20,
           top: 100, // Position below header
-          zIndex: 9999, // Very high z-index to stay on top
+          zIndex: 30, // Lower z-index to stay below modals
           borderRadius: '9999px 0 0 9999px',
           background: 'hsl(var(--background))',
           boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12), 0 1.5px 4px 0 rgba(0, 0, 0, 0.10)',
@@ -1701,7 +1705,9 @@ ${sampleRows.join('\n')}`;
                 <TooltipTrigger asChild>
                   <Input
                     placeholder={
-                      isDuckDBProcessing 
+                      isProcessingCSV
+                        ? "Processing CSV data..."
+                        : isDuckDBProcessing 
                         ? "Processing data..." 
                         : !isSchemaReady 
                         ? "Waiting for schema..." 
@@ -1712,7 +1718,7 @@ ${sampleRows.join('\n')}`;
                     value={message}
                     onChange={e => setMessage(e.target.value)}
                     onKeyPress={e => e.key === 'Enter' && handleSendMessage()}
-                    disabled={isLoading || isDuckDBProcessing || !isSchemaReady}
+                    disabled={isLoading || isDuckDBProcessing || !isSchemaReady || isProcessingCSV}
                     className="no-drag"
                   />
                 </TooltipTrigger>
@@ -1724,7 +1730,7 @@ ${sampleRows.join('\n')}`;
               </Tooltip>
               <Button 
                 onClick={handleSendMessage} 
-                disabled={isLoading || isDuckDBProcessing || !isSchemaReady || !message.trim()} 
+                disabled={isLoading || isDuckDBProcessing || !isSchemaReady || !message.trim() || isProcessingCSV} 
                 className="no-drag"
                 size="icon"
                 variant="ghost"

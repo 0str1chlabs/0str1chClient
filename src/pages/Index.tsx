@@ -127,6 +127,7 @@ const Index: React.FC = () => {
   // State to track CSV processing and upload flag
   const [isProcessingCSV, setIsProcessingCSV] = useState(false);
   const [csvUploaded, setCsvUploaded] = useState(false);
+  const [isSheetRendered, setIsSheetRendered] = useState(false);
 
   // Loading state management
   const [isCheckingBackblazeData, setIsCheckingBackblazeData] = useState(true);
@@ -227,10 +228,12 @@ const Index: React.FC = () => {
       setIsProcessingSchema(processing);
       setIsSchemaReady(ready);
 
-      // If schema is ready, clear all loading states
+      // If schema is ready, clear loading states but keep CSV processing state
+      // until the sheet is fully rendered
       if (ready) {
         setIsLoadingSheets(false);
         setIsProcessingSchema(false);
+        console.log('📊 Schema processing complete, but keeping CSV loader until sheet renders');
       }
     };
 
@@ -404,9 +407,43 @@ const Index: React.FC = () => {
 
   // Function to reset CSV upload flag after DuckDB reload
   const resetCsvUploadFlag = useCallback(() => {
+    console.log('🔄 Resetting CSV upload flags...');
     setCsvUploaded(false);
     setIsProcessingCSV(false);
+    setIsSheetRendered(false);
   }, []);
+
+  // Monitor when sheet is actually rendered to control CSV processing state
+  useEffect(() => {
+    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0) {
+      console.log('📊 Sheet data detected, marking as rendered');
+      setIsSheetRendered(true);
+      
+      // If CSV was uploaded and sheet is now rendered, we can safely remove the CSV loader
+      if (csvUploaded) {
+        console.log('✅ CSV upload complete and sheet rendered - removing CSV loader');
+        setTimeout(() => {
+          setIsProcessingCSV(false);
+        }, 200); // Small delay to ensure smooth transition
+      }
+    } else {
+      setIsSheetRendered(false);
+    }
+  }, [activeSheet, csvUploaded]);
+
+  // Fallback timeout to reset CSV processing state if DuckDB processing takes too long
+  useEffect(() => {
+    if (isProcessingCSV) {
+      console.log('⏰ Setting CSV processing timeout fallback...');
+      const timeout = setTimeout(() => {
+        console.log('⚠️ CSV processing timeout - forcing reset');
+        setIsProcessingCSV(false);
+        setCsvUploaded(false);
+      }, 30000); // 30 second timeout
+
+      return () => clearTimeout(timeout);
+    }
+  }, [isProcessingCSV]);
 
   // Initialize first sheet - start completely empty
   useEffect(() => {
@@ -714,6 +751,13 @@ const Index: React.FC = () => {
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
+        console.log('📁 CSV file selected:', file.name);
+        console.log('📊 Current activeSheet before CSV upload:', activeSheet);
+        
+        // Show loader immediately when file is selected
+        setIsProcessingCSV(true);
+        setCsvUploaded(true);
+        
         const reader = new FileReader();
         reader.onload = async (event) => {
           const csv = event.target?.result as string;
@@ -759,7 +803,18 @@ const Index: React.FC = () => {
             cellId,
             value: cell.value
           }));
+          console.log('📝 Updating sheet with', updates.length, 'cell updates');
+          console.log('📊 Sample updates:', updates.slice(0, 5));
           bulkUpdateCells(updates);
+          console.log('✅ CSV data uploaded to sheet');
+          console.log('📊 ActiveSheet after upload:', {
+            id: activeSheet?.id,
+            name: activeSheet?.name,
+            rowCount: activeSheet?.rowCount,
+            colCount: activeSheet?.colCount,
+            cellCount: Object.keys(activeSheet?.cells || {}).length,
+            sampleCells: Object.keys(activeSheet?.cells || {}).slice(0, 5)
+          });
 
           // Store compressed sheet data in Backblaze cloud storage (direct client-side)
           if (user?.email) {
@@ -852,9 +907,8 @@ const Index: React.FC = () => {
             console.error('❌ Error generating CSV summary:', err);
           }
 
-          // Use the original working logic - just trigger a flag for AIAssistant to handle
-          console.log('CSV uploaded - triggering DuckDB reload via AIAssistant');
-          setCsvUploaded(true);
+          // CSV upload completed - DuckDB processing will be handled by useDuckDBMapping hook
+          console.log('CSV uploaded - DuckDB processing will be handled automatically');
         };
         reader.readAsText(file);
       }
@@ -1485,7 +1539,7 @@ const Index: React.FC = () => {
         )}
 
         {/* CSV Processing Overlay */}
-        {isProcessingCSV && (
+        {isProcessingCSV && !isSheetRendered && (
           <div className="absolute inset-0 bg-white/80 dark:bg-gray-900/80 z-50 flex items-center justify-center">
             <div className="text-center">
               <LoaderCircle className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
@@ -1493,7 +1547,7 @@ const Index: React.FC = () => {
                 Processing CSV Data
               </h3>
               <p className="text-gray-600 dark:text-gray-400">
-                Loading data into DuckDB... Please wait.
+                {isDuckDBProcessing ? 'Loading data into DuckDB...' : 'Rendering spreadsheet...'} Please wait.
               </p>
             </div>
           </div>
@@ -1546,7 +1600,7 @@ const Index: React.FC = () => {
           </div>
         </InfiniteCanvas>
         
-        {/* AI Chatbox - Positioned outside canvas with higher z-index */}
+        {/* AI Chatbox - Positioned outside canvas with lower z-index than modals */}
         {!isAIMinimized && (
                 <AIAssistant
           onGenerateChart={handleGenerateChart}
@@ -1570,6 +1624,8 @@ const Index: React.FC = () => {
           isSchemaReady={duckDBSchemaReady}
           currentSchema={currentSchema}
           ensureSheetLoadedInDuckDB={ensureSheetLoadedInDuckDB}
+          // Disable chatbot during CSV processing
+          isProcessingCSV={isProcessingCSV}
         />
         )}
 
@@ -1654,7 +1710,7 @@ const Index: React.FC = () => {
       />
 
       {/* Floating AI Assistant Toggle Button */}
-      <div className="fixed bottom-6 right-6 z-50">
+      <div className="fixed bottom-6 right-6 z-40">
         <Button
           onClick={() => setIsAIMinimized(!isAIMinimized)}
           className={`w-14 h-14 rounded-full shadow-lg transition-all duration-300 hover:scale-110 ${

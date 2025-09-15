@@ -319,6 +319,16 @@ export const ModernSpreadsheet = ({
   onRowHover,
   onRowLeave
 }: ModernSpreadsheetProps) => {
+  // Debug sheet data
+  console.log('🔍 ModernSpreadsheet received sheet:', {
+    id: sheet?.id,
+    name: sheet?.name,
+    rowCount: sheet?.rowCount,
+    colCount: sheet?.colCount,
+    cellCount: Object.keys(sheet?.cells || {}).length,
+    sampleCells: Object.keys(sheet?.cells || {}).slice(0, 5),
+    hasCells: !!sheet?.cells
+  });
   
   // Use the external selectedCells prop as the source of truth
   const selectedCell = selectedCells.length > 0 ? selectedCells[0] : null;

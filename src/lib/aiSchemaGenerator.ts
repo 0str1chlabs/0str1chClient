@@ -87,6 +87,8 @@ function generateFallbackSchema(
  */
 function inferDataTypeFallback(samples: any[]): 'VARCHAR' | 'INTEGER' | 'DOUBLE' | 'DATE' | 'BOOLEAN' {
   if (samples.length === 0) return 'VARCHAR';
+  
+  console.log('🔍 Analyzing samples for type inference:', samples.slice(0, 5));
 
   // Check for boolean patterns
   const booleanPatterns = /^(true|false|yes|no|y|n|1|0)$/i;
@@ -104,13 +106,17 @@ function inferDataTypeFallback(samples: any[]): 'VARCHAR' | 'INTEGER' | 'DOUBLE'
     return 'DATE';
   }
 
-  // Check for numeric patterns
+  // Check for numeric patterns - be more conservative
   const numericSamples = samples.filter(s => {
     const str = String(s).replace(/[,$%]/g, ''); // Remove common formatting
     return !isNaN(Number(str)) && str !== '';
   });
 
-  if (numericSamples.length > 0) {
+  // Only consider a column numeric if MOST samples are numeric (at least 80%)
+  const numericRatio = numericSamples.length / samples.length;
+  console.log(`📊 Numeric analysis: ${numericSamples.length}/${samples.length} samples are numeric (${(numericRatio * 100).toFixed(1)}%)`);
+  
+  if (numericRatio >= 0.8 && numericSamples.length > 0) {
     // Check if all numbers are integers
     const allIntegers = numericSamples.every(s => {
       const str = String(s).replace(/[,$%]/g, '');
@@ -128,9 +134,11 @@ function inferDataTypeFallback(samples: any[]): 'VARCHAR' | 'INTEGER' | 'DOUBLE'
       return hasLargeNumbers ? 'VARCHAR' : 'INTEGER';
     }
 
+    console.log('✅ Column determined to be DOUBLE');
     return 'DOUBLE';
   }
 
+  console.log('✅ Column determined to be VARCHAR (default)');
   return 'VARCHAR';
 }
 

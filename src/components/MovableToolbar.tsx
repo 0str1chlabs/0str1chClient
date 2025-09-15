@@ -133,7 +133,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
     top: position.y,
     transform: `rotate(${rotation}deg)`,
     transformOrigin: 'center center',
-    zIndex: 50,
+    zIndex: 30,
   };
 
   return (

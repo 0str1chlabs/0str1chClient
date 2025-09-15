@@ -415,7 +415,20 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
           switch (columnSchema?.type) {
             case 'INTEGER':
             case 'DOUBLE':
-              return val; // Numbers don't need quotes
+              // For numeric types, ensure the value is actually numeric
+              const numVal = Number(val);
+              if (isNaN(numVal)) {
+                // If not numeric, treat as string
+                const cleanVal = String(val)
+                  .replace(/\\/g, '\\\\')  // Escape backslashes first
+                  .replace(/'/g, "''")     // Escape single quotes
+                  .replace(/\0/g, '\\0')   // Escape null bytes
+                  .replace(/\n/g, '\\n')   // Escape newlines
+                  .replace(/\r/g, '\\r')   // Escape carriage returns
+                  .replace(/\t/g, '\\t');  // Escape tabs
+                return `'${cleanVal}'`;
+              }
+              return numVal; // Numbers don't need quotes
             case 'BOOLEAN':
               return val ? 'true' : 'false'; // Boolean values
             case 'DATE':
@@ -437,7 +450,8 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
         const insertSQL = `INSERT INTO "${tableName}" VALUES (${values});`;
         
         if (insertedRows < 3) {
-          // Debug logging removed
+          console.log(`Row ${i} SQL:`, insertSQL);
+          console.log(`Row ${i} values:`, values);
         }
         
         await conn.query(insertSQL);

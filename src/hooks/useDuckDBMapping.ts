@@ -11,12 +11,19 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
   const [isDuckDBProcessing, setIsDuckDBProcessing] = useState(false);
   const [isSchemaReady, setIsSchemaReady] = useState(false);
   const [currentSchema, setCurrentSchema] = useState<string | null>(null);
+  const [hasProcessingFailed, setHasProcessingFailed] = useState(false);
   const processingRef = useRef(false);
 
   // Helper function to ensure sheet data is loaded into DuckDB
   const ensureSheetLoadedInDuckDB = useCallback(async () => {
     if (!activeSheet || !activeSheet.cells) {
       throw new Error('No active sheet data available');
+    }
+
+    // Don't process if we've already failed for this sheet
+    if (hasProcessingFailed) {
+      console.log('⚠️ Skipping DuckDB processing - previous attempt failed');
+      return;
     }
 
     console.log('=== ENSURING SHEET LOADED IN DUCKDB ===');
@@ -162,6 +169,9 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
         if (shouldProcess) {
           console.log(`🔄 Processing new sheet data for: ${activeSheet.name} (${activeSheet.id})`);
 
+          // Reset failure state for new processing attempt
+          setHasProcessingFailed(false);
+
           // Set DuckDB processing state
           processingRef.current = true;
           setIsDuckDBProcessing(true);
@@ -219,14 +229,26 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
                 }));
 
                 if (csvUploaded) {
-                  // Reset the CSV upload flag and processing state
-                  resetCsvUploadFlag?.();
+                  // Add a small delay to ensure the sheet is fully rendered before resetting CSV state
+                  setTimeout(() => {
+                    console.log('🔄 Delayed CSV state reset - ensuring sheet is fully rendered');
+                    resetCsvUploadFlag?.();
+                  }, 500); // 500ms delay to ensure sheet rendering is complete
                 }
               } else {
                 console.warn('No schema generated, this might cause issues with AI processing');
               }
             } catch (error) {
               console.error('Error loading sheet into DuckDB:', error);
+              setHasProcessingFailed(true);
+              
+              // Still reset the CSV processing state even if DuckDB failed
+              if (csvUploaded) {
+                setTimeout(() => {
+                  console.log('🔄 Resetting CSV state after DuckDB failure');
+                  resetCsvUploadFlag?.();
+                }, 1000);
+              }
             } finally {
               processingRef.current = false;
               setIsDuckDBProcessing(false);
