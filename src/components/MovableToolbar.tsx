@@ -17,6 +17,8 @@ interface MovableToolbarProps {
   onShowPivotTable?: () => void;
   onShowPivotFullScreen?: () => void;
   onShowPivotModal?: () => void;
+  onSanitizeData?: () => void;
+  onTestFormat?: () => void;
 }
 
 export const MovableToolbar = (props: MovableToolbarProps) => {

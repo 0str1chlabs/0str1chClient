@@ -78,6 +78,19 @@ export const tourSteps: TourStep[] = [
     disableBeacon: true,
   },
   {
+    target: '[data-tour="toolbar-sanitize-data"]',
+    content: (
+      <div className="p-4">
+        <h3 className="text-lg font-semibold mb-2">🛡️ Sanitize Data</h3>
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          Click this button to highlight cells with mismatched data types in red. This helps you identify and fix data quality issues by comparing actual values against the AI-inferred column types.
+        </p>
+      </div>
+    ),
+    placement: 'right',
+    disableBeacon: true,
+  },
+  {
     target: '[data-tour="research-button"]',
     content: (
       <div className="p-4">

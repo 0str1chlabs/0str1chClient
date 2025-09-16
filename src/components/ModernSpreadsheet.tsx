@@ -98,8 +98,21 @@ const SpreadsheetCell = React.memo(({
     if (cell?.hasAIUpdate) {
       return 'rgba(34, 197, 94, 0.8)'; // Solid green background for AI updates
     }
-    return cell?.style?.backgroundColor || (cell?.value ? 'white' : 'white');
-  }, [cell?.style?.backgroundColor, cell?.value, cell?.hasAIUpdate]);
+    const bgColor = cell?.style?.backgroundColor || (cell?.value ? 'white' : 'white');
+    
+    // Debug logging for cell A2
+    if (cellId === 'A2') {
+      console.log('🎨 Cell A2 backgroundColor calculation:', {
+        cellId,
+        hasAIUpdate: cell?.hasAIUpdate,
+        style: cell?.style,
+        backgroundColor: cell?.style?.backgroundColor,
+        finalBgColor: bgColor
+      });
+    }
+    
+    return bgColor;
+  }, [cell?.style?.backgroundColor, cell?.value, cell?.hasAIUpdate, cellId]);
 
   // Click handler for AI update tooltip
   const handleCellClick = useCallback((e: React.MouseEvent) => {
@@ -870,7 +883,7 @@ export const ModernSpreadsheet = ({
     const rowHeight = ROW_HEIGHT;
     const colWidth = 128; // w-32 = 128px
     
-    return getVisibleRange(
+    const range = getVisibleRange(
       scrollTop,
       scrollLeft,
       viewportHeight,
@@ -881,6 +894,18 @@ export const ModernSpreadsheet = ({
       sheet.colCount,
       VISIBLE_ROWS_BUFFER
     );
+    
+    // Debug visible range
+    console.log('🎨 Visible range calculated:', {
+      scrollTop,
+      scrollLeft,
+      viewportHeight,
+      viewportWidth,
+      range,
+      includesA2: range.startRow <= 1 && range.endRow >= 1 && range.startCol <= 0 && range.endCol >= 0
+    });
+    
+    return range;
   }, [scrollTop, scrollLeft, dimensions.width, sheet.rowCount, sheet.colCount]);
 
   const { startRow, endRow, startCol, endCol } = visibleRange;
@@ -1252,6 +1277,18 @@ export const ModernSpreadsheet = ({
                 const isInRange = selectedCellsSet.has(cellId);
                 const isEditing = editingCell === cellId;
                 const colLetter = cellId[0];
+                
+                // Debug cell A2 rendering
+                if (cellId === 'A2') {
+                  console.log('🎨 Rendering cell A2:', {
+                    cellId,
+                    cell,
+                    isSelected,
+                    isInRange,
+                    isEditing,
+                    style: cell?.style
+                  });
+                }
                 
                 // Debug AI update cells
                 if (cell?.hasAIUpdate) {

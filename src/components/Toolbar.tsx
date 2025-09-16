@@ -24,7 +24,8 @@ import {
   Settings,
   BarChart3,
   LayoutGrid,
-  Table
+  Table,
+  Shield
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -64,6 +65,8 @@ interface ToolbarProps {
   onShowPivotTable?: () => void;
   onShowPivotFullScreen?: () => void;
   onShowPivotModal?: () => void;
+  onSanitizeData?: () => void;
+  onTestFormat?: () => void;
 }
 
 // Tool descriptions for tooltips
@@ -97,7 +100,9 @@ export const Toolbar = ({
   onAddSheet,
   onShowPivotTable,
   onShowPivotFullScreen,
-  onShowPivotModal
+  onShowPivotModal,
+  onSanitizeData,
+  onTestFormat
 }: ToolbarProps) => {
   const [showSearch, setShowSearch] = useState(false);
   const [showColorPalette, setShowColorPalette] = useState(false);
@@ -727,6 +732,43 @@ export const Toolbar = ({
             <p className="text-xs text-muted-foreground">Create interactive pivot tables for data analysis</p>
           </TooltipContent>
         </Tooltip>
+
+              {/* Sanitize Data Button */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="w-8 h-8 p-0 hover:bg-gray-100"
+                    onClick={() => onSanitizeData && onSanitizeData()}
+                    data-tour="toolbar-sanitize-data"
+                  >
+                    <Shield size={16} className="text-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-semibold">Sanitize Data</p>
+                  <p className="text-xs text-muted-foreground">Highlight cells with mismatched data types in red</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Test Format Button - Temporary for debugging */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="w-8 h-8 p-0 hover:bg-gray-100"
+                    onClick={() => onTestFormat && onTestFormat()}
+                  >
+                    <span className="text-xs font-bold text-red-500">T</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-semibold">Test Format</p>
+                  <p className="text-xs text-muted-foreground">Test cell formatting (temporary)</p>
+                </TooltipContent>
+              </Tooltip>
       </div>
       
       <SearchDialog

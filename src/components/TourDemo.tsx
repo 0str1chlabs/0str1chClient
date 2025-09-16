@@ -89,7 +89,8 @@ export const TourDemo: React.FC = () => {
                       '[data-tour="toolbar-paste"]',
                       '[data-tour="toolbar-search"]',
                       '[data-tour="toolbar-functions"]',
-                      '[data-tour="toolbar-pivot-table"]'
+                      '[data-tour="toolbar-pivot-table"]',
+                      '[data-tour="toolbar-sanitize-data"]'
                     ];
                 targets.forEach(target => {
                   const element = document.querySelector(target);

@@ -42,7 +42,7 @@ const App = () => {
                 </AuthWrapper>
               </BrowserRouter>
             </TooltipProvider>
-          </TourWithAuth>
+            </TourWithAuth>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

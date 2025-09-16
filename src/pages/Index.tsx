@@ -24,6 +24,7 @@ if (typeof document !== 'undefined') {
   document.head.appendChild(style);
 }
 import { Button } from '@/components/ui/button';
+import { toast } from '@/hooks/use-toast';
 import { AIAssistant } from '@/components/AIAssistant';
 import { MovableToolbar } from '@/components/MovableToolbar';
 import { ModernSpreadsheet } from '@/components/ModernSpreadsheet';
@@ -62,6 +63,7 @@ const Index: React.FC = () => {
     activeSheet,
     updateCell,
     bulkUpdateCells,
+    formatCells,
     createAIUpdates,
     acceptAIUpdate,
     rejectAIUpdate,
@@ -1106,6 +1108,199 @@ const Index: React.FC = () => {
     console.log('Formatting not yet implemented in new state management system');
   }, [selectedCells, activeSheetIndex]);
 
+  const handleSanitizeData = useCallback(() => {
+    console.log('🔍 Sanitizing data...');
+    console.log('📊 Active sheet:', activeSheet);
+    console.log('📋 Active sheet cells count:', activeSheet?.cells ? Object.keys(activeSheet.cells).length : 0);
+    
+    if (!activeSheet || !activeSheet.cells) {
+      console.log('❌ No active sheet or cells found');
+      return;
+    }
+
+    // Get the AI schema for the current sheet
+    const aiSchema = getCurrentSheetAISchema(activeSheet);
+    console.log('🤖 AI Schema retrieved:', aiSchema);
+    
+    if (!aiSchema || !aiSchema.columns) {
+      console.log('❌ No AI schema found for sanitization');
+      toast({
+        title: "No Schema Found",
+        description: "Please generate a schema first using the AI assistant to enable data sanitization.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    console.log('AI Schema for sanitization:', aiSchema);
+    
+    // Create a mapping of column names to their expected types
+    const columnTypeMap = new Map<string, string>();
+    aiSchema.columns.forEach((column: any) => {
+      columnTypeMap.set(column.name, column.type);
+    });
+
+    console.log('Column type mapping:', columnTypeMap);
+
+    // Track cells that need to be highlighted
+    const cellsToHighlight: string[] = [];
+    let totalCellsChecked = 0;
+    let invalidCellsFound = 0;
+
+    // Iterate through all cells in the sheet
+    Object.entries(activeSheet.cells).forEach(([cellId, cell]: [string, any]) => {
+      if (!cell || cell.value === undefined || cell.value === null || cell.value === '') {
+        return; // Skip empty cells
+      }
+
+      // Skip header row (row 1)
+      if (cellId.match(/^[A-Z]+1$/)) {
+        return;
+      }
+
+      totalCellsChecked++;
+
+      // Get column letter from cellId (e.g., "A2" -> "A")
+      const columnLetter = cellId.match(/^([A-Z]+)/)?.[1];
+      if (!columnLetter) return;
+
+      // Convert column letter to column index (A=0, B=1, etc.)
+      const columnIndex = columnLetter.charCodeAt(0) - 65;
+      
+      // Get the header for this column
+      const headerCellId = `${columnLetter}1`;
+      const headerCell = activeSheet.cells[headerCellId];
+      const columnName = headerCell?.value || columnLetter;
+
+      // Get expected type for this column
+      const expectedType = columnTypeMap.get(String(columnName));
+      if (!expectedType) {
+        console.log(`No expected type found for column: ${columnName}`);
+        return;
+      }
+
+      // Check if the cell value matches the expected type
+      const cellValue = cell.value;
+      const isValidType = validateCellType(cellValue, expectedType);
+
+      if (!isValidType) {
+        console.log(`Invalid type in cell ${cellId}: expected ${expectedType}, got ${typeof cellValue} (${cellValue})`);
+        cellsToHighlight.push(cellId);
+        invalidCellsFound++;
+      }
+    });
+
+    console.log(`Sanitization complete: ${invalidCellsFound}/${totalCellsChecked} cells have type mismatches`);
+
+    // Apply red highlighting to invalid cells
+    if (cellsToHighlight.length > 0) {
+      console.log('🎨 Applying highlighting to cells:', cellsToHighlight);
+      console.log('🎨 formatCells function available:', !!formatCells);
+      
+      // Use formatCells to apply red highlighting to invalid cells
+      if (formatCells) {
+        console.log('🎨 Calling formatCells with:', {
+          cellIds: cellsToHighlight,
+          style: {
+            backgroundColor: '#ffebee',
+            textColor: '#d32f2f'
+          }
+        });
+        
+        formatCells(cellsToHighlight, {
+          backgroundColor: '#ffebee', // Light red background
+          textColor: '#d32f2f', // Dark red text
+        });
+        
+        console.log('✅ formatCells called successfully');
+      } else {
+        console.warn('❌ formatCells function not available');
+      }
+      
+      toast({
+        title: "Data Sanitization Complete",
+        description: `Found ${invalidCellsFound} cells with type mismatches out of ${totalCellsChecked} total cells. Invalid cells are highlighted in red.`,
+        variant: invalidCellsFound > 0 ? "destructive" : "default",
+      });
+    } else {
+      toast({
+        title: "Data Sanitization Complete",
+        description: `All ${totalCellsChecked} cells match their expected data types. No issues found!`,
+        variant: "default",
+      });
+    }
+  }, [activeSheet, formatCells]);
+
+  // Test function to verify formatCells works
+  const testFormatCells = useCallback(() => {
+    console.log('🧪 Testing formatCells function...');
+    if (!formatCells) {
+      console.log('❌ formatCells not available');
+      return;
+    }
+    
+    if (!activeSheet) {
+      console.log('❌ No active sheet available');
+      return;
+    }
+    
+    // Test with a simple cell like A2
+    const testCellId = 'A2';
+    console.log('🧪 Testing with cell:', testCellId);
+    console.log('🧪 Active sheet:', activeSheet);
+    console.log('🧪 Cell A2 exists:', !!activeSheet.cells[testCellId]);
+    console.log('🧪 Cell A2 data:', activeSheet.cells[testCellId]);
+    
+    // Ensure the cell exists by setting a value first
+    if (!activeSheet.cells[testCellId]) {
+      console.log('🧪 Creating cell A2 with test value');
+      updateCell(testCellId, 'TEST');
+    }
+    
+    formatCells([testCellId], {
+      backgroundColor: '#ff0000', // Bright red for testing
+      textColor: '#ffffff', // White text
+    });
+    
+    console.log('✅ Test formatCells called');
+  }, [formatCells, activeSheet, updateCell]);
+
+  // Helper function to validate cell type against expected type
+  const validateCellType = (value: any, expectedType: string): boolean => {
+    if (value === null || value === undefined || value === '') {
+      return true; // Empty values are considered valid
+    }
+
+    switch (expectedType) {
+      case 'INTEGER':
+        return Number.isInteger(Number(value)) && !isNaN(Number(value));
+      
+      case 'DOUBLE':
+        return !isNaN(Number(value)) && isFinite(Number(value));
+      
+      case 'VARCHAR':
+        return typeof value === 'string' || typeof value === 'number';
+      
+      case 'DATE':
+        // Check for common date formats
+        const dateStr = String(value);
+        const datePatterns = [
+          /^\d{4}-\d{2}-\d{2}$/, // YYYY-MM-DD
+          /^\d{2}\/\d{2}\/\d{4}$/, // MM/DD/YYYY
+          /^\d{1,2}\/\d{1,2}\/\d{4}$/, // M/D/YYYY
+          /^\d{4}\/\d{2}\/\d{2}$/, // YYYY/MM/DD
+        ];
+        return datePatterns.some(pattern => pattern.test(dateStr)) || !isNaN(Date.parse(dateStr));
+      
+      case 'BOOLEAN':
+        const boolStr = String(value).toLowerCase();
+        return ['true', 'false', 'yes', 'no', 'y', 'n', '1', '0'].includes(boolStr);
+      
+      default:
+        return true; // Unknown types are considered valid
+    }
+  };
+
   const handleCalculate = useCallback((operation: string) => {
     console.log('Calculate operation:', operation);
     // Calculate logic would go here
@@ -1656,7 +1851,9 @@ const Index: React.FC = () => {
             setShowPivotTable(true);
             setIsAIMinimized(true);
           }}
-          data-tour="ai-tools"
+            onSanitizeData={handleSanitizeData}
+            onTestFormat={testFormatCells}
+            data-tour="ai-tools"
         />
 
         {/* Statistical Summary - Shows stats for selected cells */}

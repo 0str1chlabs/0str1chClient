@@ -72,17 +72,24 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         break;
       }
       case 'FORMAT_CELLS': {
+        console.log('🎨 FORMAT_CELLS action received:', { cellIds: action.cellIds, style: action.style });
         const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
         if (sheet) {
+          console.log('🎨 Found active sheet:', sheet.id);
           action.cellIds.forEach((cellId: string) => {
             if (!sheet.cells[cellId]) {
               sheet.cells[cellId] = { value: '' };
+              console.log('🎨 Created new cell for:', cellId);
             }
+            const oldStyle = sheet.cells[cellId].style;
             sheet.cells[cellId].style = {
               ...sheet.cells[cellId].style,
               ...action.style,
             };
+            console.log('🎨 Updated cell style for:', cellId, 'from:', oldStyle, 'to:', sheet.cells[cellId].style);
           });
+        } else {
+          console.log('🎨 No active sheet found for formatting');
         }
         break;
       }
@@ -457,7 +464,9 @@ export const useSpreadsheet = () => {
   }, [dispatchWithHistory]);
 
   const formatCells = useCallback((cellIds: string[], style: Partial<CellStyle>) => {
+    console.log('🎨 formatCells called with:', { cellIds, style });
     dispatchWithHistory({ type: 'FORMAT_CELLS', cellIds, style });
+    console.log('🎨 formatCells action dispatched');
   }, [dispatchWithHistory]);
 
   const toggleMode = useCallback(() => {
