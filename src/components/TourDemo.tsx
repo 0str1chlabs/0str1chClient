@@ -30,6 +30,8 @@ export const TourDemo: React.FC = () => {
                 <p><strong>Running:</strong> {isRunning ? 'Yes' : 'No'}</p>
                 <p><strong>Completed:</strong> {hasCompletedTour ? 'Yes' : 'No'}</p>
                 <p><strong>Is New User:</strong> {stats.isNew ? 'Yes' : 'No'}</p>
+                <p><strong>Is First Time Signup:</strong> {stats.isFirstTime ? 'Yes' : 'No'}</p>
+                <p><strong>User ID:</strong> {stats.userId || 'None'}</p>
                 <p><strong>Should Show:</strong> {stats.shouldShowTour ? 'Yes' : 'No'}</p>
               </div>
             </div>

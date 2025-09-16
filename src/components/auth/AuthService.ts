@@ -1,4 +1,5 @@
 import { EmailEncryption } from './EmailEncryption';
+import { initializeTourForNewSignup } from '@/lib/tourUtils';
 
 export interface User {
   id: string;
@@ -227,6 +228,10 @@ class AuthService {
       const data: AuthResponse = await response.json();
       this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
+      
+      // Mark user as first-time signup for tour
+      initializeTourForNewSignup(data.user.id);
+      
       return data;
     } catch (error) {
       console.error('Signup error:', error);

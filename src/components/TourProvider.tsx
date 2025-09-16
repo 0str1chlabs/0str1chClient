@@ -6,7 +6,9 @@ import {
   hasCompletedTour as checkTourCompleted, 
   isNewUser, 
   shouldShowTourAutomatically,
-  getTourStats 
+  getTourStats,
+  isFirstTimeSignup,
+  hasUserChanged
 } from '@/lib/tourUtils';
 
 interface TourContextType {
@@ -31,9 +33,10 @@ const TourContext = createContext<TourContextType>(defaultContextValue);
 interface TourProviderProps {
   children: React.ReactNode;
   isDarkMode?: boolean;
+  currentUserId?: string;
 }
 
-export const TourProvider: React.FC<TourProviderProps> = ({ children, isDarkMode = false }) => {
+export const TourProvider: React.FC<TourProviderProps> = ({ children, isDarkMode = false, currentUserId }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [hasCompletedTour, setHasCompletedTour] = useState(false);
 
@@ -46,16 +49,23 @@ export const TourProvider: React.FC<TourProviderProps> = ({ children, isDarkMode
     setIsRunning(true);
   }, []);
 
-  // Check if user is new and should see tour
+  // Check if user is new signup and should see tour
   useEffect(() => {
-    if (shouldShowTourAutomatically() && !hasCompletedTour) {
+    // Only show tour for first-time signups, not returning users
+    if (currentUserId && isFirstTimeSignup() && !hasCompletedTour) {
+      // Check if user has changed (different user logged in)
+      if (hasUserChanged(currentUserId)) {
+        // User has changed, don't show tour
+        return;
+      }
+      
       // Delay tour start to allow page to load
       const timer = setTimeout(() => {
         startTour();
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [hasCompletedTour, startTour]);
+  }, [hasCompletedTour, startTour, currentUserId]);
 
   const stopTour = useCallback(() => {
     setIsRunning(false);

@@ -7,6 +7,8 @@ export const TOUR_STORAGE_KEYS = {
   IS_NEW_USER: 'is-new-user',
   USER_FIRST_VISIT: 'user-first-visit',
   TOUR_DISMISSED: 'tour-dismissed',
+  FIRST_TIME_SIGNUP: 'first-time-signup',
+  USER_ID: 'user-id',
 } as const;
 
 /**
@@ -18,11 +20,21 @@ export const markUserAsNew = (): void => {
 };
 
 /**
+ * Mark user as first-time signup (should see tour)
+ */
+export const markFirstTimeSignup = (userId: string): void => {
+  localStorage.setItem(TOUR_STORAGE_KEYS.FIRST_TIME_SIGNUP, 'true');
+  localStorage.setItem(TOUR_STORAGE_KEYS.USER_ID, userId);
+  localStorage.setItem(TOUR_STORAGE_KEYS.USER_FIRST_VISIT, Date.now().toString());
+};
+
+/**
  * Mark that the user has completed the tour
  */
 export const markTourCompleted = (): void => {
   localStorage.setItem(TOUR_STORAGE_KEYS.TOUR_COMPLETED, 'true');
   localStorage.removeItem(TOUR_STORAGE_KEYS.IS_NEW_USER);
+  localStorage.removeItem(TOUR_STORAGE_KEYS.FIRST_TIME_SIGNUP);
 };
 
 /**
@@ -40,6 +52,21 @@ export const isNewUser = (): boolean => {
 };
 
 /**
+ * Check if this is a first-time signup (should see tour)
+ */
+export const isFirstTimeSignup = (): boolean => {
+  return localStorage.getItem(TOUR_STORAGE_KEYS.FIRST_TIME_SIGNUP) === 'true';
+};
+
+/**
+ * Check if user has changed (different user ID)
+ */
+export const hasUserChanged = (currentUserId: string): boolean => {
+  const storedUserId = localStorage.getItem(TOUR_STORAGE_KEYS.USER_ID);
+  return storedUserId !== currentUserId;
+};
+
+/**
  * Reset tour state (for testing or admin purposes)
  */
 export const resetTourState = (): void => {
@@ -47,6 +74,8 @@ export const resetTourState = (): void => {
   localStorage.removeItem(TOUR_STORAGE_KEYS.IS_NEW_USER);
   localStorage.removeItem(TOUR_STORAGE_KEYS.USER_FIRST_VISIT);
   localStorage.removeItem(TOUR_STORAGE_KEYS.TOUR_DISMISSED);
+  localStorage.removeItem(TOUR_STORAGE_KEYS.FIRST_TIME_SIGNUP);
+  localStorage.removeItem(TOUR_STORAGE_KEYS.USER_ID);
 };
 
 /**
@@ -71,13 +100,17 @@ export const getTourStats = () => {
   const hasCompleted = hasCompletedTour();
   const hasDismissed = hasDismissedTour();
   const isNew = isNewUser();
+  const isFirstTime = isFirstTimeSignup();
+  const userId = localStorage.getItem(TOUR_STORAGE_KEYS.USER_ID);
 
   return {
     firstVisit: firstVisit ? new Date(parseInt(firstVisit)) : null,
     hasCompleted,
     hasDismissed,
     isNew,
-    shouldShowTour: isNew && !hasCompleted && !hasDismissed,
+    isFirstTime,
+    userId,
+    shouldShowTour: isFirstTime && !hasCompleted && !hasDismissed,
   };
 };
 
@@ -98,4 +131,15 @@ export const initializeTourForNewUser = (): void => {
 export const shouldShowTourAutomatically = (): boolean => {
   const stats = getTourStats();
   return stats.shouldShowTour;
+};
+
+/**
+ * Initialize tour for a new user signup
+ * Call this when a user signs up for the first time
+ */
+export const initializeTourForNewSignup = (userId: string): void => {
+  // Clear any existing tour state for this user
+  resetTourState();
+  // Mark as first-time signup
+  markFirstTimeSignup(userId);
 };

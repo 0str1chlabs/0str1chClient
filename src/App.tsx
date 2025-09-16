@@ -6,7 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/components/auth/AuthContext";
 import { AuthWrapper } from "@/components/auth/AuthWrapper";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { TourContextWrapper } from "@/components/TourContextWrapper";
+import { TourWithAuth } from "@/components/TourWithAuth";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import { ChartShowcase } from "@/components/ChartShowcase";
@@ -26,7 +26,7 @@ const App = () => {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider isDarkMode={isDarkMode} toggleTheme={toggleTheme}>
         <AuthProvider>
-          <TourContextWrapper isDarkMode={isDarkMode}>
+          <TourWithAuth isDarkMode={isDarkMode}>
             <TooltipProvider>
               <Toaster />
               <Sonner />
@@ -42,7 +42,7 @@ const App = () => {
                 </AuthWrapper>
               </BrowserRouter>
             </TooltipProvider>
-          </TourContextWrapper>
+          </TourWithAuth>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>
