@@ -23,7 +23,8 @@ import {
   ChevronRight,
   Settings,
   BarChart3,
-  LayoutGrid
+  LayoutGrid,
+  Table
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -265,6 +266,7 @@ export const Toolbar = ({
                 e.stopPropagation();
                 onAddSheet();
               }}
+              data-tour="toolbar-add-sheet"
             >
               <Plus size={16} className="text-foreground" />
             </Button>
@@ -290,6 +292,7 @@ export const Toolbar = ({
                   handleFormatAction('undo');
                 }}
                 disabled={!canUndo}
+                data-tour="toolbar-undo"
               >
                 <Undo size={16} className="text-foreground" />
               </Button>
@@ -310,6 +313,7 @@ export const Toolbar = ({
                   handleFormatAction('redo');
                 }}
                 disabled={!canRedo}
+                data-tour="toolbar-redo"
               >
                 <Redo size={16} className="text-foreground" />
               </Button>
@@ -335,6 +339,7 @@ export const Toolbar = ({
                   e.stopPropagation();
                   setShowTextFormat(!showTextFormat);
                 }}
+                data-tour="toolbar-text-format"
               >
                             <Type size={16} className="text-foreground" />
             <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
@@ -523,6 +528,7 @@ export const Toolbar = ({
                   e.stopPropagation();
                   setShowTextColor(!showTextColor);
                 }}
+                data-tour="toolbar-text-color"
               >
                 <Type size={16} className="text-foreground" />
                 <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
@@ -579,6 +585,7 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('align-left')}
+                data-tour="toolbar-align-left"
               >
                 <AlignLeft size={16} className="text-foreground" />
               </Button>
@@ -595,6 +602,7 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('align-center')}
+                data-tour="toolbar-align-center"
               >
                 <AlignCenter size={16} className="text-foreground" />
               </Button>
@@ -611,6 +619,7 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('align-right')}
+                data-tour="toolbar-align-right"
               >
                 <AlignRight size={16} className="text-foreground" />
               </Button>
@@ -633,6 +642,7 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('copy')}
+                data-tour="toolbar-copy"
               >
                 <Copy size={16} className="text-foreground" />
               </Button>
@@ -649,6 +659,7 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('paste')}
+                data-tour="toolbar-paste"
               >
                 <Clipboard size={16} className="text-foreground" />
               </Button>
@@ -669,6 +680,7 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => setShowSearch(true)}
+                data-tour="toolbar-search"
               >
                 <Search size={16} className="text-foreground" />
               </Button>
@@ -685,6 +697,7 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100"
                 onClick={() => handleFormatAction('functions')}
+                data-tour="toolbar-functions"
               >
                 <Calculator size={16} className="text-foreground" />
               </Button>
@@ -695,6 +708,25 @@ export const Toolbar = ({
             </TooltipContent>
           </Tooltip>
         </div>
+
+        {/* Pivot Table Button */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-8 h-8 p-0 hover:bg-gray-100"
+              onClick={() => onShowPivotTable && onShowPivotTable()}
+              data-tour="toolbar-pivot-table"
+            >
+              <Table size={16} className="text-foreground" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="font-semibold">Pivot Table</p>
+            <p className="text-xs text-muted-foreground">Create interactive pivot tables for data analysis</p>
+          </TooltipContent>
+        </Tooltip>
       </div>
       
       <SearchDialog

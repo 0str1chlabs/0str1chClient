@@ -22,6 +22,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { motion, AnimatePresence } from 'framer-motion';
 import PivotTableUI from 'react-pivottable/PivotTableUI';
+import { aggregators } from 'react-pivottable/Utilities';
+import { renderers } from 'react-pivottable/Utilities';
 import 'react-pivottable/pivottable.css';
 import { SheetData, PivotTableState } from '@/types/spreadsheet';
 import { MousePointer, ArrowRight, Info, HelpCircle } from 'lucide-react';
@@ -740,7 +742,9 @@ export const PivotTableModal: React.FC<PivotTableModalProps> = ({
                         cols={pivotState.cols || []}
                         vals={pivotState.vals || []}
                         aggregatorName={pivotState.aggregatorName || "Sum"}
+                        aggregators={aggregators}
                         rendererName={pivotState.rendererName || "Table"}
+                        renderers={renderers}
                         menuLimit={1000}
                         colsLimit={1000}
                       />

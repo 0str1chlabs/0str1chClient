@@ -39,6 +39,10 @@ import { NotificationManager, NotificationProps } from '@/components/Notificatio
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
 import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain, Search } from 'lucide-react';
+import { TourButton } from '@/components/TourButton';
+import { useTour } from '@/components/TourProvider';
+import { TourDebug } from '@/components/TourDebug';
+import { initializeTourForNewUser, shouldShowTourAutomatically } from '@/lib/tourUtils';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
@@ -50,6 +54,7 @@ import BackblazeApiService from '../services/backblazeApiService';
 
 const Index: React.FC = () => {
   const { user, logout } = useAuth();
+  const { startTour } = useTour();
   
   // Use the new spreadsheet hook with dual-state system
   const {
@@ -283,6 +288,17 @@ const Index: React.FC = () => {
           } else {
             console.log('📭 No existing sheet data found for user in Backblaze cloud');
             console.log('📄 Starting with empty sheet - user can load sheets via "+" tab when needed');
+            
+            // Initialize tour for new users
+            initializeTourForNewUser();
+            
+            // Check if tour should be shown automatically
+            if (shouldShowTourAutomatically()) {
+              // Delay tour start to allow page to load
+              setTimeout(() => {
+                startTour();
+              }, 3000);
+            }
           }
         } catch (error) {
           console.error('❌ Error checking for existing sheet data:', error);
@@ -300,7 +316,7 @@ const Index: React.FC = () => {
     };
 
     checkExistingSheetData();
-  }, [user?.email]);
+  }, [user?.email, startTour]);
 
   // Add global click handler to deselect cells when clicking on sheet/canvas area
   useEffect(() => {
@@ -1291,7 +1307,7 @@ const Index: React.FC = () => {
       <div className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-3 sm:px-6 py-2 sm:py-4">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 lg:gap-0">
           {/* Left side - Brand and User */}
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1" data-tour="header-brand">
             <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white truncate">Ostr1ch</h1>
             <div className="hidden sm:block h-6 w-px bg-gray-300 dark:bg-gray-600"></div>
             <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate max-w-[200px] sm:max-w-none">
@@ -1302,7 +1318,7 @@ const Index: React.FC = () => {
           {/* Right side - Controls and Actions */}
           <div className="flex items-center gap-1 sm:gap-3 flex-wrap">
             {/* Canvas Controls */}
-            <div className="flex items-center gap-1 sm:gap-2">
+            <div className="flex items-center gap-1 sm:gap-2" data-tour="header-controls">
               <button
                 onClick={() => canvasRef.current?.zoomIn()}
                 className="p-1.5 sm:p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
@@ -1354,24 +1370,11 @@ const Index: React.FC = () => {
               disabled={isProcessingCSV}
               size="sm"
               className="flex items-center gap-1 sm:gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm"
+              data-tour="upload-button"
             >
               <Upload className="h-3 w-3 sm:h-4 sm:w-4" />
               <span className="hidden sm:inline">Upload CSV</span>
               <span className="sm:hidden">CSV</span>
-            </Button>
-            
-            {/* Pivot Table Button */}
-            <Button
-              onClick={() => {
-                setShowPivotTable(true);
-                setIsAIMinimized(true);
-              }}
-              size="sm"
-              className="bg-blue-600 hover:bg-blue-700 text-white transition-all duration-200 hover:scale-105 text-xs sm:text-sm"
-            >
-              <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-              <span className="hidden sm:inline">Pivot Table</span>
-              <span className="sm:hidden">Pivot</span>
             </Button>
             
             {/* Research Button */}
@@ -1379,6 +1382,7 @@ const Index: React.FC = () => {
               onClick={() => setShowResearchModal(true)}
               size="sm"
               className="bg-green-600 hover:bg-green-700 text-white transition-all duration-200 hover:scale-105 text-xs sm:text-sm"
+              data-tour="research-button"
             >
               <Search className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
               <span className="hidden sm:inline">Research</span>
@@ -1393,11 +1397,19 @@ const Index: React.FC = () => {
               }}
               size="sm"
               className="bg-purple-600 hover:bg-purple-700 text-white transition-all duration-200 hover:scale-105 text-xs sm:text-sm"
+              data-tour="report-generator"
             >
               <Brain className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
               <span className="hidden sm:inline">AI Report</span>
               <span className="sm:hidden">AI</span>
             </Button>
+
+            {/* Tour Button */}
+            <TourButton 
+              variant="outline" 
+              size="sm" 
+              className="text-xs sm:text-sm"
+            />
             
             
             <Button 
@@ -1405,6 +1417,7 @@ const Index: React.FC = () => {
               size="sm"
               onClick={logout} 
               className="transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-xs sm:text-sm"
+              data-tour="logout-button"
             >
               <span className="hidden sm:inline">Logout</span>
               <span className="sm:hidden">Exit</span>
@@ -1414,7 +1427,7 @@ const Index: React.FC = () => {
       </div>
 
       {/* Sheet Tabs */}
-      <div className="fixed top-16 sm:top-20 left-0 right-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-3 sm:px-6">
+      <div className="fixed top-16 sm:top-20 left-0 right-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-3 sm:px-6" data-tour="sheet-tabs">
         <div className="flex items-center gap-1 sm:gap-2 py-2 overflow-x-auto">
           {state.sheets.map((sheet, index) => (
             <div
@@ -1585,6 +1598,7 @@ const Index: React.FC = () => {
                 acceptAIUpdate={acceptAIUpdate}
                 rejectAIUpdate={rejectAIUpdate}
                 onColumnHover={handleColumnHover}
+                data-tour="spreadsheet"
                 onColumnLeave={handleColumnLeave}
                 onRowHover={handleRowHover}
                 onRowLeave={handleRowLeave}
@@ -1626,6 +1640,7 @@ const Index: React.FC = () => {
           ensureSheetLoadedInDuckDB={ensureSheetLoadedInDuckDB}
           // Disable chatbot during CSV processing
           isProcessingCSV={isProcessingCSV}
+          data-tour="ai-assistant"
         />
         )}
 
@@ -1637,6 +1652,11 @@ const Index: React.FC = () => {
           onCellSelect={(cellId) => setSelectedCells([cellId])}
           onAddSheet={handleAddSheet}
           onRearrange={handleRearrangeLayout}
+          onShowPivotTable={() => {
+            setShowPivotTable(true);
+            setIsAIMinimized(true);
+          }}
+          data-tour="ai-tools"
         />
 
         {/* Statistical Summary - Shows stats for selected cells */}
@@ -1710,7 +1730,7 @@ const Index: React.FC = () => {
       />
 
       {/* Floating AI Assistant Toggle Button */}
-      <div className="fixed bottom-6 right-6 z-40">
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-3">
         <Button
           onClick={() => setIsAIMinimized(!isAIMinimized)}
           className={`w-14 h-14 rounded-full shadow-lg transition-all duration-300 hover:scale-110 ${
@@ -1719,9 +1739,18 @@ const Index: React.FC = () => {
               : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
           }`}
           title={isAIMinimized ? 'Open AI Assistant' : 'Close AI Assistant'}
+          data-tour="floating-ai-button"
         >
           <MessageCircle className="h-6 w-6" />
         </Button>
+        
+        {/* Floating Tour Button */}
+        <TourButton 
+          variant="default" 
+          size="sm" 
+          className="w-14 h-14 rounded-full shadow-lg bg-green-600 hover:bg-green-700 text-white"
+          data-tour="floating-tour-button"
+        />
       </div>
 
       {/* Sheet Selection Modal */}
@@ -1731,6 +1760,7 @@ const Index: React.FC = () => {
         onCreateBlankSheet={handleCreateBlankSheet}
         onClose={() => setShowSheetSelectionModal(false)}
         isOpen={showSheetSelectionModal}
+        data-tour="sheet-selector"
       />
 
       {/* Research Modal */}
@@ -1739,6 +1769,9 @@ const Index: React.FC = () => {
         onClose={() => setShowResearchModal(false)}
         onResearchComplete={handleResearchComplete}
       />
+
+      {/* Tour Debug Component */}
+      <TourDebug />
 
     </div>
   );
