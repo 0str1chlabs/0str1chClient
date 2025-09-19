@@ -1421,7 +1421,7 @@ ${sampleRows.join('\n')}`;
           position: 'fixed',
           right: 20,
           top: 100, // Position below header
-          zIndex: 30, // Lower z-index to stay below modals
+          zIndex: 10, // Low enough to go behind modal overlays
           borderRadius: '9999px 0 0 9999px',
           background: 'hsl(var(--background))',
           boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12), 0 1.5px 4px 0 rgba(0, 0, 0, 0.10)',
@@ -1443,16 +1443,16 @@ ${sampleRows.join('\n')}`;
     right: 20,
     top: 100, // Position below header (header is 64px + some margin)
     maxHeight: 'calc(100vh - 120px)', // Ensure it doesn't exceed viewport height
-    zIndex: 9999, // Very high z-index to stay on top
+    zIndex: 10, // Low enough to go behind modal overlays
   } : {
     position: 'fixed' as const,
     left: position.x,
     top: position.y,
-    zIndex: 9999, // Very high z-index to stay on top
+    zIndex: 10, // Low enough to go behind modal overlays
   };
 
   return (
-    <div id="ai-chatbox" data-ai-chatbox className="ai-assistant" style={fixedStyles}>
+    <div id="ai-chatbox" data-ai-chatbox className="ai-assistant" style={{ ...fixedStyles, opacity: 0.94 }}>
       <Resizable
         initialWidth={500}
         initialHeight={600}
@@ -1461,8 +1461,20 @@ ${sampleRows.join('\n')}`;
         maxWidth={900}
         maxHeight={800}
       >
-        <Card className="w-full h-full shadow-2xl flex flex-col overflow-hidden bg-background/80 backdrop-blur-md border border-border relative z-50" style={{ filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))' }}>
-          <div className="flex items-center justify-between p-3 border-b border-border drag-handle cursor-move bg-background/95 backdrop-blur-sm sticky top-0 z-10" onMouseDown={handleDragStart}>
+        <div className="w-full h-full shadow-2xl flex flex-col overflow-hidden relative z-50 rounded-lg" style={{ 
+          filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))',
+          backgroundColor: 'rgba(255, 255, 255, 0.3) !important',
+          backdropFilter: 'blur(20px) !important',
+          border: '1px solid rgba(255, 255, 255, 0.2) !important',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25) !important',
+          WebkitBackdropFilter: 'blur(20px) !important'
+        }}>
+          <div className="flex items-center justify-between p-3 drag-handle cursor-move sticky top-0 z-10" style={{ 
+            backgroundColor: 'rgba(255, 255, 255, 0.4) !important',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.2) !important',
+            backdropFilter: 'blur(10px) !important',
+            WebkitBackdropFilter: 'blur(10px) !important'
+          }} onMouseDown={handleDragStart}>
             <div className="flex items-center gap-2 font-semibold text-sm">
               <Wand2 className="h-5 w-5 text-primary" />
               <div className="flex flex-col">
@@ -1701,27 +1713,39 @@ ${sampleRows.join('\n')}`;
             
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0"><FileUp className="h-5 w-5" /></Button>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Input
-                    placeholder={
-                      isProcessingCSV
-                        ? "Processing CSV data..."
-                        : isDuckDBProcessing 
-                        ? "Processing data..." 
-                        : !isSchemaReady 
-                        ? "Waiting for schema..." 
-                        : selectionContext
-                        ? `Ask about selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'}...`
-                        : "Ask the AI to do something..."
-                    }
-                    value={message}
-                    onChange={e => setMessage(e.target.value)}
-                    onKeyPress={e => e.key === 'Enter' && handleSendMessage()}
-                    disabled={isLoading || isDuckDBProcessing || !isSchemaReady || isProcessingCSV}
-                    className="no-drag"
-                  />
-                </TooltipTrigger>
+               <Tooltip>
+                 <TooltipTrigger asChild>
+                   <Textarea
+                     placeholder={
+                       isProcessingCSV
+                         ? "Processing CSV data..."
+                         : isDuckDBProcessing 
+                         ? "Processing data..." 
+                         : !isSchemaReady 
+                         ? "Waiting for schema..." 
+                         : selectionContext
+                         ? `Ask about selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'}...`
+                         : "Ask the AI to do something..."
+                     }
+                     value={message}
+                     onChange={e => setMessage(e.target.value)}
+                     onKeyDown={e => {
+                       if (e.key === 'Enter' && !e.shiftKey) {
+                         e.preventDefault();
+                         handleSendMessage();
+                       }
+                     }}
+                     disabled={isLoading || isDuckDBProcessing || !isSchemaReady || isProcessingCSV}
+                     className="no-drag resize-none min-h-[40px] max-h-[200px]"
+                     style={{ 
+                       backgroundColor: 'rgba(255, 255, 255, 0.3) !important',
+                       border: '1px solid rgba(255, 255, 255, 0.2) !important',
+                       backdropFilter: 'blur(10px) !important',
+                       WebkitBackdropFilter: 'blur(10px) !important'
+                     }}
+                     ref={textareaRef}
+                   />
+                 </TooltipTrigger>
                 {(!isSchemaReady && !isDuckDBProcessing) && (
                   <TooltipContent>
                     <p>Upload CSV or add Data to get started</p>
@@ -1751,7 +1775,7 @@ ${sampleRows.join('\n')}`;
               </Select>
             </div>
           </div>
-        </Card>
+        </div>
       </Resizable>
     </div>
   );

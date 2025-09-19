@@ -128,14 +128,14 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
     left: '20px',
     top: '300px',
     transform: 'none',
-    zIndex: 90,
+    zIndex: 5,
   } : {
     position: 'fixed' as const,
     left: position.x,
     top: position.y,
     transform: `rotate(${rotation}deg)`,
     transformOrigin: 'center center',
-    zIndex: 30,
+    zIndex: 5,
   };
 
   return (

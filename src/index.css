@@ -191,11 +191,11 @@
 
 /* AI Assistant positioning and styling */
 .ai-assistant {
-  z-index: 9999 !important;
+  z-index: 40 !important;
   position: fixed !important;
 }
 
-/* Ensure AI Assistant stays on top of all other elements */
+/* Ensure AI Assistant stays on top of most content but below modals */
 .ai-assistant * {
   z-index: inherit;
 }
