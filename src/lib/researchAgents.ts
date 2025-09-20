@@ -191,7 +191,9 @@ export class WebResearcher {
       const searchPromises = researchPlan.queries.map(async (query, index) => {
         console.log(`🔍 Executing query ${index + 1}: "${query}"`);
         
-        const response = await fetch('/api/research', {
+        // Use backend URL for research API
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+        const response = await fetch(`${backendUrl}/api/research`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
