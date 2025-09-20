@@ -76,6 +76,7 @@ const Index: React.FC = () => {
     restoreOriginalState,
     addSheet,
     addSheetFromCSV,
+    addPredefinedSheet,
     removeSheet,
     setActiveSheet,
     addMoreRows,
@@ -658,60 +659,42 @@ const Index: React.FC = () => {
       return;
     }
     
-    // Embed research data into the current sheet
-    const currentSheet = state.sheets[activeSheetIndex];
-    if (currentSheet) {
-      try {
-        console.log('📊 Embedding research data into sheet:', currentSheet.id);
-        console.log('📊 Current sheet structure:', {
-          id: currentSheet.id,
-          rowCount: currentSheet.rowCount,
-          colCount: currentSheet.colCount,
-          cellCount: Object.keys(currentSheet.cells).length
-        });
-        console.log('📊 Research data structure:', {
-          hasSpreadsheetData: !!researchData.spreadsheetData,
-          hasSources: !!researchData.sources,
-          hasResearchPlan: !!researchData.researchPlan,
-          spreadsheetDataKeys: researchData.spreadsheetData ? Object.keys(researchData.spreadsheetData) : 'none',
-          sourcesLength: researchData.sources?.length || 0
-        });
-        const updatedSheet = ResearchService.embedResearchData(currentSheet, researchData);
-        
-        // Update the sheet in the state
-        updateExistingSheet(currentSheet.id, {
-          cells: updatedSheet.cells,
-          rowCount: updatedSheet.rowCount,
-          colCount: updatedSheet.colCount,
-          name: updatedSheet.name
-        });
-        
-        // Show success notification
-        const sourceCount = researchData.sources?.length || researchData.spreadsheetData?.metadata?.sourceCount || 0;
-        addNotification({
-          type: 'success',
-          title: 'Research Completed!',
-          message: `Found ${sourceCount} sources. Data has been embedded into your spreadsheet.`,
-          duration: 7000
-        });
-      } catch (error) {
-        console.error('❌ Error embedding research data:', error);
-        addNotification({
-          type: 'error',
-          title: 'Embedding Failed',
-          message: `Failed to embed research data: ${error.message}`,
-          duration: 7000
-        });
-      }
-    } else {
+    try {
+      console.log('📊 Creating new research sheet with data:', {
+        hasSpreadsheetData: !!researchData.spreadsheetData,
+        hasSources: !!researchData.sources,
+        hasResearchPlan: !!researchData.researchPlan,
+        spreadsheetDataKeys: researchData.spreadsheetData ? Object.keys(researchData.spreadsheetData) : 'none',
+        sourcesLength: researchData.sources?.length || 0
+      });
+      
+      // Create a new sheet specifically for the research data
+      const newResearchSheet = ResearchService.createResearchSheet(researchData);
+      
+      // Add the new research sheet to the spreadsheet
+      addPredefinedSheet(newResearchSheet);
+      
+      // Show success notification
+      const sourceCount = researchData.sources?.length || researchData.spreadsheetData?.metadata?.sourceCount || 0;
+      const query = researchData.researchPlan?.queries?.[0] || researchData.query || 'Research';
       addNotification({
-        type: 'warning',
-        title: 'No Active Sheet',
-        message: 'No active sheet found. Please create a sheet first.',
-        duration: 5000
+        type: 'success',
+        title: 'Research Completed!',
+        message: `Found ${sourceCount} sources. New sheet "${newResearchSheet.name}" created with research data.`,
+        duration: 7000
+      });
+      
+      console.log('✅ New research sheet created:', newResearchSheet.name);
+    } catch (error) {
+      console.error('❌ Error creating research sheet:', error);
+      addNotification({
+        type: 'error',
+        title: 'Sheet Creation Failed',
+        message: `Failed to create new sheet with research data: ${error.message}`,
+        duration: 7000
       });
     }
-  }, [state.sheets, activeSheetIndex, updateExistingSheet, addNotification]);
+  }, [addPredefinedSheet, addNotification]);
 
   const handleTabSwitch = useCallback((index: number) => {
     // Bounds checking

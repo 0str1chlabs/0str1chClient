@@ -44,6 +44,37 @@ export class ResearchService {
   }
 
   /**
+   * Creates a new sheet from research data
+   */
+  static createResearchSheet(researchData: any, sheetName?: string): SheetData {
+    try {
+      console.log('🔍 ResearchService.createResearchSheet called with:', researchData);
+      
+      // Generate a unique sheet ID
+      const sheetId = `research-sheet-${Date.now()}`;
+      
+      // Create sheet name from research query or use provided name
+      const query = researchData.researchPlan?.queries?.[0] || researchData.query || 'Research Results';
+      const finalSheetName = sheetName || `Research: ${query.substring(0, 30)}${query.length > 30 ? '...' : ''}`;
+      
+      // Create empty sheet structure
+      const newSheet: SheetData = {
+        id: sheetId,
+        name: finalSheetName,
+        cells: {},
+        rowCount: 1000,
+        colCount: 26
+      };
+      
+      // Embed research data into the new sheet
+      return this.embedResearchData(newSheet, researchData);
+    } catch (error) {
+      console.error('❌ Error in createResearchSheet:', error);
+      throw new Error(`Research sheet creation failed: ${error.message}`);
+    }
+  }
+
+  /**
    * Embeds multi-agent research data into a spreadsheet
    */
   static embedResearchData(sheet: SheetData, researchData: any): SheetData {

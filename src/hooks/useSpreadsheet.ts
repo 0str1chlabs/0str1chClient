@@ -152,6 +152,13 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         draft.activeSheetId = newId;
         break;
       }
+      case 'ADD_PREDEFINED_SHEET': {
+        // Add a pre-created sheet (e.g., from research data)
+        const newSheet = action.sheet;
+        draft.sheets.push(newSheet);
+        draft.activeSheetId = newSheet.id;
+        break;
+      }
       case 'ADD_MORE_ROWS': {
         const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
         if (sheet) {
@@ -497,6 +504,10 @@ export const useSpreadsheet = () => {
     dispatchWithHistory({ type: 'ADD_SHEET_FROM_CSV', csvData, name });
   }, [dispatchWithHistory]);
 
+  const addPredefinedSheet = useCallback((sheet: SheetData) => {
+    dispatchWithHistory({ type: 'ADD_PREDEFINED_SHEET', sheet });
+  }, [dispatchWithHistory]);
+
   const addMoreRows = useCallback(() => {
     const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
     const currentRowCount = currentSheet?.rowCount || 0;
@@ -624,6 +635,7 @@ export const useSpreadsheet = () => {
     removeChart,
     loadCSVData,
     addSheetFromCSV,
+    addPredefinedSheet,
     addMoreRows,
     bulkUpdateCells,
     updateExistingSheet,
