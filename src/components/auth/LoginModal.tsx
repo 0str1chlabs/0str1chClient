@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { authService, User } from './AuthService';
 import { GoogleLogin } from '@react-oauth/google';
+import { PasswordResetFlow } from './PasswordResetFlow';
 
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -10,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Separator } from '../ui/separator';
 import { Alert, AlertDescription } from '../ui/alert';
-import { Loader2, Mail, Lock, User as UserIcon, Chrome } from 'lucide-react';
+import { Loader2, Mail, Lock, User as UserIcon, Chrome, HelpCircle } from 'lucide-react';
 
 interface LoginModalProps {
   onLoginSuccess: (user: User) => void;
@@ -22,6 +23,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
@@ -100,6 +102,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
     setLoading(false);
   };
 
+  const handlePasswordResetSuccess = (email: string) => {
+    setLoginEmail(email);
+    setActiveTab('login');
+    setShowPasswordReset(false);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <Card className="w-full max-w-md">
@@ -162,15 +170,28 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="remember-me"
-                    checked={rememberMe}
-                    onCheckedChange={(checked) => setRememberMe(checked as boolean)}
-                  />
-                  <Label htmlFor="remember-me" className="text-sm">
-                    Remember me
-                  </Label>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="remember-me"
+                      checked={rememberMe}
+                      onCheckedChange={(checked) => setRememberMe(checked as boolean)}
+                    />
+                    <Label htmlFor="remember-me" className="text-sm">
+                      Remember me
+                    </Label>
+                  </div>
+                  
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowPasswordReset(true)}
+                    className="text-sm text-muted-foreground hover:text-primary"
+                  >
+                    <HelpCircle className="h-3 w-3 mr-1" />
+                    Forgot Password?
+                  </Button>
                 </div>
 
                 <Button type="submit" className="w-full" disabled={loading}>
@@ -271,6 +292,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
           </div>
         </CardContent>
       </Card>
+
+      {/* Password Reset Flow */}
+      <PasswordResetFlow
+        isOpen={showPasswordReset}
+        onClose={() => setShowPasswordReset(false)}
+        onSuccess={handlePasswordResetSuccess}
+      />
     </div>
   );
 }; 
