@@ -14,6 +14,7 @@ import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
 import { Chart } from '@/components/ui/chart';
 import { createCellSelectionContext, formatSelectionContextForAI, CellSelectionContext } from '@/lib/cellSelectionUtils';
+import { getResponsivePosition, getResponsiveSize, constrainToViewport, getViewportBounds } from '@/lib/viewportUtils';
 import axios from 'axios'; // Added axios import
 
 interface Message {
@@ -91,7 +92,12 @@ export const AIAssistant = ({
   const isDuckDBProcessing = parentIsDuckDBProcessing || false;
   const isSchemaReady = parentIsSchemaReady || false;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [position, setPosition] = useState({ x: 200, y: 100 });
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  // Initialize position with responsive positioning
+  const [position, setPosition] = useState(() => {
+    const viewport = getViewportBounds();
+    return getResponsivePosition('ai-assistant', viewport);
+  });
   const [dragging, setDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const [selectedModel, setSelectedModel] = useState('0str1ch 1.0');
@@ -100,6 +106,20 @@ export const AIAssistant = ({
   const { user } = useAuth();
   const [pendingAction, setPendingAction] = useState<any>(null);
   const [pendingReasoning, setPendingReasoning] = useState<string[]>([]);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    const scrollToBottom = () => {
+      if (scrollAreaRef.current) {
+        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+      }
+    };
+
+    // Small delay to ensure DOM is updated
+    const timeoutId = setTimeout(scrollToBottom, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }, [messages]);
   const [pendingType, setPendingType] = useState<'function' | 'sql' | null>(null);
   const [pendingRaw, setPendingRaw] = useState<any>(null);
   const [pendingActionType, setPendingActionType] = useState<'update' | 'reply' | null>(null);
@@ -294,6 +314,13 @@ export const AIAssistant = ({
 
   const addMessage = (type: 'ai' | 'user', content: string, chartData?: { data: any[]; chartSpec: any }) => {
     setMessages(prev => [...prev, { type, content, chartData }]);
+    
+    // Auto-scroll to bottom after adding message
+    setTimeout(() => {
+      if (scrollAreaRef.current) {
+        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+      }
+    }, 50);
   };
 
   const createSheetSummary = async () => {
@@ -1001,14 +1028,15 @@ ${sampleRows.join('\n')}`;
     const newX = e.clientX - dragOffset.current.x;
     const newY = e.clientY - dragOffset.current.y;
     
-    // Keep within viewport bounds but allow more freedom
-    const maxX = window.innerWidth - 400; // Allow some overflow
-    const maxY = window.innerHeight - 600; // Allow some overflow
+    // Use viewport utility to constrain position
+    const aiAssistantSize = getResponsiveSize('ai-assistant', getViewportBounds());
+    const constrainedPosition = constrainToViewport(
+      { x: newX, y: newY },
+      aiAssistantSize,
+      20 // margin
+    );
     
-    setPosition({
-      x: Math.max(-50, Math.min(newX, maxX)), // Allow slight overflow
-      y: Math.max(64, Math.min(newY, maxY)), // Keep below header (64px)
-    });
+    setPosition(constrainedPosition);
   };
   const handleDragEnd = () => {
     setDragging(false);
@@ -1029,6 +1057,20 @@ ${sampleRows.join('\n')}`;
   }, [dragging, isFixed]);
 
   useEffect(() => { setMinimized(isMinimized); }, [isMinimized]);
+
+  // Handle window resize to maintain responsive positioning
+  useEffect(() => {
+    const handleResize = () => {
+      if (isFixed) {
+        // Update position to maintain responsive layout
+        const viewport = getViewportBounds();
+        setPosition(getResponsivePosition('ai-assistant', viewport));
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isFixed]);
 
   // Toggle fixed/movable mode
   const toggleFixedMode = () => {
@@ -1414,13 +1456,14 @@ ${sampleRows.join('\n')}`;
   };
 
   if (minimized) {
+    const responsivePosition = getResponsivePosition('ai-assistant', getViewportBounds());
     return (
       <button
         onClick={() => { setMinimized(false); onToggleMinimize(); }}
         style={{
           position: 'fixed',
-          right: 20,
-          top: 100, // Position below header
+          right: `${getViewportBounds().width - responsivePosition.x - 50}px`, // Calculate right position
+          top: `${responsivePosition.y}px`,
           zIndex: 10, // Low enough to go behind modal overlays
           borderRadius: '9999px 0 0 9999px',
           background: 'hsl(var(--background))',
@@ -1437,11 +1480,12 @@ ${sampleRows.join('\n')}`;
     );
   }
 
-  // Fixed position styles
+  // Fixed position styles with responsive positioning
+  const responsivePosition = getResponsivePosition('ai-assistant', getViewportBounds());
   const fixedStyles = isFixed ? {
     position: 'fixed' as const,
-    right: 20,
-    top: 100, // Position below header (header is 64px + some margin)
+    right: `${getViewportBounds().width - responsivePosition.x - 500}px`, // Calculate right position from left
+    top: `${responsivePosition.y}px`,
     maxHeight: 'calc(100vh - 120px)', // Ensure it doesn't exceed viewport height
     zIndex: 10, // Low enough to go behind modal overlays
   } : {
@@ -1452,7 +1496,7 @@ ${sampleRows.join('\n')}`;
   };
 
   return (
-    <div id="ai-chatbox" data-ai-chatbox className="ai-assistant" style={{ ...fixedStyles, opacity: 0.94 }}>
+    <div id="ai-chatbox" data-ai-chatbox className="ai-assistant viewport-safe" style={{ ...fixedStyles, opacity: 0.94 }}>
       <Resizable
         initialWidth={500}
         initialHeight={600}
@@ -1522,7 +1566,11 @@ ${sampleRows.join('\n')}`;
               </Button>
             </div>
           </div>
-          <ScrollArea className="flex-1 p-4 custom-blue-scrollbar" style={{ maxHeight: 'calc(100% - 100px)' }}>
+          <div 
+            ref={scrollAreaRef} 
+            className="flex-1 p-4 ai-chat-scrollbar overflow-y-auto" 
+            style={{ maxHeight: 'calc(100% - 100px)' }}
+          >
             <div className="space-y-6">
               {messages.map((msg, index) => (
                 <div
@@ -1672,7 +1720,7 @@ ${sampleRows.join('\n')}`;
                 </div>
               )}
             </div>
-          </ScrollArea>
+          </div>
           <div className="p-4 border-t border-border space-y-4">
             {/* Selection Context Indicator */}
             {selectionContext && (

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Toolbar } from './Toolbar';
 import { RotateCw, Move, Pin, PinOff, LayoutGrid } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getResponsivePosition, getResponsiveSize, constrainToViewport, getViewportBounds } from '@/lib/viewportUtils';
 
 interface MovableToolbarProps {
   onFormat: (action: string, value?: string) => void;
@@ -22,7 +23,11 @@ interface MovableToolbarProps {
 }
 
 export const MovableToolbar = (props: MovableToolbarProps) => {
-  const [position, setPosition] = useState({ x: 24, y: 128 }); // Default position (left-6 top-32)
+  // Initialize with responsive positioning
+  const [position, setPosition] = useState(() => {
+    const viewport = getViewportBounds();
+    return getResponsivePosition('toolbar', viewport);
+  });
   const [rotation, setRotation] = useState(0); // Rotation in degrees
   const [isDragging, setIsDragging] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
@@ -60,14 +65,15 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         const newX = e.clientX - dragStart.x;
         const newY = e.clientY - dragStart.y;
         
-        // Keep toolbar within viewport bounds
-        const maxX = window.innerWidth - 56; // toolbar width
-        const maxY = window.innerHeight - 400; // approximate toolbar height
+        // Keep toolbar within viewport bounds using utility function
+        const toolbarSize = getResponsiveSize('toolbar', getViewportBounds());
+        const constrainedPosition = constrainToViewport(
+          { x: newX, y: newY },
+          toolbarSize,
+          20 // margin
+        );
         
-        setPosition({
-          x: Math.max(0, Math.min(newX, maxX)),
-          y: Math.max(0, Math.min(newY, maxY))
-        });
+        setPosition(constrainedPosition);
       }
       
       if (isRotating && !isFixed) {
@@ -103,6 +109,20 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
     };
   }, [isDragging, isRotating, dragStart, rotation, isFixed]);
 
+  // Handle window resize to maintain responsive positioning
+  useEffect(() => {
+    const handleResize = () => {
+      if (isFixed) {
+        // Update position to maintain responsive layout
+        const viewport = getViewportBounds();
+        setPosition(getResponsivePosition('toolbar', viewport));
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isFixed]);
+
   // Handle rotation button click (cycle through common angles)
   const handleRotationClick = () => {
     if (isFixed) return; // Don't allow rotation when fixed
@@ -116,17 +136,18 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   const toggleFixedMode = () => {
     setIsFixed(!isFixed);
     if (!isFixed) {
-      // When switching to fixed mode, reset position to left side
-      setPosition({ x: 24, y: 128 });
+      // When switching to fixed mode, reset position to responsive position
+      const viewport = getViewportBounds();
+      setPosition(getResponsivePosition('toolbar', viewport));
       setRotation(0);
     }
   };
 
-  // Fixed position styles
+  // Fixed position styles with responsive positioning
   const fixedStyles = isFixed ? {
     position: 'fixed' as const,
-    left: '20px',
-    top: '300px',
+    left: `${position.x}px`,
+    top: `${position.y}px`,
     transform: 'none',
     zIndex: 5,
   } : {
@@ -141,7 +162,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   return (
     <div
       ref={toolbarRef}
-      className="movable-toolbar select-none"
+      className="movable-toolbar select-none viewport-safe"
       style={fixedStyles}
       onMouseDown={handleMouseDown}
       data-toolbar-handle="true"
@@ -150,7 +171,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
       <div className="relative">
         {/* Toggle Fixed/Movable Button */}
         <div 
-                      className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-white dark:bg-gray-800 rounded-t-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                      className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-transparent backdrop-blur-sm rounded-t-lg px-2 py-1 shadow-md border border-transparent cursor-pointer hover:bg-white/20 transition-colors"
           onClick={toggleFixedMode}
           title={isFixed ? "Make Movable" : "Fix Position"}
         >
@@ -159,7 +180,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         
         {/* Rearrange Button */}
         <div 
-          className="absolute -top-8 left-16 bg-white dark:bg-gray-800 rounded-t-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          className="absolute -top-8 left-16 bg-transparent backdrop-blur-sm rounded-t-lg px-2 py-1 shadow-md border border-transparent cursor-pointer hover:bg-white/20 transition-colors"
           onClick={props.onRearrange}
           title="Rearrange Layout"
         >
@@ -169,7 +190,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         {/* Drag Handle - only show when not fixed */}
         {!isFixed && (
           <div 
-            className="absolute -top-8 -left-8 bg-white dark:bg-gray-800 rounded-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-move hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            className="absolute -top-8 -left-8 bg-transparent backdrop-blur-sm rounded-lg px-2 py-1 shadow-md border border-transparent cursor-move hover:bg-white/20 transition-colors"
             data-toolbar-handle="true"
           >
                          <Move size={12} className="text-foreground" />
@@ -180,7 +201,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         {!isFixed && (
           <>
             <div 
-              className="absolute -top-8 -right-8 bg-white dark:bg-gray-800 rounded-lg p-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              className="absolute -top-8 -right-8 bg-transparent backdrop-blur-sm rounded-lg p-1 shadow-md border border-transparent cursor-pointer hover:bg-white/20 transition-colors"
               onMouseDown={handleRotationMouseDown}
               title="Rotate Toolbar"
             >
@@ -191,7 +212,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
             <Button
               variant="ghost"
               size="sm"
-              className="absolute -top-8 left-8 bg-white dark:bg-gray-800 rounded-lg p-1 shadow-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              className="absolute -top-8 left-8 bg-transparent backdrop-blur-sm rounded-lg p-1 shadow-md border border-transparent hover:bg-white/20 transition-colors"
               onClick={handleRotationClick}
               title="Quick Rotate (45° increments)"
             >
@@ -201,7 +222,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         )}
         
         {/* Main Toolbar */}
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-gray-200 dark:border-gray-700">
+        <div className="bg-transparent rounded-2xl shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-transparent backdrop-blur-sm">
           <Toolbar {...props} />
         </div>
       </div>

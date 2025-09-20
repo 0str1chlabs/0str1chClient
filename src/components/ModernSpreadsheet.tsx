@@ -32,6 +32,7 @@ import {
   SelectionPerformanceMonitor,
   getVisibleRange
 } from '@/lib/cellSelectionUtils';
+import { getResponsivePosition, getResponsiveSize, constrainToViewport, getViewportBounds } from '@/lib/viewportUtils';
 
 interface ModernSpreadsheetProps {
   sheet: SheetData;
@@ -98,7 +99,7 @@ const SpreadsheetCell = React.memo(({
     if (cell?.hasAIUpdate) {
       return 'rgba(34, 197, 94, 0.8)'; // Solid green background for AI updates
     }
-    const bgColor = cell?.style?.backgroundColor || (cell?.value ? 'white' : 'white');
+    const bgColor = cell?.style?.backgroundColor || (cell?.value ? 'rgba(255, 255, 255, 0.4)' : 'transparent');
     
     // Debug logging for cell A2
     if (cellId === 'A2') {
@@ -364,9 +365,10 @@ export const ModernSpreadsheet = ({
   const [menuCol, setMenuCol] = useState<string | null>(null);
   const [hoveredCol, setHoveredCol] = useState<number | null>(null);
   const [sortedCol, setSortedCol] = useState<string | null>(null);
-  const [dimensions, setDimensions] = useState({
-    width: window.innerWidth * 0.75,
-    height: window.innerHeight * 0.8
+  // Initialize dimensions with responsive sizing
+  const [dimensions, setDimensions] = useState(() => {
+    const viewport = getViewportBounds();
+    return getResponsiveSize('spreadsheet', viewport);
   });
 
   // Selection box state for Windows-style drag selection
@@ -404,13 +406,14 @@ export const ModernSpreadsheet = ({
     const updateDimensions = () => {
       // Only update dimensions from window resize if user hasn't manually resized
       if (!hasManualResize) {
-        const newWidth = window.innerWidth * 0.75;
-        const newHeight = window.innerHeight * 0.8;
-        console.log('Updating dimensions from window resize:', { newWidth, newHeight, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight });
-        setDimensions({
-          width: newWidth,
-          height: newHeight
+        const viewport = getViewportBounds();
+        const responsiveSize = getResponsiveSize('spreadsheet', viewport);
+        console.log('Updating dimensions from window resize:', { 
+          responsiveSize, 
+          viewportWidth: viewport.width, 
+          viewportHeight: viewport.height 
         });
+        setDimensions(responsiveSize);
       } else {
         console.log('Skipping window resize update - manual resize detected');
       }
@@ -798,11 +801,11 @@ export const ModernSpreadsheet = ({
 
   // Zoom functionality
   const handleZoomIn = useCallback(() => {
-    setZoomLevel(prev => Math.min(prev + 25, 400));
+    setZoomLevel(prev => Math.min(prev + 25, 500));
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    setZoomLevel(prev => Math.max(prev - 25, 25));
+    setZoomLevel(prev => Math.max(prev - 25, 10));
   }, []);
 
   const handleZoomReset = useCallback(() => {
@@ -834,7 +837,13 @@ export const ModernSpreadsheet = ({
     };
 
     const handleWheel = (e: WheelEvent) => {
-      // Prevent the event from bubbling up to the zoom wrapper
+      // Check if we're holding Ctrl/Cmd for zoom
+      if (e.ctrlKey || e.metaKey) {
+        // Allow zoom to bubble up to the canvas
+        return;
+      }
+      
+      // Prevent the event from bubbling up to the zoom wrapper for normal scrolling
       e.stopPropagation();
       
       // Use requestAnimationFrame for smooth scrolling
@@ -964,11 +973,29 @@ export const ModernSpreadsheet = ({
     }
   }, [editingCell]);
 
+  // Get responsive position for spreadsheet
+  const [position, setPosition] = useState(() => {
+    const viewport = getViewportBounds();
+    return getResponsivePosition('spreadsheet', viewport);
+  });
+
+  // Update position on window resize
+  useEffect(() => {
+    const updatePosition = () => {
+      const viewport = getViewportBounds();
+      const newPosition = getResponsivePosition('spreadsheet', viewport);
+      setPosition(newPosition);
+    };
+
+    window.addEventListener('resize', updatePosition);
+    return () => window.removeEventListener('resize', updatePosition);
+  }, []);
+  
   return (
     <Rnd
       default={{
-        x: 50,
-        y: 100,
+        x: position.x,
+        y: position.y,
         width: dimensions.width,
         height: dimensions.height,
       }}
@@ -1016,7 +1043,7 @@ export const ModernSpreadsheet = ({
         boxShadow: 'none'
       }}
     >
-      <div className="bg-green-50 dark:bg-green-900 rounded-2xl border border-green-200 dark:border-green-700 overflow-hidden spreadsheet-container modern-spreadsheet" style={{ backgroundImage: 'radial-gradient(circle, #10b981 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
+      <div className="bg-transparent rounded-2xl border border-transparent overflow-hidden spreadsheet-container modern-spreadsheet viewport-safe backdrop-blur-sm" style={{ backgroundImage: 'radial-gradient(circle, rgba(0, 0, 0, 0.15) 1px, transparent 1px)', backgroundSize: '20px 20px', backgroundColor: '#ffffff' }}>
 
         {/* Control Bar */}
         <div className="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 flex items-center justify-between cursor-move">
@@ -1458,15 +1485,22 @@ export const ModernSpreadsheet = ({
       {/* CSS for dotted background and animations */}
       <style>{`
         .spreadsheet-container {
-          background-image: radial-gradient(circle, #10b981 1px, transparent 1px);
+          background-image: radial-gradient(circle, rgba(0, 0, 0, 0.15) 1px, transparent 1px);
           background-size: 20px 20px;
+          background-color: #ffffff;
         }
         
-        /* Performance-optimized animations using CSS custom properties */
+        /* Ensure cells show dotted pattern through them */
         .spreadsheet-cell {
+          background-color: rgba(255, 255, 255, 0.4) !important;
+          backdrop-filter: blur(0.2px);
           will-change: transform, opacity, background-color;
           transform: translateZ(0); /* Force hardware acceleration */
           backface-visibility: hidden; /* Optimize for transforms */
+        }
+        
+        .spreadsheet-cell:not([style*="background-color"]) {
+          background-color: transparent !important;
         }
         
         .spreadsheet-cell:hover {
@@ -1539,6 +1573,8 @@ export const ModernSpreadsheet = ({
         .column-header, .row-header {
           will-change: background-color;
           transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+          background-color: rgba(16, 185, 129, 0.9) !important;
+          backdrop-filter: blur(1px);
         }
         
         /* Smooth zoom transitions */

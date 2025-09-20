@@ -358,7 +358,7 @@ export const Toolbar = ({
           
           {/* Text Formatting Dropdown */}
           {showTextFormat && (
-            <div className="absolute left-12 top-0 bg-background rounded-lg shadow-lg border border-border p-2 z-50" data-text-format="true">
+            <div className="absolute left-12 top-0 bg-transparent backdrop-blur-sm rounded-lg shadow-lg border border-transparent p-2 z-50" data-text-format="true">
               <div className="flex flex-col gap-1">
                 <Button 
                   variant={appliedFormats.bold ? "default" : "ghost"}
@@ -489,7 +489,7 @@ export const Toolbar = ({
           
           {/* Color Palette Dropdown */}
           {showColorPalette && (
-            <div className="absolute left-12 top-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50" data-color-palette="true">
+            <div className="absolute left-12 top-0 bg-transparent backdrop-blur-sm rounded-lg shadow-lg border border-transparent p-2 z-50" data-color-palette="true">
               <div className="grid grid-cols-7 gap-1 w-48">
                 {highlightColors.map((color, index) => (
                   <button
@@ -547,7 +547,7 @@ export const Toolbar = ({
           
           {/* Text Color Dropdown */}
           {showTextColor && (
-            <div className="absolute left-12 top-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50" data-text-color="true">
+            <div className="absolute left-12 top-0 bg-transparent backdrop-blur-sm rounded-lg shadow-lg border border-transparent p-2 z-50" data-text-color="true">
               <div className="grid grid-cols-7 gap-1 w-48">
                 {textColors.map((color, index) => (
                   <button

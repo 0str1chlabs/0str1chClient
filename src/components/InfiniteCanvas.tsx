@@ -50,23 +50,21 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
     const spreadsheetRef = useRef<HTMLDivElement>(null);
 
     const handleWheel = useCallback((ref: any, event: WheelEvent) => {
-      // Check if we're hovering over a spreadsheet or scrollable content
+      // Check if we're hovering over scrollable content that should not zoom
       const target = event.target as HTMLElement;
-      const isOverSpreadsheet = target.closest('.spreadsheet-container') || 
-                                target.closest('.overflow-auto') ||
-                                target.closest('[data-scrollable="true"]') ||
-                                target.closest('.modern-spreadsheet') ||
-                                target.closest('.ai-assistant') ||
-                                target.closest('.toolbar') ||
-                                target.closest('.chart-block');
+      const isOverScrollableContent = target.closest('.overflow-auto') ||
+                                     target.closest('[data-scrollable="true"]') ||
+                                     target.closest('.ai-assistant') ||
+                                     target.closest('.toolbar');
       
-      if (isOverSpreadsheet) {
+      // Only prevent zoom for specific scrollable content, not the entire spreadsheet
+      if (isOverScrollableContent) {
         // Allow normal scrolling, prevent zoom
         event.stopPropagation();
         return false; // Prevent zoom
       }
       
-      // Default zoom behavior for canvas - let the library handle it
+      // Allow zoom for the entire canvas area including spreadsheet
       return true;
     }, []);
 
@@ -192,12 +190,12 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
 
     // Expose transform methods to parent via ref
     useImperativeHandle(ref, () => ({
-      zoomIn: (step = 0.1) => {
+      zoomIn: (step = 0.3) => {
         if (transformRef.current) {
           transformRef.current.zoomIn(step);
         }
       },
-      zoomOut: (step = 0.1) => {
+      zoomOut: (step = 0.3) => {
         if (transformRef.current) {
           transformRef.current.zoomOut(step);
         }
@@ -292,55 +290,56 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
         ref={wrapperRef}
         style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       >
-        {/* Infinite Canvas Container */}
-                 <div className="infinite-canvas"
-         style={{
-           width: '8000px',
-           height: '6000px',
-           backgroundColor: '#1a1a1a',
-           backgroundImage: 'radial-gradient(circle, #333333 1px, transparent 1px)',
-           backgroundSize: '20px 20px',
-           backgroundPosition: '0 0',
-         }}>
-          <TransformWrapper
-            ref={transformRef}
-            initialScale={1}
-            initialPositionX={0}
-            initialPositionY={0}
-            minScale={0.3}
-            maxScale={3}
-            centerOnInit={true}
-            limitToBounds={false}
-            panning={{ disabled: false }}
-            wheel={{ 
-              step: 0.1,
-              wheelDisabled: false,
-              touchPadDisabled: false
-            }}
-            doubleClick={{ disabled: true }}
-            pinch={{ step: 0.1 }}
-            onWheel={handleWheel}
-            onZoom={ref => {
-              if (typeof onZoomChange === 'function') {
-                onZoomChange(ref.state.scale);
-              }
-            }}
+        {/* Transform Wrapper covers entire viewport */}
+        <TransformWrapper
+          ref={transformRef}
+          initialScale={1}
+          initialPositionX={0}
+          initialPositionY={0}
+          minScale={0.1}
+          maxScale={5}
+          centerOnInit={true}
+          limitToBounds={false}
+          panning={{ disabled: false }}
+          wheel={{ 
+            step: 0.2,
+            wheelDisabled: false,
+            touchPadDisabled: false
+          }}
+          doubleClick={{ disabled: true }}
+          pinch={{ step: 0.2 }}
+          onWheel={handleWheel}
+          onZoom={ref => {
+            if (typeof onZoomChange === 'function') {
+              onZoomChange(ref.state.scale);
+            }
+          }}
+        >
+          <TransformComponent
+            wrapperClass="!w-full !h-full"
+            contentClass="!w-full !h-full"
           >
-            <TransformComponent
-              wrapperClass="!w-full !h-full infinite-canvas"
-              contentClass="!w-full !h-full infinite-canvas"
-            >
-                             <div
-                 className={"relative transition-shadow duration-200"}
-                 style={{
-                   width: '8000px',
-                   height: '6000px',
-                   backgroundColor: '#1a1a1a',
-                   backgroundImage: 'radial-gradient(circle, #333333 1px, transparent 1px)',
-                   backgroundSize: '20px 20px',
-                   backgroundPosition: '0 0',
-                 }}
-               >
+            {/* Infinite Canvas Container with dotted background */}
+            <div className="infinite-canvas"
+              style={{
+                width: '8000px',
+                height: '6000px',
+                backgroundColor: '#ffffff',
+                backgroundImage: 'radial-gradient(circle, rgba(0, 0, 0, 0.15) 1px, transparent 1px)',
+                backgroundSize: '20px 20px',
+                backgroundPosition: '0 0',
+              }}>
+              <div
+                className="relative transition-shadow duration-200"
+                style={{
+                  width: '8000px',
+                  height: '6000px',
+                  backgroundColor: '#ffffff',
+                  backgroundImage: 'radial-gradient(circle, rgba(0, 0, 0, 0.15) 1px, transparent 1px)',
+                  backgroundSize: '20px 20px',
+                  backgroundPosition: '0 0',
+                }}
+              >
                 {/* Main content positioned in the top left of the large canvas */}
                 <div 
                   className="absolute modern-spreadsheet"
@@ -470,15 +469,34 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 ))}
                 
                 {/* Placeholder if no children */}
-                                 {(!children || (Array.isArray(children) && children.length === 0)) && (
-                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
-                     <FileSpreadsheet size={64} className="text-gray-400 mb-4 opacity-60" />
-                     <div className="text-lg font-semibold text-gray-400 opacity-70">Drag sheets or charts here</div>
-                   </div>
-                 )}
+                {(!children || (Array.isArray(children) && children.length === 0)) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+                    <FileSpreadsheet size={64} className="text-gray-400 mb-4 opacity-60" />
+                    <div className="text-lg font-semibold text-gray-400 opacity-70">Drag sheets or charts here</div>
+                  </div>
+                )}
               </div>
-            </TransformComponent>
-          </TransformWrapper>
+            </div>
+          </TransformComponent>
+        </TransformWrapper>
+        
+        {/* Upload Button - positioned outside transform to stay fixed */}
+        {uploadButton && (
+          <div className="absolute top-4 right-4 z-50">
+            {uploadButton}
+          </div>
+        )}
+        
+        {/* Add Sheet Button - positioned outside transform to stay fixed */}
+        <div className="absolute bottom-4 right-4 z-50">
+          <Button
+            onClick={handleAddSheet}
+            className="bg-green-600 hover:bg-green-700 text-white shadow-lg"
+            size="sm"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Sheet
+          </Button>
         </div>
       </div>
     );
