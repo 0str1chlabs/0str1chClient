@@ -26,7 +26,7 @@ import {
   LayoutGrid,
   Table,
   Shield
-} from 'lucide-react';
+} from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { 
@@ -259,7 +259,7 @@ export const Toolbar = ({
   return (
     <>
       {/* Compact Toolbar */}
-      <div className="toolbar flex flex-col items-center gap-1 p-2" style={{ width: 48 }} data-toolbar="true">
+      <div className="toolbar flex flex-col items-center gap-1 p-2 rounded-lg bg-white/70 dark:bg-gray-900/60 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm text-[13px] md:text-[14px] overflow-visible" style={{ width: 76 }} data-toolbar="true">
         {/* Add Sheet Button */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -276,10 +276,10 @@ export const Toolbar = ({
               <Plus size={16} className="text-foreground" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>
-            <p className="font-semibold">{TOOL_DESCRIPTIONS.addSheet.name}</p>
-            <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.addSheet.description}</p>
-          </TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
+              <p className="font-semibold">{TOOL_DESCRIPTIONS.addSheet.name}</p>
+              <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.addSheet.description}</p>
+            </TooltipContent>
         </Tooltip>
 
         {/* Pivot Table Buttons - Moved to top navbar for better accessibility */}
@@ -302,7 +302,7 @@ export const Toolbar = ({
                 <Undo size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.undo.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.undo.description}</p>
             </TooltipContent>
@@ -323,7 +323,7 @@ export const Toolbar = ({
                 <Redo size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.redo.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.redo.description}</p>
             </TooltipContent>
@@ -350,7 +350,7 @@ export const Toolbar = ({
             <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">Text Formatting</p>
               <p className="text-xs text-muted-foreground">Bold, italic, underline</p>
             </TooltipContent>
@@ -426,7 +426,7 @@ export const Toolbar = ({
                 </Select>
               </div>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">Font Size</p>
               <p className="text-xs text-muted-foreground">Change text size</p>
             </TooltipContent>
@@ -455,7 +455,7 @@ export const Toolbar = ({
                 </Select>
               </div>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">Font Family</p>
               <p className="text-xs text-muted-foreground">Change font type</p>
             </TooltipContent>
@@ -481,7 +481,7 @@ export const Toolbar = ({
             <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">Cell Colors</p>
               <p className="text-xs text-muted-foreground">Highlight selected cells with colors</p>
             </TooltipContent>
@@ -539,7 +539,7 @@ export const Toolbar = ({
                 <ChevronRight size={10} className="absolute -bottom-1 -right-1 text-muted-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">Text Color</p>
               <p className="text-xs text-muted-foreground">Change text color</p>
             </TooltipContent>
@@ -595,7 +595,7 @@ export const Toolbar = ({
                 <AlignLeft size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.alignLeft.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignLeft.description}</p>
             </TooltipContent>
@@ -612,7 +612,7 @@ export const Toolbar = ({
                 <AlignCenter size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.alignCenter.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignCenter.description}</p>
             </TooltipContent>
@@ -629,7 +629,7 @@ export const Toolbar = ({
                 <AlignRight size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.alignRight.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.alignRight.description}</p>
             </TooltipContent>
@@ -652,7 +652,7 @@ export const Toolbar = ({
                 <Copy size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.copy.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.copy.description}</p>
             </TooltipContent>
@@ -669,7 +669,7 @@ export const Toolbar = ({
                 <Clipboard size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.paste.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.paste.description}</p>
             </TooltipContent>
@@ -690,7 +690,7 @@ export const Toolbar = ({
                 <Search size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.search.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.search.description}</p>
             </TooltipContent>
@@ -707,7 +707,7 @@ export const Toolbar = ({
                 <Calculator size={16} className="text-foreground" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right" className="max-w-[200px]">
               <p className="font-semibold">{TOOL_DESCRIPTIONS.functions.name}</p>
               <p className="text-xs text-muted-foreground">{TOOL_DESCRIPTIONS.functions.description}</p>
             </TooltipContent>
@@ -727,7 +727,7 @@ export const Toolbar = ({
               <Table size={16} className="text-foreground" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>
+          <TooltipContent side="right" className="max-w-[200px]">
             <p className="font-semibold">Pivot Table</p>
             <p className="text-xs text-muted-foreground">Create interactive pivot tables for data analysis</p>
           </TooltipContent>
@@ -746,7 +746,7 @@ export const Toolbar = ({
                     <Shield size={16} className="text-foreground" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
+                <TooltipContent side="right" className="max-w-[200px]">
                   <p className="font-semibold">Sanitize Data</p>
                   <p className="text-xs text-muted-foreground">Highlight cells with mismatched data types in red</p>
                 </TooltipContent>
@@ -764,7 +764,7 @@ export const Toolbar = ({
                     <span className="text-xs font-bold text-red-500">T</span>
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
+                <TooltipContent side="right" className="max-w-[200px]">
                   <p className="font-semibold">Test Format</p>
                   <p className="text-xs text-muted-foreground">Test cell formatting (temporary)</p>
                 </TooltipContent>

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useImperativeHandle, forwardRef, useEffect } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
-import { Plus, FileSpreadsheet } from 'lucide-react';
+import { Plus, FileSpreadsheet } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { Chart } from '@/components/ui/chart';
 

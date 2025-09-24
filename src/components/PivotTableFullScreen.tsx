@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ArrowLeft, Save, Download, BarChart3, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Save, Download, BarChart3, Eye, EyeOff } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';

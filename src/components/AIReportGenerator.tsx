@@ -10,8 +10,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import html2canvas from 'html2canvas';
 import { 
   FileText, 
-  Brain, 
-  Database, 
+  BrainCircuit, 
+  FileSpreadsheet, 
+  FileCog, 
+  Sparkles, 
+  Rocket, 
   Loader2,
   CheckCircle,
   AlertCircle,
@@ -27,7 +30,7 @@ import {
   Copy,
   RefreshCw,
   LayoutTemplate
-} from 'lucide-react';
+} from '@/lib/icons';
 import { SheetData } from '@/types/spreadsheet';
 import { extractSheetSchema, createSimplifiedSchema, createDirectColumnMapping, SheetSchema } from '@/lib/schemaUtils';
 import { mistralService, SchemaAnalysisResponse, ReportTemplateResponse } from '@/lib/mistralService';
@@ -1928,7 +1931,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
       <DialogContent className="max-w-7xl max-h-[95vh] w-full overflow-auto p-0 gap-0">
         <DialogHeader className="p-6 border-b border-gray-200 dark:border-gray-700">
           <DialogTitle className="flex items-center space-x-3">
-            <Brain className="h-6 w-6 text-purple-600" />
+            <BrainCircuit className="h-6 w-6 text-purple-600" />
             <div>
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
                 AI-Powered Report Generator
@@ -2013,7 +2016,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
-                      <Database className="h-5 w-5 text-blue-600" />
+                      <FileSpreadsheet className="h-5 w-5 text-blue-600" />
                       <span>Sheet Schema Overview</span>
                     </div>
                     <Button 
@@ -2087,7 +2090,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
-                    <Brain className="h-5 w-5 text-purple-600" />
+                    <BrainCircuit className="h-5 w-5 text-purple-600" />
                     <span>Stage 1: AI Schema Analysis</span>
                   </CardTitle>
                 </CardHeader>
@@ -2115,7 +2118,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                             </>
                           ) : (
                             <>
-                              <Brain className="h-4 w-4 mr-2" />
+                              <BrainCircuit className="h-4 w-4 mr-2" />
                               Generate Enhanced AI Report
                             </>
                           )}
@@ -2179,7 +2182,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
-                    <LayoutTemplate className="h-5 w-5 text-orange-600" />
+                    <FileCog className="h-5 w-5 text-orange-600" />
                     <span>Stage 2: Report Template</span>
                   </CardTitle>
                 </CardHeader>
@@ -2254,7 +2257,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
-                    <BarChart3 className="h-5 w-5 text-green-600" />
+                    <Sparkles className="h-5 w-5 text-green-600" />
                     <span>Stage 3: Gemini Configs</span>
                   </CardTitle>
                 </CardHeader>
@@ -2732,7 +2735,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
-                    <FileText className="h-5 w-5 text-blue-600" />
+                    <Rocket className="h-5 w-5 text-blue-600" />
                     <span>Stage 4: AI Report Generation (Optional)</span>
                   </CardTitle>
                 </CardHeader>
@@ -2756,7 +2759,7 @@ ${enhancedReport.insights?.map((insight: any) => `### ${insight.title} (${insigh
                           </>
                         ) : (
                           <>
-                            <Brain className="h-4 w-4 mr-2" />
+                            <BrainCircuit className="h-4 w-4 mr-2" />
                             Generate AI Report
                           </>
                         )}

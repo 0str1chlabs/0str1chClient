@@ -21,7 +21,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import { spreadsheetFunctions } from '../../../AIServer/formulation';
 import Skeleton from '@mui/material/Skeleton';
-import { Move, Maximize2, Minimize2 } from 'lucide-react';
+import { Move, Maximize2, Minimize2 } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { 
   parseCellIdOptimized, 
@@ -976,7 +976,10 @@ export const ModernSpreadsheet = ({
   // Get responsive position for spreadsheet
   const [position, setPosition] = useState(() => {
     const viewport = getViewportBounds();
-    return getResponsivePosition('spreadsheet', viewport);
+    const initialPosition = getResponsivePosition('spreadsheet', viewport);
+    const initialSize = getResponsiveSize('spreadsheet', viewport);
+    // Constrain initial position to ensure it's always fully visible
+    return constrainToViewport(initialPosition, initialSize, 20);
   });
 
   // Update position on window resize
@@ -984,12 +987,14 @@ export const ModernSpreadsheet = ({
     const updatePosition = () => {
       const viewport = getViewportBounds();
       const newPosition = getResponsivePosition('spreadsheet', viewport);
-      setPosition(newPosition);
+      // Constrain position to ensure spreadsheet is always fully visible
+      const constrainedPosition = constrainToViewport(newPosition, dimensions, 20);
+      setPosition(constrainedPosition);
     };
 
     window.addEventListener('resize', updatePosition);
     return () => window.removeEventListener('resize', updatePosition);
-  }, []);
+  }, [dimensions]);
   
   return (
     <Rnd
@@ -1005,8 +1010,8 @@ export const ModernSpreadsheet = ({
       }}
       minWidth={400}
       minHeight={300}
-      maxWidth={dimensions.width * 1.3}
-      maxHeight={dimensions.height * 1.3}
+      maxWidth={dimensions.width * 1.5}
+      maxHeight={dimensions.height * 1.5}
       dragAxis="both"
       enableResizing={{
         top: true,
@@ -1017,6 +1022,17 @@ export const ModernSpreadsheet = ({
         bottomRight: true,
         bottomLeft: true,
         topLeft: true,
+      }}
+      resizeGrid={[1, 1]}
+      resizeHandleClasses={{
+        top: 'react-resizable-handle-top-full',
+        right: 'react-resizable-handle-right-full',
+        bottom: 'react-resizable-handle-bottom-full',
+        left: 'react-resizable-handle-left-full',
+        topRight: 'react-resizable-handle-topRight',
+        bottomRight: 'react-resizable-handle-bottomRight',
+        bottomLeft: 'react-resizable-handle-bottomLeft',
+        topLeft: 'react-resizable-handle-topLeft',
       }}
       onResize={(e, direction, ref, delta, position) => {
         // Update dimensions during resize
@@ -1043,10 +1059,10 @@ export const ModernSpreadsheet = ({
         boxShadow: 'none'
       }}
     >
-      <div className="bg-transparent rounded-2xl border border-transparent overflow-hidden spreadsheet-container modern-spreadsheet viewport-safe backdrop-blur-sm" style={{ backgroundImage: 'radial-gradient(circle, rgba(0, 0, 0, 0.15) 1px, transparent 1px)', backgroundSize: '20px 20px', backgroundColor: '#ffffff' }}>
+      <div className="bg-transparent rounded-lg border border-transparent overflow-hidden spreadsheet-container modern-spreadsheet viewport-safe backdrop-blur-sm h-full flex flex-col relative" style={{ backgroundImage: 'radial-gradient(circle, rgba(0, 0, 0, 0.15) 1px, transparent 1px)', backgroundSize: '20px 20px', backgroundColor: '#ffffff' }}>
 
         {/* Control Bar */}
-        <div className="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 flex items-center justify-between cursor-move">
+        <div className="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 flex items-center justify-between cursor-move rounded-t-lg">
           <div className="flex items-center gap-2">
             <Move className="h-4 w-4" />
             <span className="font-medium text-sm">Sheet: {sheet.name}</span>
@@ -1115,7 +1131,7 @@ export const ModernSpreadsheet = ({
 
         {/* Spreadsheet Content */}
         {!isMinimized && (
-          <div className="overflow-auto zoom-wrapper" style={{ height: 'calc(100% - 40px)' }}>
+          <div className="overflow-auto zoom-wrapper flex-1 flex flex-col" style={{ minHeight: '400px' }}>
             {/* Sheet Name Header - Editable */}
             <div className="bg-gradient-to-r from-green-100 to-green-200 dark:from-green-800 dark:to-green-700 border-b border-green-300 dark:border-green-600 p-3">
               <div className="flex items-center justify-between">
@@ -1169,7 +1185,7 @@ export const ModernSpreadsheet = ({
           scrollbarGutter: 'stable',
           transform: `scale(${zoomLevel / 100})`,
           transformOrigin: 'top left',
-          height: 'calc(100vh - 300px)', // Fixed height for proper scrolling
+          height: '100%', // Fill the entire content area
           minHeight: '400px'
         }}
         onMouseDown={e => {
@@ -1374,6 +1390,7 @@ export const ModernSpreadsheet = ({
           </button>
               </div>
             )}
+
         </div>
       )}
 
@@ -1544,23 +1561,26 @@ export const ModernSpreadsheet = ({
         
         /* Optimized scrollbar styling */
         .overflow-auto::-webkit-scrollbar {
-          width: 8px;
-          height: 8px;
+          width: 16px;
+          height: 16px;
         }
         
         .overflow-auto::-webkit-scrollbar-track {
-          background: rgba(16, 185, 129, 0.1);
-          border-radius: 4px;
+          background: rgba(16, 185, 129, 0.2);
+          border-radius: 8px;
         }
         
         .overflow-auto::-webkit-scrollbar-thumb {
-          background: rgba(16, 185, 129, 0.3);
-          border-radius: 4px;
+          background: rgba(16, 185, 129, 0.6);
+          border-radius: 8px;
+          border: 2px solid transparent;
+          background-clip: content-box;
           transition: background-color 0.2s ease;
         }
         
         .overflow-auto::-webkit-scrollbar-thumb:hover {
-          background: rgba(16, 185, 129, 0.5);
+          background: rgba(16, 185, 129, 0.8);
+          background-clip: content-box;
         }
         
         /* Performance optimizations for large grids */
@@ -1660,6 +1680,7 @@ export const ModernSpreadsheet = ({
           min-width: 1px;
           min-height: 1px;
         }
+
       `}</style>
     </Rnd>
   );

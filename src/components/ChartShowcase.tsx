@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Chart, MultiSeriesChart, MetricCard, ChartContainer } from '@/components/ui/chart';
-import { TrendingUp, Users, DollarSign, Activity } from 'lucide-react';
+import { TrendingUp, Users, DollarSign, Activity } from '@/lib/icons';
 
 // Sample data for demonstration
 const sampleData = [

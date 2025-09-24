@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Cloud, Lock, User, X, CheckCircle, AlertCircle } from 'lucide-react';
+import { Cloud, Lock, User, X, CheckCircle, AlertCircle } from '@/lib/icons';
 import BackblazeApiService from '../services/backblazeApiService';
 
 interface BackblazeAuthModalProps {

@@ -1,7 +1,7 @@
 import React, { ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { LoginModal } from './LoginModal';
-import { Loader2 } from 'lucide-react';
+import { Loader2 } from '@/lib/icons';
 
 interface AuthWrapperProps {
   children: ReactNode;

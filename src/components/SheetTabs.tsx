@@ -1,5 +1,5 @@
 
-import { X } from 'lucide-react';
+import { X } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { SheetData } from '@/types/spreadsheet';
 

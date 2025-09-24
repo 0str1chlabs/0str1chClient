@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Upload } from 'lucide-react';
+import { Upload } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { parseAndLogSheet, loadSheetToDuckDB, queryDuckDB, getSheetMeta, profileColumns, sheetProfileSummary } from '../lib/utils';
 import * as XLSX from 'xlsx';

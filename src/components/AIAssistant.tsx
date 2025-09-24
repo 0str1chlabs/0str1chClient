@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff, Target } from 'lucide-react';
+import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff, Target } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from '@/lib/icons';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Resizable } from './Resizable';
@@ -129,12 +129,77 @@ export const AIAssistant = ({
   const currentSchema = parentCurrentSchema;
   const [selectionContext, setSelectionContext] = useState<CellSelectionContext | null>(null);
   const [lastProcessedSheetId, setLastProcessedSheetId] = useState<string | null>(null);
+  const [similarCellsData, setSimilarCellsData] = useState<{ value: any; count: number; cells: string[] }[]>([]);
+  const [showSimilarCells, setShowSimilarCells] = useState(false);
+
+  // Function to handle cell navigation
+  const handleCellNavigation = (cellId: string) => {
+    // This would typically scroll to the cell and highlight it
+    // For now, we'll just log it - you can implement the actual navigation logic
+    console.log(`Navigating to cell: ${cellId}`);
+    
+    // You could emit an event or call a parent function to navigate to the cell
+    // Example: onNavigateToCell?.(cellId);
+  };
+
+  // Function to analyze similar cell values
+  const analyzeSimilarCells = (selectedCells: string[], activeSheet: any) => {
+    if (!selectedCells.length || !activeSheet) {
+      setSimilarCellsData([]);
+      return;
+    }
+
+    // Get values from selected cells
+    const selectedValues = selectedCells.map(cellId => {
+      const cell = activeSheet.cells[cellId];
+      return cell?.value;
+    }).filter(value => value !== undefined && value !== null && value !== '');
+
+    if (selectedValues.length === 0) {
+      setSimilarCellsData([]);
+      return;
+    }
+
+    // Count similar values across the entire sheet
+    const valueCounts = new Map<any, { count: number; cells: string[] }>();
+    
+    // Iterate through all cells in the sheet
+    Object.entries(activeSheet.cells).forEach(([cellId, cell]: [string, any]) => {
+      const value = cell?.value;
+      if (value !== undefined && value !== null && value !== '') {
+        // Check if this value matches any of the selected values
+        const matchingSelectedValue = selectedValues.find(selectedValue => 
+          String(value) === String(selectedValue)
+        );
+        
+        if (matchingSelectedValue !== undefined) {
+          if (!valueCounts.has(matchingSelectedValue)) {
+            valueCounts.set(matchingSelectedValue, { count: 0, cells: [] });
+          }
+          const data = valueCounts.get(matchingSelectedValue)!;
+          data.count++;
+          data.cells.push(cellId);
+        }
+      }
+    });
+
+    // Convert to array and sort by count (descending)
+    const similarCells = Array.from(valueCounts.entries())
+      .map(([value, data]) => ({ value, ...data }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10); // Limit to top 10
+
+    setSimilarCellsData(similarCells);
+  };
 
   // Update selection context when selectedCells changes
   useEffect(() => {
     if (selectedCells.length > 0 && activeSheet) {
       const context = createCellSelectionContext(selectedCells, activeSheet);
       setSelectionContext(context);
+      
+      // Analyze similar cells
+      analyzeSimilarCells(selectedCells, activeSheet);
       
       // Disabled automatic selection message to reduce chat clutter
       // Show helpful message when cells are first selected (only if schema is ready)
@@ -149,6 +214,7 @@ export const AIAssistant = ({
       // }
     } else {
       setSelectionContext(null);
+      setSimilarCellsData([]);
     }
   }, [selectedCells, activeSheet, isSchemaReady, isDuckDBProcessing]);
 
@@ -616,7 +682,7 @@ ${sampleRows.join('\n')}`;
         return;
       }
       
-      // If sheet-related, show explanation and proceed to AI2
+      // If sheet-related, show Mistral's reasoning prominently
       if (ai1Data.explanation) {
         addMessage('ai', ai1Data.explanation);
       }
@@ -1738,6 +1804,17 @@ ${sampleRows.join('\n')}`;
                     <Badge variant="secondary" className="text-xs">
                       {selectedCells.length} cell{selectedCells.length !== 1 ? 's' : ''}
                     </Badge>
+                    {similarCellsData.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowSimilarCells(!showSimilarCells)}
+                        className="h-6 px-2 text-xs text-green-600 hover:text-green-800 hover:bg-green-100 dark:text-green-400 dark:hover:text-green-200 dark:hover:bg-green-800/30"
+                      >
+                        <span className="mr-1">📊</span>
+                        Similar ({similarCellsData.length})
+                      </Button>
+                    )}
                     {onDeselectCells && (
                       <Button
                         variant="outline"
@@ -1756,6 +1833,53 @@ ${sampleRows.join('\n')}`;
                 <div className="text-xs text-green-500 dark:text-green-300 mt-1 font-medium">
                   💡 I'll focus on your selected cells for any questions you ask
                 </div>
+                
+                {/* Similar Cells Dropdown */}
+                {showSimilarCells && similarCellsData.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-700 similar-cells-dropdown">
+                    <div className="text-xs font-medium text-green-700 dark:text-green-300 mb-2">
+                      📊 Similar Values Found:
+                    </div>
+                    <div className="max-h-32 overflow-y-auto space-y-1">
+                      {similarCellsData.map((item, index) => (
+                        <div key={index} className="bg-white/50 dark:bg-gray-800/50 rounded px-2 py-1 similar-cell-item">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-green-600 dark:text-green-400 text-xs">
+                                {String(item.value).length > 20 ? `${String(item.value).substring(0, 20)}...` : String(item.value)}
+                              </span>
+                            </div>
+                            <Badge variant="outline" className="text-xs">
+                              {item.count} occurrence{item.count !== 1 ? 's' : ''}
+                            </Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {item.cells.slice(0, 8).map((cellId, cellIndex) => (
+                              <span 
+                                key={cellIndex}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 cell-location-badge"
+                                title={`Click to highlight cell ${cellId}`}
+                                onClick={() => handleCellNavigation(cellId)}
+                              >
+                                {cellId}
+                              </span>
+                            ))}
+                            {item.cells.length > 8 && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 more-cells-badge">
+                                +{item.cells.length - 8} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-xs text-green-500 dark:text-green-300 mt-2">
+                      💡 These values appear {similarCellsData.reduce((sum, item) => sum + item.count, 0)} times total in your sheet
+                      <br />
+                      📍 Click on any cell location above to navigate to it
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             

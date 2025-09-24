@@ -17,7 +17,7 @@ import {
   Minus,
   Settings,
   RefreshCw
-} from 'lucide-react';
+} from '@/lib/icons';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -26,7 +26,7 @@ import { aggregators } from 'react-pivottable/Utilities';
 import { renderers } from 'react-pivottable/Utilities';
 import 'react-pivottable/pivottable.css';
 import { SheetData, PivotTableState } from '@/types/spreadsheet';
-import { MousePointer, ArrowRight, Info, HelpCircle } from 'lucide-react';
+import { MousePointer, ArrowRight, Info, HelpCircle } from '@/lib/icons';
 import { ErrorBoundary } from './ErrorBoundary';
 
 interface PivotTableModalProps {

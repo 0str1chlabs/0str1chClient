@@ -142,8 +142,8 @@
 
 /* Spreadsheet-specific scrollbar */
 .spreadsheet-container ::-webkit-scrollbar {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .spreadsheet-container ::-webkit-scrollbar-track {
@@ -174,8 +174,8 @@
 
 /* Make scrollbars more prominent and easier to interact with */
 .spreadsheet-container::-webkit-scrollbar-thumb {
-  min-height: 40px;
-  min-width: 40px;
+  min-height: 50px;
+  min-width: 50px;
 }
 
 /* Ensure scrollbars are always visible and prominent */
@@ -262,6 +262,16 @@
 
 .movable-toolbar {
   background: transparent !important;
+  border-radius: 8px;
+  width: 64px; /* Slightly wider for readability */
+}
+
+.movable-toolbar:not(.fixed) {
+  cursor: move !important;
+}
+
+.movable-toolbar.fixed {
+  cursor: default !important;
 }
 
 /* Prevent canvas background issues */
@@ -350,6 +360,219 @@
   background: rgba(255, 255, 255, 0.8) !important;
 }
 
+/* React-RND Resize Handle Styling */
+.react-resizable-handle {
+  position: absolute !important;
+  background: rgba(34, 197, 94, 0.8) !important;
+  border: 2px solid rgba(34, 197, 94, 1) !important;
+  border-radius: 3px !important;
+  transition: all 0.2s ease !important;
+  z-index: 1000 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.react-resizable-handle:hover {
+  background: rgba(34, 197, 94, 1) !important;
+  border-color: rgba(34, 197, 94, 1) !important;
+  transform: scale(1.2) !important;
+}
+
+/* Position resize handles closer to borders */
+.react-resizable-handle-bottomRight {
+  bottom: -3px !important;
+  right: -3px !important;
+  width: 16px !important;
+  height: 16px !important;
+  cursor: se-resize !important;
+}
+
+.react-resizable-handle-bottomLeft {
+  bottom: -3px !important;
+  left: -3px !important;
+  width: 16px !important;
+  height: 16px !important;
+  cursor: sw-resize !important;
+}
+
+.react-resizable-handle-topRight {
+  top: -3px !important;
+  right: -3px !important;
+  width: 16px !important;
+  height: 16px !important;
+  cursor: ne-resize !important;
+}
+
+.react-resizable-handle-topLeft {
+  top: -3px !important;
+  left: -3px !important;
+  width: 16px !important;
+  height: 16px !important;
+  cursor: nw-resize !important;
+}
+
+.react-resizable-handle-right {
+  top: 50% !important;
+  right: -3px !important;
+  width: 12px !important;
+  height: 30px !important;
+  margin-top: -15px !important;
+  cursor: e-resize !important;
+}
+
+.react-resizable-handle-left {
+  top: 50% !important;
+  left: -3px !important;
+  width: 12px !important;
+  height: 30px !important;
+  margin-top: -15px !important;
+  cursor: w-resize !important;
+}
+
+.react-resizable-handle-top {
+  top: -3px !important;
+  left: 50% !important;
+  width: 30px !important;
+  height: 12px !important;
+  margin-left: -15px !important;
+  cursor: n-resize !important;
+}
+
+.react-resizable-handle-bottom {
+  bottom: -3px !important;
+  left: 50% !important;
+  width: 30px !important;
+  height: 12px !important;
+  margin-left: -15px !important;
+  cursor: s-resize !important;
+}
+
+/* Full-width/full-height resize handles */
+.react-resizable-handle-top-full {
+  position: absolute !important;
+  top: -5px !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  height: 10px !important;
+  cursor: n-resize !important;
+  z-index: 1000 !important;
+  background: transparent !important;
+  transition: background-color 0.2s ease !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.react-resizable-handle-top-full:hover {
+  background: rgba(34, 197, 94, 0.2) !important;
+}
+
+.react-resizable-handle-bottom-full {
+  position: absolute !important;
+  bottom: -5px !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  height: 10px !important;
+  cursor: s-resize !important;
+  z-index: 1000 !important;
+  background: transparent !important;
+  transition: background-color 0.2s ease !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.react-resizable-handle-bottom-full:hover {
+  background: rgba(34, 197, 94, 0.2) !important;
+}
+
+.react-resizable-handle-left-full {
+  position: absolute !important;
+  top: 0 !important;
+  left: -5px !important;
+  width: 10px !important;
+  height: 100% !important;
+  cursor: w-resize !important;
+  z-index: 1000 !important;
+  background: transparent !important;
+  transition: background-color 0.2s ease !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.react-resizable-handle-left-full:hover {
+  background: rgba(34, 197, 94, 0.2) !important;
+}
+
+.react-resizable-handle-right-full {
+  position: absolute !important;
+  top: 0 !important;
+  right: -5px !important;
+  width: 10px !important;
+  height: 100% !important;
+  cursor: e-resize !important;
+  z-index: 1000 !important;
+  background: transparent !important;
+  transition: background-color 0.2s ease !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.react-resizable-handle-right-full:hover {
+  background: rgba(34, 197, 94, 0.2) !important;
+}
+
+/* Similar Cells Dropdown Styling */
+.similar-cells-dropdown {
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.similar-cell-item {
+  transition: background-color 0.2s ease;
+}
+
+.similar-cell-item:hover {
+  background-color: rgba(34, 197, 94, 0.1) !important;
+}
+
+.dark .similar-cell-item:hover {
+  background-color: rgba(34, 197, 94, 0.2) !important;
+}
+
+/* Cell location badges styling */
+.cell-location-badge {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.cell-location-badge:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 4px rgba(34, 197, 94, 0.2);
+}
+
+.dark .cell-location-badge:hover {
+  box-shadow: 0 2px 4px rgba(34, 197, 94, 0.3);
+}
+
+.more-cells-badge {
+  transition: all 0.2s ease;
+}
+
+.more-cells-badge:hover {
+  transform: scale(1.05);
+}
+
 /* Statistical Summary Component */
 .statistical-summary {
   position: fixed;
@@ -404,6 +627,7 @@
   background: rgba(255, 255, 255, 0.05) !important;
   backdrop-filter: blur(5px) !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 8px;
 }
 
 .ai-assistant {

@@ -66,7 +66,7 @@ export const getResponsivePosition = (
       const spreadsheetSize = getResponsiveSize('spreadsheet', viewport);
       return {
         x: Math.max(20, (width - spreadsheetSize.width) / 3), // Slightly left of center
-        y: Math.max(20, height * 0.1) // Position at 10% from top (front area)
+        y: Math.max(20, height * 0.1) // Position at 10% from top
       };
       
     case 'ai-assistant':
@@ -99,8 +99,8 @@ export const getResponsiveSize = (
       
     case 'spreadsheet':
       return {
-        width: Math.min(900, Math.max(600, width * 0.65)), // Better responsive width
-        height: Math.min(700, Math.max(400, height * 0.75)) // Better responsive height
+        width: Math.min(850, Math.max(600, width * 0.65)), // Restore reasonable width
+        height: Math.min(650, Math.max(400, height * 0.7 - 100)) // Subtract 100px to ensure bottom is always visible
       };
       
     case 'ai-assistant':

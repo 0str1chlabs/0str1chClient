@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { TourButton } from './TourButton';
 import { useTour } from './TourProvider';
 import { resetTourState, getTourStats } from '@/lib/tourUtils';
-import { Play, RotateCcw, Info } from 'lucide-react';
+import { Play, RotateCcw, Info } from '@/lib/icons';
 
 export const TourDemo: React.FC = () => {
   const { isRunning, hasCompletedTour } = useTour();

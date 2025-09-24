@@ -1,5 +1,5 @@
 
-import { Upload, FileSpreadsheet, Bot } from 'lucide-react';
+import { Upload, FileSpreadsheet, Bot } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 

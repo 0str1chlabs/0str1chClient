@@ -3,7 +3,7 @@ import { DragDropContext, Droppable, Draggable, DropResult } from 'react-beautif
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { X, Hash, Calendar, Type, BarChart3, Filter } from 'lucide-react';
+import { X, Hash, Calendar, Type, BarChart3, Filter } from '@/lib/icons';
 import { PivotField, PivotZone } from '@/types/spreadsheet';
 
 interface PivotFieldSelectorProps {

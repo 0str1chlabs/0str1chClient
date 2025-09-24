@@ -17,7 +17,7 @@ import {
   TrendingUp,
   PieChart,
   Activity
-} from 'lucide-react';
+} from '@/lib/icons';
 import { Chart } from '@/components/ui/chart';
 
 interface DashboardWidget {

@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Separator } from '../ui/separator';
 import { Alert, AlertDescription } from '../ui/alert';
-import { Loader2, Mail, Lock, User as UserIcon, Chrome, HelpCircle } from 'lucide-react';
+import { Loader2, Mail, Lock, User as UserIcon, Chrome, HelpCircle } from '@/lib/icons';
 
 interface LoginModalProps {
   onLoginSuccess: (user: User) => void;

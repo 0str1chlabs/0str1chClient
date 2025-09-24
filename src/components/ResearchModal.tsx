@@ -4,7 +4,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
-import { Loader2, Search, Brain, Globe, Database, CheckCircle, Bot, Zap, Target } from 'lucide-react';
+import { Loader2, Search, Brain, Globe, Database, CheckCircle, Bot, Zap, Target } from '@/lib/icons';
 import { ResearchOrchestrator, FinalResearchResult } from '@/lib/researchAgents';
 
 interface ResearchModalProps {

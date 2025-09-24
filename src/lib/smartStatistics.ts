@@ -16,6 +16,7 @@ export interface SmartStats {
   mixed: boolean;
   dataType: 'INTEGER' | 'DOUBLE' | 'VARCHAR' | 'DATE' | 'BOOLEAN';
   displayFormat?: string;
+  occurrences?: { value: any; count: number; cells: string[] }[];
 }
 
 /**
@@ -117,6 +118,9 @@ export function calculateSmartStatistics(
 
     const allNumeric = cleanedValues.length === cellValues.length && cleanedValues.length > 0;
 
+    // Calculate occurrences for all values (not just numeric)
+    const occurrences = calculateOccurrences(selectedCells, activeSheet);
+
     if (allNumeric && cleanedValues.length > 0) {
       // Calculate statistics
       const sum = cleanedValues.reduce((a, b) => a + b, 0);
@@ -144,7 +148,8 @@ export function calculateSmartStatistics(
         allNumeric: true,
         mixed: false,
         dataType,
-        displayFormat
+        displayFormat,
+        occurrences
       };
     } else {
       // Mixed content - only show count
@@ -158,7 +163,8 @@ export function calculateSmartStatistics(
         allNumeric: false,
         mixed: cleanedValues.length > 0 && cleanedValues.length < cellValues.length,
         dataType,
-        displayFormat
+        displayFormat,
+        occurrences
       };
     }
   } catch (error) {
@@ -260,4 +266,54 @@ export function getDataTypeDescription(dataType: string) {
     default:
       return 'Text values';
   }
+}
+
+/**
+ * Calculate occurrences of similar values across the sheet
+ */
+function calculateOccurrences(selectedCells: string[], activeSheet: any): { value: any; count: number; cells: string[] }[] {
+  if (!selectedCells.length || !activeSheet) {
+    return [];
+  }
+
+  // Get values from selected cells
+  const selectedValues = selectedCells.map(cellId => {
+    const cell = activeSheet.cells[cellId];
+    return cell?.value;
+  }).filter(value => value !== undefined && value !== null && value !== '');
+
+  if (selectedValues.length === 0) {
+    return [];
+  }
+
+  // Count similar values across the entire sheet
+  const valueCounts = new Map<any, { count: number; cells: string[] }>();
+  
+  // Iterate through all cells in the sheet
+  Object.entries(activeSheet.cells).forEach(([cellId, cell]: [string, any]) => {
+    const value = cell?.value;
+    if (value !== undefined && value !== null && value !== '') {
+      // Check if this value matches any of the selected values
+      const matchingSelectedValue = selectedValues.find(selectedValue => 
+        String(value) === String(selectedValue)
+      );
+      
+      if (matchingSelectedValue !== undefined) {
+        if (!valueCounts.has(matchingSelectedValue)) {
+          valueCounts.set(matchingSelectedValue, { count: 0, cells: [] });
+        }
+        const data = valueCounts.get(matchingSelectedValue)!;
+        data.count++;
+        data.cells.push(cellId);
+      }
+    }
+  });
+
+  // Convert to array and sort by count (descending)
+  const occurrences = Array.from(valueCounts.entries())
+    .map(([value, data]) => ({ value, ...data }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10); // Limit to top 10
+
+  return occurrences;
 }

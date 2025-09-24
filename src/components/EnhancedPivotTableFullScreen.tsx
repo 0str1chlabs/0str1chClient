@@ -22,7 +22,7 @@ import {
   MousePointer,
   ArrowRight,
   Table2
-} from 'lucide-react';
+} from '@/lib/icons';
 import { SheetData } from '@/types/spreadsheet';
 
 // Import react-pivottable

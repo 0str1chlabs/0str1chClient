@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, BarChart3, Download, Settings, RefreshCw, Plus, Trash2 } from 'lucide-react';
+import { X, BarChart3, Download, Settings, RefreshCw, Plus, Trash2 } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';

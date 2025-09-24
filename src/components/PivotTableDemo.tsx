@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PivotTableModal } from './PivotTableModal';
 import { EnhancedPivotTableFullScreen } from './EnhancedPivotTableFullScreen';
 import { SheetData } from '@/types/spreadsheet';
-import { BarChart3, Maximize2 } from 'lucide-react';
+import { BarChart3, Maximize2 } from '@/lib/icons';
 
 export const PivotTableDemo: React.FC = () => {
   const [showModal, setShowModal] = useState(false);

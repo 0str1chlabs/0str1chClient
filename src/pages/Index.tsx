@@ -39,10 +39,11 @@ import { ResearchModal } from '@/components/ResearchModal';
 import { NotificationManager, NotificationProps } from '@/components/NotificationToast';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain, Search } from 'lucide-react';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain, Search } from '@/lib/icons';
 import { TourButton } from '@/components/TourButton';
 import { useTour } from '@/components/TourProvider';
 import { TourDebug } from '@/components/TourDebug';
+import TipsBanner from '@/components/TipsBanner';
 import { initializeTourForNewUser, shouldShowTourAutomatically } from '@/lib/tourUtils';
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
@@ -1952,6 +1953,9 @@ const Index: React.FC = () => {
 
       {/* Tour Debug Component */}
       <TourDebug />
+
+      {/* Tips Banner - Fixed to bottom of canvas */}
+      <TipsBanner />
 
     </div>
   );

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Toolbar } from './Toolbar';
-import { RotateCw, Move, Pin, PinOff, LayoutGrid } from 'lucide-react';
+import { RotateCw, Move, Pin, PinOff, LayoutGrid } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { getResponsivePosition, getResponsiveSize, constrainToViewport, getViewportBounds } from '@/lib/viewportUtils';
 
@@ -33,14 +33,21 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   const [isRotating, setIsRotating] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [rotationStart, setRotationStart] = useState(0);
-  const [isFixed, setIsFixed] = useState(true); // New state for fixed/movable mode
+  const [isFixed, setIsFixed] = useState(false); // Default to movable mode
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   // Handle mouse down for dragging
   const handleMouseDown = (e: React.MouseEvent) => {
     if (isFixed) return; // Don't allow dragging when fixed
-    if (e.target === e.currentTarget || (e.target as HTMLElement).closest('[data-toolbar-handle]')) {
+    
+    // Check if clicking on drag handle or toolbar container
+    const target = e.target as HTMLElement;
+    const isDragHandle = target.closest('[data-toolbar-handle]');
+    const isToolbarContainer = target.closest('.movable-toolbar');
+    
+    if (isDragHandle || isToolbarContainer) {
       e.preventDefault();
+      e.stopPropagation();
       setIsDragging(true);
       setDragStart({
         x: e.clientX - position.x,
@@ -162,7 +169,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
   return (
     <div
       ref={toolbarRef}
-      className="movable-toolbar select-none viewport-safe"
+      className={`movable-toolbar select-none viewport-safe ${isFixed ? 'fixed' : ''}`}
       style={fixedStyles}
       onMouseDown={handleMouseDown}
       data-toolbar-handle="true"
@@ -171,16 +178,16 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
       <div className="relative">
         {/* Toggle Fixed/Movable Button */}
         <div 
-                      className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-transparent backdrop-blur-sm rounded-t-lg px-2 py-1 shadow-md border border-transparent cursor-pointer hover:bg-white/20 transition-colors"
+          className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-t-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-white dark:hover:bg-gray-700 transition-colors"
           onClick={toggleFixedMode}
           title={isFixed ? "Make Movable" : "Fix Position"}
         >
-                     {isFixed ? <PinOff size={12} className="text-foreground" /> : <Pin size={12} className="text-foreground" />}
+          {isFixed ? <PinOff size={12} className="text-foreground" /> : <Pin size={12} className="text-foreground" />}
         </div>
         
         {/* Rearrange Button */}
         <div 
-          className="absolute -top-8 left-16 bg-transparent backdrop-blur-sm rounded-t-lg px-2 py-1 shadow-md border border-transparent cursor-pointer hover:bg-white/20 transition-colors"
+          className="absolute -top-8 left-16 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-t-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-white dark:hover:bg-gray-700 transition-colors"
           onClick={props.onRearrange}
           title="Rearrange Layout"
         >
@@ -190,10 +197,11 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         {/* Drag Handle - only show when not fixed */}
         {!isFixed && (
           <div 
-            className="absolute -top-8 -left-8 bg-transparent backdrop-blur-sm rounded-lg px-2 py-1 shadow-md border border-transparent cursor-move hover:bg-white/20 transition-colors"
+            className="absolute -top-8 -left-8 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg px-2 py-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-move hover:bg-white dark:hover:bg-gray-700 transition-colors"
             data-toolbar-handle="true"
+            title="Drag to move toolbar"
           >
-                         <Move size={12} className="text-foreground" />
+            <Move size={12} className="text-foreground" />
           </div>
         )}
         
@@ -201,7 +209,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         {!isFixed && (
           <>
             <div 
-              className="absolute -top-8 -right-8 bg-transparent backdrop-blur-sm rounded-lg p-1 shadow-md border border-transparent cursor-pointer hover:bg-white/20 transition-colors"
+              className="absolute -top-8 -right-8 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg p-1 shadow-md border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-white dark:hover:bg-gray-700 transition-colors"
               onMouseDown={handleRotationMouseDown}
               title="Rotate Toolbar"
             >
@@ -212,7 +220,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
             <Button
               variant="ghost"
               size="sm"
-              className="absolute -top-8 left-8 bg-transparent backdrop-blur-sm rounded-lg p-1 shadow-md border border-transparent hover:bg-white/20 transition-colors"
+              className="absolute -top-8 left-8 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg p-1 shadow-md border border-gray-200 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-700 transition-colors"
               onClick={handleRotationClick}
               title="Quick Rotate (45° increments)"
             >
@@ -222,7 +230,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         )}
         
         {/* Main Toolbar */}
-        <div className="bg-transparent rounded-2xl shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-transparent backdrop-blur-sm">
+        <div className="bg-transparent rounded-lg shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-transparent backdrop-blur-sm">
           <Toolbar {...props} />
         </div>
       </div>

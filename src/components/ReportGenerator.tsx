@@ -39,7 +39,7 @@ import {
   TrendingUpIcon,
   TrendingDownIcon,
   BarChart3Icon
-} from 'lucide-react';
+} from '@/lib/icons';
 import { useAuth } from '@/components/auth/AuthContext';
 import { toast } from '@/hooks/use-toast';
 import { InteractiveDashboard } from './InteractiveDashboard';
