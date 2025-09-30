@@ -292,10 +292,14 @@ export const formatSelectionContextForAI = (context: CellSelectionContext): stri
 
   // Add SQL targeting instructions
   lines.push(`\nSQL Targeting Instructions:`);
+  lines.push(`🚨 CRITICAL: Use ONLY the column names from this selection context, NOT generic schema names like "Column A", "Column B", etc.`);
+  
   if (context.selection_type === 'single') {
     lines.push(`- Focus on column "${context.columns[0]}" only`);
+    lines.push(`- Use "${context.columns[0]}" in your SQL queries, NOT "Column A" or similar generic names`);
   } else {
     lines.push(`- SELECT only these columns: ${context.columns.map(col => `"${col}"`).join(', ')}`);
+    lines.push(`- Use these exact column names in your SQL: ${context.columns.map(col => `"${col}"`).join(', ')}`);
   }
   
   if (context.has_headers) {
@@ -304,6 +308,7 @@ export const formatSelectionContextForAI = (context: CellSelectionContext): stri
   
   lines.push(`- Limit results to approximately ${context.row_count} rows from the selected range`);
   lines.push(`- Treat this selection as the complete dataset - do not query beyond these ${context.columns.length} column(s)`);
+  lines.push(`- NEVER use generic column names like "Column A", "Column B" - always use the actual column names from this selection`);
 
   if (context.sample_values.length > 0) {
     lines.push(`\nSample Data from Selection:`);

@@ -33,6 +33,7 @@ import {
   getVisibleRange
 } from '@/lib/cellSelectionUtils';
 import { getResponsivePosition, getResponsiveSize, constrainToViewport, getViewportBounds } from '@/lib/viewportUtils';
+import { manualUpdateStorage } from '@/lib/manualUpdateStorage';
 
 interface ModernSpreadsheetProps {
   sheet: SheetData;
@@ -74,7 +75,10 @@ const SpreadsheetCell = React.memo(({
   style,
   isSheetLoading,
   acceptAIUpdate,
-  rejectAIUpdate
+  rejectAIUpdate,
+  sheet,
+  editingCell,
+  updateCell
 }: any) => {
   // Tooltip state
   const [showTooltip, setShowTooltip] = useState(false);
@@ -194,7 +198,15 @@ const SpreadsheetCell = React.memo(({
         <Input
           ref={inputRef}
           value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
+          onChange={(e) => {
+            setEditValue(e.target.value);
+            // Store debounced manual update while typing
+            if (editingCell) {
+              const cell = sheet.cells[editingCell];
+              const previousValue = cell?.value;
+              manualUpdateStorage.storeManualUpdateDebounced(editingCell, e.target.value, previousValue, sheet.name);
+            }
+          }}
           onBlur={handleEditSubmit}
           onKeyDown={handleEditKeyDown}
           onFocus={(e) => e.target.select()}
@@ -724,14 +736,97 @@ export const ModernSpreadsheet = ({
 
   const handleEditSubmit = useCallback((cellId: string) => {
     if (editingCell) {
-      updateCell(editingCell, editValue);
+      // Get the previous value for change detection
+      const cell = sheet.cells[editingCell];
+      const previousValue = cell?.value;
+      
+      // Only update if value actually changed
+      if (previousValue !== editValue) {
+        console.log('🔍 Manual change detected in ModernSpreadsheet:', {
+          cellId: editingCell,
+          previousValue,
+          newValue: editValue
+        });
+        
+        // Store manual update in localStorage with immediate storage (no debouncing for submit)
+        manualUpdateStorage.storeManualUpdateImmediate(editingCell, editValue, previousValue, sheet.name);
+        
+        // Update the cell
+        updateCell(editingCell, editValue);
+      } else {
+        console.log('🚫 No change detected - values are the same:', {
+          cellId: editingCell,
+          value: editValue
+        });
+      }
+      
       setEditingCell(null);
       setEditValue('');
       
       // Keep the cell selected after editing
       // Don't change selection - maintain current selection
     }
-  }, [editingCell, editValue, updateCell]);
+  }, [editingCell, editValue, updateCell, sheet.cells]);
+
+  // Set current sheet name for manual updates
+  useEffect(() => {
+    manualUpdateStorage.setCurrentSheet(sheet.name);
+  }, [sheet.name]);
+
+  // Debug function to check manual updates
+  const debugManualUpdates = useCallback(() => {
+    console.log('🔍 Current sheet:', sheet.name);
+    manualUpdateStorage.logAllManualUpdates(sheet.name);
+    console.log('🔍 All sheets manual updates:');
+    manualUpdateStorage.logAllManualUpdates();
+  }, [sheet.name]);
+
+  // Live overlay: reflect manualUpdate_<SheetName> immediately in UI, no button
+  useEffect(() => {
+    const sheetName = sheet.name;
+    const storageKey = `manualUpdate_${sheetName}`;
+
+    const applyManualOverlay = () => {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (!raw) return;
+        const updates = JSON.parse(raw);
+        const entries = Object.entries(updates);
+        if (entries.length === 0) return;
+
+        // Apply each manual value directly to current UI if different
+        entries.forEach(([cellId, update]: any) => {
+          const newValue = update?.value;
+          if (newValue === undefined) return;
+          const current = sheet.cells[cellId]?.value;
+          if (current !== newValue) {
+            updateCell(cellId, newValue);
+          }
+        });
+      } catch (e) {
+        console.error('❌ Failed to apply manual overlay:', e);
+      }
+    };
+
+    // Initial apply on mount
+    applyManualOverlay();
+
+    // Observe localStorage changes from other tabs/windows
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === storageKey) {
+        applyManualOverlay();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    // Polling fallback in same tab (since storage event doesn't fire on same-tab setItem)
+    const interval = setInterval(applyManualOverlay, 1000);
+
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      clearInterval(interval);
+    };
+  }, [sheet.name, sheet.cells, updateCell]);
 
   const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -796,8 +891,12 @@ export const ModernSpreadsheet = ({
         setEditValue(sheet.cells[nextCellId]?.value?.toString() || '');
         setTimeout(() => inputRef.current?.focus(), 0);
       }
+    } else if (e.key === 'F12' || (e.key === 'u' && e.ctrlKey)) {
+      // Debug manual updates with F12 or Ctrl+U
+      e.preventDefault();
+      debugManualUpdates();
     }
-  }, [editingCell, handleEditSubmit, parseCellIdOptimized, getCellId, onSelectionChange, sheet.cells]);
+  }, [editingCell, handleEditSubmit, parseCellIdOptimized, getCellId, onSelectionChange, sheet.cells, debugManualUpdates]);
 
   // Zoom functionality
   const handleZoomIn = useCallback(() => {
@@ -1362,6 +1461,9 @@ export const ModernSpreadsheet = ({
                     className={isDragging ? 'dragging' : ''}
                     acceptAIUpdate={acceptAIUpdate}
                     rejectAIUpdate={rejectAIUpdate}
+                    sheet={sheet}
+                    editingCell={editingCell}
+                    updateCell={updateCell}
                   />
                 );
               })}

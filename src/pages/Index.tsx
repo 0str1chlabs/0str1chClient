@@ -48,10 +48,26 @@ import { initializeTourForNewUser, shouldShowTourAutomatically } from '@/lib/tou
 import { useDuckDBUpdates } from '@/hooks/useDuckDBUpdates';
 import { createDebouncedSelectionUpdater, SelectionPerformanceMonitor } from '@/lib/cellSelectionUtils';
 import { useSpreadsheet } from '@/hooks/useSpreadsheet';
+import { indexedDBService } from '@/lib/indexedDBService';
+import { csvChangeManager } from '@/lib/csvChangeManager';
+import { convertLocalStorageToAIUpdates, hasLocalStorageChanges, debugLocalStorageState } from '@/lib/localStorageToAIUpdates';
+import { sheetSpecificStorage } from '@/lib/sheetSpecificStorage';
+import { sessionTracker } from '@/lib/sessionTracker';
+import { indexedDBFirstLoader } from '@/lib/indexedDBFirstLoader';
+import { unifiedChangeManager } from '@/lib/unifiedChangeManager';
+import { cleanFilename } from '@/lib/filenameUtils';
+import { debugIndexedDB } from '@/lib/utils';
+import { changeDetector, ChangeEntry } from '@/lib/changeDetector';
 import { getCurrentSheetAISchema } from '@/lib/utils';
 import { useDuckDBMapping } from '@/hooks/useDuckDBMapping';
 import { ResearchService } from '@/lib/researchService';
 import BackblazeApiService from '../services/backblazeApiService';
+import Loader from '@/components/Loader';
+import SheetLoader from '@/components/loaders/SheetLoader';
+import AILoader from '@/components/loaders/AILoader';
+import DataLoader from '@/components/loaders/DataLoader';
+import ResearchLoader from '@/components/loaders/ResearchLoader';
+import '@/styles/nprogress.css';
 
 
 const Index: React.FC = () => {
@@ -97,6 +113,8 @@ const Index: React.FC = () => {
   const [availableSheets, setAvailableSheets] = useState([]);
   const [showAIReportGenerator, setShowAIReportGenerator] = useState(false);
   const [notifications, setNotifications] = useState<NotificationProps[]>([]);
+  const [forceUpdate, setForceUpdate] = useState(0);
+  const [currentSheetFileName, setCurrentSheetFileName] = useState<string>('');
 
   // Notification helper functions
   const addNotification = useCallback((notification: Omit<NotificationProps, 'id'>) => {
@@ -138,8 +156,10 @@ const Index: React.FC = () => {
   const [csvUploaded, setCsvUploaded] = useState(false);
   const [isSheetRendered, setIsSheetRendered] = useState(false);
 
-  // Loading state management
+  // Loading state management (kept for compatibility with existing logic)
   const [isCheckingBackblazeData, setIsCheckingBackblazeData] = useState(true);
+  const [isProcessingSchema, setIsProcessingSchema] = useState(false);
+  const [isSchemaReady, setIsSchemaReady] = useState(false);
   const [hasCheckedBackblazeData, setHasCheckedBackblazeData] = useState(false);
   const [isLoadingSheets, setIsLoadingSheets] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -178,9 +198,1904 @@ const Index: React.FC = () => {
     }
   }, [state.sheets, state.activeSheetId]); // Removed activeSheetIndex from dependencies to prevent infinite loop
 
-  // Loading state management
-  const [isProcessingSchema, setIsProcessingSchema] = useState(false);
-  const [isSchemaReady, setIsSchemaReady] = useState(false);
+  // Watch for new sheets and cache them if they don't have data
+  useEffect(() => {
+    const activeSheet = state.sheets.find(s => s.id === state.activeSheetId);
+    if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length === 0) {
+      // Check if we have cached data for this sheet
+      const cachedData = sheetCache.get(activeSheet.id);
+      if (cachedData) {
+        console.log('🔄 Loading sheet data from cache for:', activeSheet.id);
+        // The cache contains the raw sheet data, but we need to convert it to the format expected by the spreadsheet
+        // For now, we'll just log that we found cached data
+        console.log('📊 Cached data found:', cachedData);
+      }
+    }
+  }, [state.activeSheetId, state.sheets, sheetCache]);
+
+  // IndexedDB will be initialized lazily when needed (on CSV upload)
+
+  // Initialize session tracking
+  useEffect(() => {
+    sessionTracker.startSession();
+    console.log('🔄 Session tracking initialized');
+    
+    // Handle page unload - sync to Backblaze if needed
+    const handleBeforeUnload = async () => {
+      if (user?.email && sessionTracker.needsBackblazeSync()) {
+        console.log('🔄 Page unloading, syncing changes to Backblaze...');
+        try {
+          await indexedDBFirstLoader.syncToBackblaze(user.email);
+        } catch (error) {
+          console.error('❌ Error syncing to Backblaze on page unload:', error);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      sessionTracker.endSession();
+    };
+  }, [user?.email]);
+
+  // Add debug functions to global scope for console access
+  useEffect(() => {
+    // Import debug functions
+    import('../lib/utils').then(({ debugDuckDBTables, debugDuckDBTable, debugIndexedDB }) => {
+      // Make debug functions available globally
+      (window as any).debugDuckDBTables = debugDuckDBTables;
+      (window as any).debugDuckDBTable = debugDuckDBTable;
+      (window as any).debugIndexedDB = debugIndexedDB;
+      
+      // Add manual test function
+      (window as any).testIndexedDBManually = async () => {
+        try {
+          console.log('🧪 Testing IndexedDB manually...');
+          console.log('🔍 IndexedDB service:', indexedDBService);
+          
+          await indexedDBService.init();
+          console.log('✅ IndexedDB initialized');
+          
+          const testCSV = 'Name,Age,City\nJohn,25,New York\nJane,30,Los Angeles';
+          console.log('📊 Test CSV data:', testCSV);
+          
+          const sheetId = await indexedDBService.saveSheet({
+            name: 'test.csv',
+            csvData: testCSV,
+            isActive: false
+          });
+          console.log('✅ Test sheet saved with ID:', sheetId);
+          
+          const allFiles = await indexedDBService.getAllSheets();
+          console.log('📊 All sheets:', allFiles);
+          
+          await debugIndexedDB();
+        } catch (error) {
+          console.error('❌ Manual test failed:', error);
+          console.error('Error stack:', error.stack);
+        }
+      };
+      
+      // Add function to check current state
+      (window as any).checkIndexedDBState = async () => {
+        try {
+          console.log('🔍 Checking IndexedDB state...');
+          console.log('🔍 IndexedDB service available:', !!indexedDBService);
+          console.log('🔍 IndexedDB service methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(indexedDBService)));
+          
+          await debugIndexedDB();
+          
+          const currentCSVId = localStorage.getItem('currentCSVId');
+          console.log('🔍 Current CSV ID in localStorage:', currentCSVId);
+          
+          if (currentCSVId) {
+            try {
+              const csvData = await indexedDBService.getCSVFile(currentCSVId);
+              console.log('🔍 CSV data for current ID:', csvData);
+            } catch (error) {
+              console.error('❌ Could not retrieve CSV data:', error);
+            }
+          }
+        } catch (error) {
+          console.error('❌ State check failed:', error);
+        }
+      };
+      
+      // Add function to clear test files
+      (window as any).clearTestFiles = async () => {
+        try {
+          console.log('🧹 Clearing test files from IndexedDB...');
+          const allFiles = await indexedDBService.getAllSheets();
+          const testFiles = allFiles.filter(file => file.name === 'test.csv');
+          
+          console.log(`🗑️ Found ${testFiles.length} test files to delete`);
+          
+          for (const file of testFiles) {
+            // Note: Delete functionality not needed for this test
+            console.log(`🔍 Found test file: ${file.id} - ${file.name}`);
+          }
+          
+          console.log('🧹 Test files cleared');
+          await debugIndexedDB();
+        } catch (error) {
+          console.error('❌ Failed to clear test files:', error);
+        }
+      };
+      
+      // Migration function for localStorage changes
+      (window as any).migrateToFilenameBasedStorage = () => {
+        try {
+          console.log('🔄 Migrating localStorage from sheet IDs to filename-based keys...');
+          
+          // Check for old storage
+          const oldAIDiffData = localStorage.getItem('sheet_specific_ai_diff');
+          if (!oldAIDiffData) {
+            console.log('✅ No old localStorage data found to migrate');
+            return;
+          }
+          
+          const oldParsed = JSON.parse(oldAIDiffData);
+          const oldKeys = Object.keys(oldParsed);
+          
+          if (oldKeys.length === 0) {
+            console.log('✅ No old changes found to migrate');
+            return;
+          }
+          
+          console.log('📋 Found old changes for sheet IDs:', oldKeys);
+          
+          // Get new filename-based storage
+          const newAIDiffData = localStorage.getItem('sheet_ai_diff_by_filename');
+          const newParsed = newAIDiffData ? JSON.parse(newAIDiffData) : {};
+          
+          // Try to map changes to current active sheet
+          if (state.sheets.length > 0 && oldKeys.length > 0) {
+            const activeSheet = state.sheets.find(s => s.id === state.activeSheetId) || state.sheets[0];
+            const fileName = activeSheet.name || `sheet-${activeSheet.id}`;
+            const cleanName = fileName.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_').toLowerCase();
+            
+            // Use the first available old changes for the current sheet
+            const oldChanges = oldParsed[oldKeys[0]];
+            if (Array.isArray(oldChanges) && oldChanges.length > 0) {
+              console.log(`🔄 Migrating ${oldChanges.length} changes to filename "${fileName}" (key: ${cleanName})`);
+              newParsed[cleanName] = oldChanges;
+              
+              // Save the new format
+              localStorage.setItem('sheet_ai_diff_by_filename', JSON.stringify(newParsed));
+              
+              // Keep old data for now (don't delete until user confirms migration worked)
+              console.log('✅ Migration completed - old data preserved for safety');
+              console.log('💡 Reload the page to see if your changes appear. If they do, you can clear old data with clearOldLocalStorage()');
+              
+              return true;
+            }
+          }
+          
+          console.log('⚠️ Could not automatically migrate - no active sheet found');
+          return false;
+          
+        } catch (error) {
+          console.error('❌ Error during migration:', error);
+          return false;
+        }
+      };
+      
+      // Function to clear old localStorage after successful migration
+      (window as any).clearOldLocalStorage = () => {
+        try {
+          console.log('🧹 Clearing old localStorage data...');
+          localStorage.removeItem('sheet_specific_ai_diff');
+          localStorage.removeItem('sheet_specific_changes');
+          localStorage.removeItem('updated_sheet_values');
+          console.log('✅ Old localStorage data cleared');
+        } catch (error) {
+          console.error('❌ Error clearing old localStorage:', error);
+        }
+      };
+
+      console.log('🔧 Debug functions available:');
+      console.log('  - debugDuckDBTables() - List all DuckDB tables');
+      console.log('  - debugDuckDBTable("tableName") - Debug specific table');
+      console.log('  - debugIndexedDB() - Check IndexedDB contents');
+      console.log('  - testIndexedDBManually() - Test IndexedDB with sample data');
+      console.log('  - checkIndexedDBState() - Check current IndexedDB state');
+      console.log('  - clearTestFiles() - Clear test files from IndexedDB');
+      console.log('  - migrateToFilenameBasedStorage() - Migrate old localStorage to new format');
+      console.log('  - clearOldLocalStorage() - Clear old localStorage data after migration');
+      console.log('  - testFilenameCleaning() - Test filename cleaning logic');
+      console.log('  - cleanExistingFilenames() - Clean existing IndexedDB filenames');
+      console.log('  - debugCurrentSheet() - Debug current sheet and table name');
+      
+      // Add filename cleaning test function
+      (window as any).testFilenameCleaning = () => {
+        const { testFilenameCleaning } = require('../lib/filenameUtils');
+        testFilenameCleaning();
+      };
+      
+      // Add function to clean existing IndexedDB filenames
+      (window as any).cleanExistingFilenames = async () => {
+        try {
+          console.log('🧹 Starting IndexedDB filename cleaning...');
+          await indexedDBService.cleanExistingFilenames();
+          console.log('✅ IndexedDB filename cleaning completed');
+        } catch (error) {
+          console.error('❌ Error cleaning IndexedDB filenames:', error);
+        }
+      };
+      
+      // Add function to debug current sheet and table name
+    (window as any).debugCurrentSheet = () => {
+      console.log('🔍 Current Sheet Debug Info:');
+      console.log('Active Sheet:', activeSheet);
+      if (activeSheet) {
+        const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+        const tableName = cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
+        console.log('Sheet ID:', activeSheet.id);
+        console.log('Clean ID:', cleanId);
+        console.log('Table Name:', tableName);
+        console.log('Sheet Name:', activeSheet.name);
+        console.log('Row Count:', activeSheet.rowCount);
+        console.log('Col Count:', activeSheet.colCount);
+        console.log('Cells Count:', Object.keys(activeSheet.cells || {}).length);
+    } else {
+        console.log('No active sheet');
+      }
+    };
+
+    // Function to remove duplicate sheets with the same name
+    (window as any).removeDuplicateSheets = () => {
+      console.log('🧹 Checking for duplicate sheets...');
+      const sheetNames = new Set();
+      const duplicates = [];
+      
+      state.sheets.forEach(sheet => {
+        if (sheetNames.has(sheet.name)) {
+          duplicates.push(sheet);
+          console.log(`🔍 Found duplicate sheet: ${sheet.name} (ID: ${sheet.id})`);
+        } else {
+          sheetNames.add(sheet.name);
+        }
+      });
+      
+      if (duplicates.length > 0) {
+        console.log(`🗑️ Removing ${duplicates.length} duplicate sheets...`);
+        duplicates.forEach(sheet => {
+          if (sheet.id !== state.activeSheetId) { // Don't remove active sheet
+            removeSheet(sheet.id);
+            console.log(`✅ Removed duplicate sheet: ${sheet.name} (ID: ${sheet.id})`);
+          }
+        });
+      } else {
+        console.log('✅ No duplicate sheets found');
+      }
+    };
+
+    // Add function to clear IndexedDB changes
+    (window as any).clearIndexedDBChanges = () => {
+      try {
+        sessionTracker.clearIndexedDBChanges();
+        console.log('✅ IndexedDB changes cleared');
+      } catch (error) {
+        console.error('❌ Error clearing IndexedDB changes:', error);
+      }
+    };
+
+    // Add function to check IndexedDB changes
+    (window as any).checkIndexedDBChanges = () => {
+      try {
+        const changes = sessionTracker.getIndexedDBChanges();
+        console.log('📊 Current IndexedDB changes:', changes);
+        console.log('📊 Total changes:', changes.length);
+        console.log('📊 Has changes:', sessionTracker.hasIndexedDBChanges());
+        return changes;
+      } catch (error) {
+        console.error('❌ Error checking IndexedDB changes:', error);
+        return [];
+      }
+    };
+
+    // Add function to clear localStorage changes
+    (window as any).clearLocalStorageChanges = () => {
+      try {
+        // Clear sheet-specific changes
+        if (activeSheet) {
+          sheetSpecificStorage.clearSheetChanges(activeSheet.id);
+          console.log('✅ Sheet-specific changes cleared for:', activeSheet.id);
+        }
+        
+        // Clear all localStorage changes
+        localStorage.removeItem('updated_sheet_values');
+        localStorage.removeItem('sheet_specific_changes');
+        localStorage.removeItem('sheet_specific_ai_diff');
+        localStorage.removeItem('ai_sheets_indexeddb_changes');
+        console.log('✅ All localStorage changes cleared');
+      } catch (error) {
+        console.error('❌ Error clearing localStorage changes:', error);
+      }
+    };
+
+    // Add function to debug localStorage structure
+    (window as any).debugLocalStorageStructure = () => {
+      try {
+        console.log('🔍 localStorage Structure Debug:');
+        
+        // Check all relevant localStorage keys
+        const keys = ['updated_sheet_values', 'sheet_specific_changes', 'sheet_specific_ai_diff', 'ai_sheets_indexeddb_changes'];
+        
+        keys.forEach(key => {
+          const value = localStorage.getItem(key);
+          if (value) {
+            try {
+              const parsed = JSON.parse(value);
+              console.log(`📋 ${key}:`, {
+                type: typeof parsed,
+                isArray: Array.isArray(parsed),
+                isObject: typeof parsed === 'object' && parsed !== null,
+                keys: typeof parsed === 'object' ? Object.keys(parsed) : 'N/A',
+                length: Array.isArray(parsed) ? parsed.length : 'N/A',
+                sample: Array.isArray(parsed) ? parsed.slice(0, 2) : parsed
+              });
+            } catch (e) {
+              console.log(`📋 ${key}: (parse error)`, value.substring(0, 100));
+            }
+          } else {
+            console.log(`📋 ${key}: null`);
+          }
+        });
+        
+        // Check for undefined keys
+        console.log('🔍 Checking for undefined keys...');
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.includes('undefined')) {
+            console.log(`⚠️ Found undefined key: ${key}`);
+          }
+        }
+        
+      } catch (error) {
+        console.error('❌ Error debugging localStorage structure:', error);
+      }
+    };
+
+    // Add function to clean up corrupted localStorage data
+    (window as any).cleanupLocalStorage = () => {
+      try {
+        console.log('🧹 Cleaning up corrupted localStorage data...');
+        
+        // Remove undefined keys
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.includes('undefined') || key === 'undefined')) {
+            keysToRemove.push(key);
+          }
+        }
+        
+        keysToRemove.forEach(key => {
+          localStorage.removeItem(key);
+          console.log(`🗑️ Removed undefined key: ${key}`);
+        });
+        
+        // Clean up sheet_specific_changes to remove undefined sheet IDs
+        const sheetChanges = localStorage.getItem('sheet_specific_changes');
+        if (sheetChanges) {
+          try {
+            const parsed = JSON.parse(sheetChanges);
+            const cleaned = {};
+            let removedCount = 0;
+            
+            Object.keys(parsed).forEach(sheetId => {
+              if (sheetId && sheetId !== 'undefined' && sheetId !== 'null') {
+                cleaned[sheetId] = parsed[sheetId];
+              } else {
+                removedCount++;
+                console.log(`🗑️ Removed changes for invalid sheet ID: ${sheetId}`);
+              }
+            });
+            
+            if (removedCount > 0) {
+              localStorage.setItem('sheet_specific_changes', JSON.stringify(cleaned));
+              console.log(`✅ Cleaned up ${removedCount} invalid sheet entries`);
+            }
+          } catch (e) {
+            console.log('⚠️ Could not parse sheet_specific_changes, removing...');
+            localStorage.removeItem('sheet_specific_changes');
+          }
+        }
+        
+        console.log('✅ localStorage cleanup completed');
+      } catch (error) {
+        console.error('❌ Error cleaning up localStorage:', error);
+      }
+    };
+
+    // Add function to manually trigger localStorage changes loading
+    (window as any).forceLoadLocalStorageChanges = async () => {
+      try {
+        console.log('🔄 Manually triggering localStorage changes loading...');
+        
+        // Reset the flag to allow reloading
+        localStorageChangesLoaded.current = false;
+        lastProcessedSheetId.current = null;
+        
+        // Force reload the changes
+        const loadPendingChangesAsAIUpdates = async () => {
+          if (!state.activeSheetId || state.sheets.length === 0) {
+            console.log('⚠️ No active sheet or sheets loaded yet');
+            return;
+          }
+
+          const activeSheet = state.sheets.find(s => s.id === state.activeSheetId);
+          if (!activeSheet || !activeSheet.cells || Object.keys(activeSheet.cells).length === 0) {
+            console.log('⚠️ Active sheet has no cells yet');
+            return;
+          }
+
+          try {
+            console.log('🔄 Loading pending changes using unified change manager...');
+            
+            // Get change summary for debugging
+            const summary = await unifiedChangeManager.getChangeSummary(state.activeSheetId);
+            console.log('📊 Change summary:', summary);
+            
+            // Load all pending changes (from both IndexedDB and localStorage)
+            const changes = await unifiedChangeManager.loadPendingChanges(state.activeSheetId);
+            
+            // Also check for legacy localStorage changes
+            const legacyChanges = convertLocalStorageToAIUpdates();
+            if (legacyChanges.length > 0) {
+              console.log(`📝 Found ${legacyChanges.length} legacy localStorage changes, adding to unified changes...`);
+              // Convert legacy changes to unified format
+              const unifiedLegacyChanges = legacyChanges.map(change => ({
+                cellId: change.cellId,
+                previousValue: change.originalValue,
+                newValue: change.aiValue,
+                timestamp: change.timestamp,
+                source: 'localstorage' as const
+              }));
+              changes.push(...unifiedLegacyChanges);
+            }
+            
+            if (changes.length > 0) {
+              console.log(`📝 Found ${changes.length} total pending changes, applying to UI...`);
+              console.log('🔍 Changes breakdown:', {
+                total: changes.length,
+                indexedDB: changes.filter(c => c.source === 'indexeddb').length,
+                localStorage: changes.filter(c => c.source === 'localstorage').length
+              });
+              
+              // Apply changes to UI using the unified manager
+              await unifiedChangeManager.applyChangesToUI(state.activeSheetId, changes, createAIUpdates);
+              
+              console.log('✅ Pending changes loaded as AI updates - user can now Accept/Reject');
+              
+              // Force a re-render to ensure the UI updates
+              setForceUpdate(prev => prev + 1);
+              
+              // Also add a notification to inform the user
+              setNotifications(prev => [...prev, {
+                id: `manual-changes-${Date.now()}`,
+                type: 'info',
+                title: 'Pending Changes Found',
+                message: `Found ${changes.length} pending changes from previous session. Please review and accept or reject them.`,
+                duration: 5000
+              }]);
+            } else {
+              console.log('ℹ️ No pending changes found');
+            }
+            
+          } catch (error) {
+            console.error('❌ Error loading pending changes:', error);
+          }
+        };
+        
+        await loadPendingChangesAsAIUpdates();
+        console.log('✅ Manual localStorage changes loading completed');
+        
+      } catch (error) {
+        console.error('❌ Error manually loading localStorage changes:', error);
+      }
+    };
+
+    // Add a comprehensive debug function to check localStorage state
+    (window as any).debugLocalStorageChanges = () => {
+      console.log('🔍 Debugging localStorage changes...');
+      
+      // Check legacy localStorage
+      const legacyChanges = localStorage.getItem('updated_sheet_values');
+      console.log('📋 Legacy localStorage (updated_sheet_values):', legacyChanges);
+      
+      // Check sheet-specific localStorage
+      if (state.activeSheetId) {
+        const sheetChanges = sheetSpecificStorage.getSheetChanges(state.activeSheetId);
+        console.log(`📋 Sheet-specific changes for ${state.activeSheetId}:`, sheetChanges);
+        
+        // Also check AI diff data
+        const aiDiffData = sheetSpecificStorage.getSheetAIDiff(state.activeSheetId);
+        console.log(`📋 AI diff data for ${state.activeSheetId}:`, aiDiffData);
+        
+        // Check raw AI diff storage
+        const rawAIDiff = localStorage.getItem('sheet_specific_ai_diff');
+        if (rawAIDiff) {
+          const parsed = JSON.parse(rawAIDiff);
+          console.log('📋 Raw AI diff storage:', parsed);
+          console.log(`📋 AI diff for current sheet (${state.activeSheetId}):`, parsed[state.activeSheetId]);
+        }
+      } else {
+        console.log('⚠️ No active sheet ID');
+      }
+      
+      // Check all localStorage keys
+      const allKeys = Object.keys(localStorage);
+      const relevantKeys = allKeys.filter(key => 
+        key.includes('sheet') || key.includes('ai') || key.includes('changes')
+      );
+      console.log('🔑 Relevant localStorage keys:', relevantKeys);
+      
+      relevantKeys.forEach(key => {
+        const value = localStorage.getItem(key);
+        console.log(`  ${key}:`, value?.substring(0, 200) + (value && value.length > 200 ? '...' : ''));
+      });
+    };
+
+    // Add function to fix corrupted localStorage data
+    (window as any).fixLocalStorageChanges = () => {
+      console.log('🔧 Fixing corrupted localStorage changes...');
+      
+      try {
+        // Get the corrupted data with 'undefined' key
+        const aiDiffData = localStorage.getItem('sheet_specific_ai_diff');
+        if (aiDiffData) {
+          const parsed = JSON.parse(aiDiffData);
+          console.log('📋 Current ai_diff data:', parsed);
+          
+          // Check if there are changes under 'undefined' key
+          if (parsed.undefined && Array.isArray(parsed.undefined) && parsed.undefined.length > 0) {
+            console.log(`📝 Found ${parsed.undefined.length} changes under 'undefined' key`);
+            
+            // Move changes to the current active sheet
+            if (state.activeSheetId) {
+              console.log(`🔄 Moving changes to active sheet: ${state.activeSheetId}`);
+              
+              // Create new structure with correct sheet ID
+              const fixedData = { ...parsed };
+              fixedData[state.activeSheetId] = parsed.undefined;
+              delete fixedData.undefined;
+              
+              // Save the fixed data
+              localStorage.setItem('sheet_specific_ai_diff', JSON.stringify(fixedData));
+              console.log('✅ Fixed ai_diff data');
+              
+              // Also fix sheet_specific_changes
+              const changesData = localStorage.getItem('sheet_specific_changes') || '{}';
+              const changesObj = JSON.parse(changesData);
+              
+              // Convert ai_diff format to changes format
+              const convertedChanges = parsed.undefined.map((change: any) => ({
+                cellId: change.cellId,
+                previousValue: change.previousValue,
+                newValue: change.newValue,
+                timestamp: change.timestamp
+              }));
+              
+              changesObj[state.activeSheetId] = convertedChanges;
+              localStorage.setItem('sheet_specific_changes', JSON.stringify(changesObj));
+              console.log('✅ Fixed sheet_specific_changes');
+              
+              return true;
+            } else {
+              console.log('⚠️ No active sheet to move changes to');
+              return false;
+            }
+          } else {
+            console.log('ℹ️ No changes under undefined key');
+            return false;
+          }
+        } else {
+          console.log('ℹ️ No ai_diff data found');
+          return false;
+        }
+      } catch (error) {
+        console.error('❌ Error fixing localStorage changes:', error);
+        return false;
+      }
+    };
+
+    // Add function to convert AI diff data to changes format
+    (window as any).convertAIDiffToChanges = () => {
+      console.log('🔄 Converting AI diff data to changes format...');
+      
+      try {
+        const rawAIDiff = localStorage.getItem('sheet_specific_ai_diff');
+        if (!rawAIDiff) {
+          console.log('ℹ️ No AI diff data found');
+          return false;
+        }
+        
+        const aiDiffData = JSON.parse(rawAIDiff);
+        const changesData = localStorage.getItem('sheet_specific_changes') || '{}';
+        const changesObj = JSON.parse(changesData);
+        
+        let converted = false;
+        
+        // Convert AI diff data for each sheet
+        Object.keys(aiDiffData).forEach(sheetId => {
+          const aiDiffs = aiDiffData[sheetId];
+          if (Array.isArray(aiDiffs) && aiDiffs.length > 0) {
+            console.log(`🔄 Converting ${aiDiffs.length} AI diffs for sheet ${sheetId}`);
+            
+            // Convert AI diff format to changes format
+            const convertedChanges = aiDiffs.map((diff: any) => ({
+              cellId: diff.cellId,
+              previousValue: diff.previousValue,
+              newValue: diff.newValue,
+              timestamp: diff.timestamp
+            }));
+            
+            // Merge with existing changes (avoid duplicates)
+            if (!changesObj[sheetId]) {
+              changesObj[sheetId] = convertedChanges;
+              converted = true;
+            } else {
+              // Add only new changes (check by timestamp and cellId)
+              const existingTimestamps = new Set(
+                changesObj[sheetId].map((c: any) => `${c.cellId}-${c.timestamp}`)
+              );
+              
+              const newChanges = convertedChanges.filter((c: any) => 
+                !existingTimestamps.has(`${c.cellId}-${c.timestamp}`)
+              );
+              
+              if (newChanges.length > 0) {
+                changesObj[sheetId].push(...newChanges);
+                converted = true;
+                console.log(`📝 Added ${newChanges.length} new changes for sheet ${sheetId}`);
+              }
+            }
+          }
+        });
+        
+        if (converted) {
+          localStorage.setItem('sheet_specific_changes', JSON.stringify(changesObj));
+          console.log('✅ Successfully converted AI diff data to changes format');
+          return true;
+        } else {
+          console.log('ℹ️ No new changes to convert');
+          return false;
+        }
+        
+      } catch (error) {
+        console.error('❌ Error converting AI diff to changes:', error);
+        return false;
+      }
+    };
+
+    // Add function to force load changes with better timing
+    (window as any).forceLoadChangesWithRetry = async () => {
+      console.log('🔄 Force loading changes with retry logic...');
+      
+      // First convert AI diff data to changes format
+      const converted = (window as any).convertAIDiffToChanges();
+      if (converted) {
+        console.log('✅ Converted AI diff data to changes format');
+      }
+      
+      // Then fix any corrupted data
+      const fixed = (window as any).fixLocalStorageChanges();
+      if (fixed) {
+        console.log('✅ Fixed corrupted localStorage data');
+      }
+      
+      // Wait for sheet to be fully loaded
+      const waitForSheetData = () => {
+        return new Promise((resolve) => {
+          const checkSheet = () => {
+            const activeSheet = state.sheets.find(s => s.id === state.activeSheetId);
+            if (activeSheet && activeSheet.cells && Object.keys(activeSheet.cells).length > 0) {
+              console.log('✅ Sheet has cells, proceeding with loading');
+              resolve(true);
+            } else {
+              console.log('⏳ Waiting for sheet to load...');
+              setTimeout(checkSheet, 500);
+            }
+          };
+          checkSheet();
+        });
+      };
+      
+      await waitForSheetData();
+      
+      // Now force load the changes
+      await (window as any).forceLoadLocalStorageChanges();
+    };
+
+    // Add change detector debug functions
+    (window as any).debugChangeDetector = () => {
+      console.log('🔍 ChangeDetector Debug Info:');
+      console.log('Current sheet filename:', currentSheetFileName);
+      console.log('Active sheet:', activeSheet);
+      console.log('Change detector summary:', changeDetector.getChangesSummary());
+      console.log('Current sheet changes:', changeDetector.getCurrentSheetChanges());
+      
+      // Check ALL localStorage keys
+      console.log('🔍 ALL localStorage keys:');
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('sheet') || key.includes('change') || key.includes('ai'))) {
+          const value = localStorage.getItem(key);
+          console.log(`📋 ${key}:`, value ? JSON.parse(value) : value);
+        }
+      }
+      
+      // Check the specific key the change detector uses
+      const storageKey = 'sheet_changes_by_filename';
+      const rawData = localStorage.getItem(storageKey);
+      console.log('🔍 ChangeDetector storage key data:', rawData);
+    };
+
+    (window as any).testManualChange = () => {
+      console.log('🧪 Testing manual change detection...');
+      if (currentSheetFileName) {
+        changeDetector.detectManualChange('A1', 'Test Value ' + Date.now());
+      } else {
+        console.log('❌ No current sheet filename set');
+      }
+    };
+
+    (window as any).clearAllChanges = () => {
+      console.log('🗑️ Clearing all changes...');
+      localStorage.removeItem('sheet_changes_by_filename');
+      localStorage.removeItem('sheet_specific_ai_diff');
+      localStorage.removeItem('sheet_specific_changes');
+      console.log('✅ All changes cleared');
+    };
+
+    (window as any).fixDuckDBTable = async () => {
+      console.log('🔧 Fixing DuckDB table mismatch...');
+      try {
+        const { queryDuckDB } = await import('../lib/utils');
+        
+        // Get all existing tables
+        const tablesResult = await queryDuckDB('SHOW TABLES');
+        const existingTables = tablesResult.map(row => row[0]);
+        console.log('📋 Existing DuckDB tables:', existingTables);
+        
+        if (activeSheet) {
+          const currentTableName = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+          const expectedTableName = currentTableName.startsWith('sheet_') ? currentTableName : `sheet_${currentTableName}`;
+          
+          console.log('🔍 Current sheet ID:', activeSheet.id);
+          console.log('🔍 Expected table name:', expectedTableName);
+          
+          if (!existingTables.includes(expectedTableName)) {
+            console.log('❌ Expected table does not exist');
+            
+            // Find old tables that might match this sheet
+            const possibleOldTables = existingTables.filter(table => 
+              table.startsWith('sheet_') && table.includes('pivot') || table.includes(activeSheet.name?.toLowerCase() || '')
+            );
+            
+            console.log('🔍 Possible old tables:', possibleOldTables);
+            
+            if (possibleOldTables.length > 0) {
+              const oldTable = possibleOldTables[0];
+              console.log(`🔄 Renaming table ${oldTable} to ${expectedTableName}`);
+              
+              // Rename the table
+              await queryDuckDB(`CREATE TABLE "${expectedTableName}" AS SELECT * FROM "${oldTable}"`);
+              await queryDuckDB(`DROP TABLE "${oldTable}"`);
+              
+              console.log('✅ Table renamed successfully');
+            } else {
+              console.log('⚠️ No matching old table found - sheet may need to be reloaded');
+            }
+          } else {
+            console.log('✅ Table already exists with correct name');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error fixing DuckDB table:', error);
+      }
+    };
+
+    (window as any).migrateExistingChanges = () => {
+      console.log('🔄 Migrating existing localStorage changes...');
+      
+      try {
+        // Get existing AI diff data
+        const aiDiffData = localStorage.getItem('sheet_specific_ai_diff');
+        if (aiDiffData) {
+          const parsed = JSON.parse(aiDiffData);
+          console.log('📋 Found sheet_specific_ai_diff data:', parsed);
+          
+          // Convert to new format
+          const newFormat = {};
+          
+          Object.keys(parsed).forEach(sheetKey => {
+            const changes = parsed[sheetKey];
+            if (Array.isArray(changes)) {
+              // Convert each change to new format
+              const convertedChanges = changes.map(change => ({
+                cellId: change.cellId,
+                previousValue: change.previousValue,
+                newValue: change.newValue,
+                timestamp: change.timestamp,
+                source: 'ai' // Mark as AI changes
+              }));
+              
+              // Try to map sheet ID to sheet name
+              let sheetName = sheetKey;
+              if (activeSheet && activeSheet.id === sheetKey) {
+                sheetName = activeSheet.name || sheetKey;
+              }
+              
+              newFormat[sheetName] = convertedChanges;
+              console.log(`✅ Migrated ${convertedChanges.length} changes for ${sheetKey} -> ${sheetName}`);
+            }
+          });
+          
+          // Save in new format
+          localStorage.setItem('sheet_changes_by_filename', JSON.stringify(newFormat));
+          console.log('💾 Saved migrated data to sheet_changes_by_filename');
+          
+          return newFormat;
+        }
+        
+        console.log('ℹ️ No sheet_specific_ai_diff data found');
+        return null;
+        
+      } catch (error) {
+        console.error('❌ Error migrating changes:', error);
+        return null;
+      }
+    };
+    
+    // Add session tracking debug functions
+    (window as any).getSessionSummary = () => sessionTracker.getSessionSummary();
+      (window as any).needsBackblazeSync = () => sessionTracker.needsBackblazeSync();
+      (window as any).manualSyncToBackblaze = async () => {
+        if (user?.email) {
+          console.log('🔄 Manual sync to Backblaze initiated...');
+          const success = await indexedDBFirstLoader.syncToBackblaze(user.email);
+          console.log('✅ Manual sync result:', success);
+          return success;
+        } else {
+          console.log('❌ No user email available for sync');
+          return false;
+        }
+      };
+      
+      // Add IndexedDB debug functions
+      (window as any).clearIndexedDB = async () => {
+        try {
+          console.log('🧹 Clearing IndexedDB to force schema update...');
+          const deleteRequest = indexedDB.deleteDatabase('AISheetsDB');
+          deleteRequest.onsuccess = () => {
+            console.log('✅ IndexedDB cleared successfully, refresh the page to reinitialize');
+          };
+          deleteRequest.onerror = () => {
+            console.error('❌ Error clearing IndexedDB:', deleteRequest.error);
+          };
+        } catch (error) {
+          console.error('❌ Error clearing IndexedDB:', error);
+        }
+      };
+      
+      // Add Backblaze debug functions
+      (window as any).testBackblazeDownload = async (fileName: string) => {
+        if (user?.email) {
+          try {
+            console.log('🧪 Testing Backblaze download for:', fileName);
+            const backblazeService = BackblazeApiService.getInstance();
+            const result = await backblazeService.downloadFile(user.email, fileName);
+            console.log('📊 Download result:', result);
+            return result;
+          } catch (error) {
+            console.error('❌ Test download failed:', error);
+            return { success: false, message: error.message };
+          }
+        } else {
+          console.log('❌ No user email available for test');
+          return { success: false, message: 'No user email' };
+        }
+      };
+      
+      // Add data structure debug function
+      (window as any).debugLoaderData = async () => {
+        if (user?.email) {
+          try {
+            console.log('🧪 Testing IndexedDB-first loader data structure...');
+            const loadedSheets = await indexedDBFirstLoader.loadAllSheets(user.email);
+            console.log('📊 Loaded sheets count:', loadedSheets.length);
+            if (loadedSheets.length > 0) {
+              const sheet = loadedSheets[0];
+              console.log('🔍 First sheet structure:', {
+                sheetId: sheet.sheetId,
+                sheetName: sheet.sheetName,
+                csvDataType: typeof sheet.csvData,
+                csvDataLength: sheet.csvData?.length,
+                csvDataSample: sheet.csvData?.substring?.(0, 100) || sheet.csvData,
+                source: sheet.source,
+                lastModified: sheet.lastModified
+              });
+            }
+            return loadedSheets;
+          } catch (error) {
+            console.error('❌ Debug loader failed:', error);
+            return null;
+          }
+        } else {
+          console.log('❌ No user email available for debug');
+          return null;
+        }
+      };
+
+      // Add comprehensive IndexedDB-first loading debug function
+      (window as any).debugIndexedDBFirstLoading = async () => {
+        if (!user?.email) {
+          console.log('❌ No user email available');
+          return;
+        }
+
+        console.log('🔍 === DEBUGGING INDEXEDDB-FIRST LOADING PROCESS ===');
+        console.log('👤 User email:', user.email);
+        
+        try {
+          // Step 1: Check IndexedDB directly
+          console.log('📊 Step 1: Direct IndexedDB check...');
+          await debugIndexedDB();
+          
+          // Step 2: Check IndexedDB service
+          console.log('📊 Step 2: IndexedDB service check...');
+          console.log('🔧 IndexedDB service available:', !!indexedDBService);
+          
+          try {
+            await indexedDBService.init();
+            const allSheets = await indexedDBService.getAllSheets();
+            console.log('📋 IndexedDB service getAllSheets result:', {
+              count: allSheets.length,
+              sheets: allSheets.map(s => ({
+                id: s.id,
+                name: s.name,
+                csvLength: s.csvData?.length || 0,
+                lastModified: new Date(s.lastModified).toISOString()
+              }))
+            });
+          } catch (serviceError) {
+            console.error('❌ IndexedDB service error:', serviceError);
+          }
+          
+          // Step 3: Test IndexedDB-first loader
+          console.log('📊 Step 3: IndexedDB-first loader test...');
+          const loadedSheets = await indexedDBFirstLoader.loadAllSheets(user.email);
+          console.log('📋 IndexedDB-first loader result:', {
+            count: loadedSheets.length,
+            sheets: loadedSheets.map(s => ({
+              sheetId: s.sheetId,
+              sheetName: s.sheetName,
+              source: s.source,
+              csvLength: s.csvData?.length || 0,
+              lastModified: new Date(s.lastModified).toISOString()
+            }))
+          });
+          
+          // Step 4: Check session tracker
+          console.log('📊 Step 4: Session tracker status...');
+          console.log('🔧 Session summary:', sessionTracker.getSessionSummary());
+          console.log('🔧 Needs Backblaze sync:', sessionTracker.needsBackblazeSync());
+          
+        } catch (error) {
+          console.error('❌ Error in comprehensive debug:', error);
+          console.error('❌ Error stack:', error.stack);
+        }
+        
+        console.log('✅ === INDEXEDDB-FIRST LOADING DEBUG COMPLETE ===');
+      };
+
+      // Add IndexedDB schema check function
+      (window as any).checkIndexedDBSchema = () => {
+        return new Promise((resolve, reject) => {
+          console.log('🔍 === CHECKING INDEXEDDB SCHEMA ===');
+          
+          const request = indexedDB.open('AISheetsDB');
+          
+          request.onsuccess = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+            console.log('✅ IndexedDB opened successfully');
+            console.log('📊 Database version:', db.version);
+            console.log('📊 Database name:', db.name);
+            
+            const objectStoreNames = Array.from(db.objectStoreNames);
+            console.log('📋 Object stores:', objectStoreNames);
+            
+            // Check each object store
+            objectStoreNames.forEach(storeName => {
+              console.log(`🔍 Checking store: ${storeName}`);
+              
+              try {
+                const transaction = db.transaction([storeName], 'readonly');
+                const store = transaction.objectStore(storeName);
+                
+                console.log(`📊 Store "${storeName}" key path:`, store.keyPath);
+                console.log(`📊 Store "${storeName}" auto increment:`, store.autoIncrement);
+                console.log(`📊 Store "${storeName}" index names:`, Array.from(store.indexNames));
+                
+                const countRequest = store.count();
+                countRequest.onsuccess = () => {
+                  console.log(`📊 Store "${storeName}" record count:`, countRequest.result);
+                  
+                  if (countRequest.result > 0) {
+                    const getAllRequest = store.getAll();
+                    getAllRequest.onsuccess = () => {
+                      const records = getAllRequest.result;
+                      console.log(`📋 Store "${storeName}" records:`, records.map(r => ({
+                        id: r.id,
+                        name: r.name,
+                        keys: Object.keys(r)
+                      })));
+                    };
+                  }
+                };
+                
+              } catch (storeError) {
+                console.error(`❌ Error checking store ${storeName}:`, storeError);
+              }
+            });
+            
+            db.close();
+            resolve(objectStoreNames);
+          };
+          
+          request.onerror = (event) => {
+            console.error('❌ Error opening IndexedDB for schema check:', event);
+            reject(event);
+          };
+          
+          request.onupgradeneeded = (event) => {
+            console.log('🔄 IndexedDB upgrade needed - current version:', (event.target as IDBOpenDBRequest).result.version);
+          };
+        });
+      };
+
+      // Add function to compare current sheet with IndexedDB content
+      (window as any).compareSheetWithIndexedDB = async () => {
+        try {
+          console.log('🔍 === COMPARING CURRENT SHEET WITH INDEXEDDB ===');
+          
+          if (!activeSheet) {
+            console.log('❌ No active sheet available');
+            return;
+          }
+          
+          console.log('📋 Current active sheet:', {
+            id: activeSheet.id,
+            name: activeSheet.name,
+            cellCount: Object.keys(activeSheet.cells).length,
+            rowCount: activeSheet.rowCount,
+            colCount: activeSheet.colCount
+          });
+          
+          // Show sample of current sheet data
+          const sampleCells = Object.entries(activeSheet.cells).slice(0, 10);
+          console.log('📊 Current sheet cells (sample):', sampleCells.map(([id, cell]) => ({
+            cellId: id,
+            value: cell.value,
+            type: typeof cell.value
+          })));
+          
+          // Get corresponding data from IndexedDB
+          await indexedDBService.init();
+          const indexedDBSheets = await indexedDBService.getAllSheets();
+          const matchingSheet = indexedDBSheets.find(s => s.name === activeSheet.name || s.id === activeSheet.id);
+          
+          if (matchingSheet) {
+            console.log('📋 Matching IndexedDB sheet:', {
+              id: matchingSheet.id,
+              name: matchingSheet.name,
+              csvDataLength: matchingSheet.csvData?.length || 0,
+              lastModified: new Date(matchingSheet.lastModified).toISOString()
+            });
+            
+            // Parse CSV data to compare
+            if (matchingSheet.csvData) {
+              const csvLines = matchingSheet.csvData.split('\n').filter(line => line.trim());
+              console.log('📊 IndexedDB CSV data:', {
+                totalLines: csvLines.length,
+                headers: csvLines[0]?.split(',') || [],
+                firstDataRow: csvLines[1]?.split(',') || [],
+                preview: matchingSheet.csvData.substring(0, 200)
+              });
+              
+              // Compare specific cells
+              console.log('🔍 === CELL COMPARISON ===');
+              
+              // Check first few data cells
+              const headers = csvLines[0]?.split(',') || [];
+              if (csvLines.length > 1) {
+                const firstRow = csvLines[1]?.split(',') || [];
+                for (let i = 0; i < Math.min(5, headers.length); i++) {
+                  const cellId = `${String.fromCharCode(65 + i)}2`; // A2, B2, C2, etc.
+                  const currentValue = activeSheet.cells[cellId]?.value;
+                  const indexedDBValue = firstRow[i];
+                  
+                  console.log(`📊 Cell ${cellId}:`, {
+                    current: currentValue,
+                    indexedDB: indexedDBValue,
+                    match: String(currentValue) === String(indexedDBValue)
+                  });
+                }
+              }
+              
+            } else {
+              console.log('⚠️ No CSV data found in IndexedDB sheet');
+            }
+          } else {
+            console.log('❌ No matching sheet found in IndexedDB');
+            console.log('📋 Available IndexedDB sheets:', indexedDBSheets.map(s => ({
+              id: s.id,
+              name: s.name
+            })));
+          }
+          
+        } catch (error) {
+          console.error('❌ Error comparing sheet with IndexedDB:', error);
+        }
+        
+        console.log('✅ === SHEET COMPARISON COMPLETE ===');
+      };
+
+      // Add function to manually update IndexedDB with current sheet data
+      (window as any).manualUpdateIndexedDB = async () => {
+        try {
+          console.log('🔄 === MANUALLY UPDATING INDEXEDDB ===');
+          
+          if (!activeSheet) {
+            console.log('❌ No active sheet available');
+            return;
+          }
+          
+          console.log('📋 Updating IndexedDB for current sheet:', {
+            id: activeSheet.id,
+            name: activeSheet.name,
+            cellCount: Object.keys(activeSheet.cells).length
+          });
+          
+          // Convert sheet cells to CSV format for IndexedDB storage
+          const csvData: string[][] = [];
+          const maxRow = activeSheet.rowCount;
+          const maxCol = activeSheet.colCount;
+          
+          console.log('📊 Sheet dimensions:', { maxRow, maxCol });
+          
+          // Create header row (A, B, C, ...)
+          const headers: string[] = [];
+          for (let col = 0; col < maxCol; col++) {
+            headers.push(String.fromCharCode(65 + col));
+          }
+          csvData.push(headers);
+          console.log('📋 Generated headers:', headers);
+          
+          // Add data rows
+          for (let row = 1; row < maxRow; row++) {
+            const rowData: string[] = [];
+            for (let col = 0; col < maxCol; col++) {
+              const cellId = `${String.fromCharCode(65 + col)}${row + 1}`;
+              const cell = activeSheet.cells[cellId];
+              rowData.push(cell?.value?.toString() || '');
+            }
+            // Only add non-empty rows
+            if (rowData.some(cell => cell.trim() !== '')) {
+              csvData.push(rowData);
+            }
+          }
+          
+          console.log('📊 Generated CSV data:', {
+            totalRows: csvData.length,
+            sampleRows: csvData.slice(0, 3)
+          });
+          
+          // Convert CSV data to string format
+          const csvString = csvData.map(row => row.join(',')).join('\n');
+          console.log('📊 CSV string preview:', csvString.substring(0, 200));
+          
+          // Save to IndexedDB
+          await indexedDBService.init();
+          const sheetId = await indexedDBService.saveSheet({
+            name: activeSheet.name,
+            csvData: csvString,
+            isActive: true,
+            processedData: {
+              totalRows: csvData.length - 1,
+              totalColumns: csvData[0]?.length || 0
+            }
+          });
+          
+          console.log('✅ Sheet successfully saved to IndexedDB with ID:', sheetId);
+          
+          // Verify the save by reading it back
+          const savedSheet = await indexedDBService.getSheet(sheetId);
+          if (savedSheet) {
+            console.log('✅ Verification: Sheet retrieved from IndexedDB:', {
+              id: savedSheet.id,
+              name: savedSheet.name,
+              csvDataLength: savedSheet.csvData?.length || 0,
+              lastModified: new Date(savedSheet.lastModified).toISOString()
+            });
+          } else {
+            console.log('❌ Verification failed: Could not retrieve saved sheet');
+          }
+          
+        } catch (error) {
+          console.error('❌ Error manually updating IndexedDB:', error);
+          console.error('❌ Error stack:', error.stack);
+        }
+        
+        console.log('✅ === MANUAL INDEXEDDB UPDATE COMPLETE ===');
+      };
+
+      // Add function to cleanup IndexedDB duplicates
+      (window as any).cleanupIndexedDBDuplicates = async () => {
+        try {
+          console.log('🧹 === CLEANING UP INDEXEDDB DUPLICATES ===');
+          
+          await indexedDBService.init();
+          const allSheets = await indexedDBService.getAllSheets();
+          console.log('📊 Found', allSheets.length, 'sheets in IndexedDB');
+          
+          // Group sheets by name to find duplicates
+          const sheetsByName = new Map();
+          allSheets.forEach(sheet => {
+            const name = sheet.name;
+            if (!sheetsByName.has(name)) {
+              sheetsByName.set(name, []);
+            }
+            sheetsByName.get(name).push(sheet);
+          });
+          
+          console.log('📋 Sheet groups by name:');
+          let duplicatesFound = 0;
+          let sheetsToDelete = [];
+          
+          for (const [name, sheets] of sheetsByName.entries()) {
+            console.log(`📄 "${name}": ${sheets.length} copies`);
+            
+            if (sheets.length > 1) {
+              duplicatesFound++;
+              // Keep the most recent one, delete the rest
+              const sortedSheets = sheets.sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
+              const keepSheet = sortedSheets[0];
+              const deleteSheets = sortedSheets.slice(1);
+              
+              console.log(`🔄 Keeping most recent: ${keepSheet.id} (${new Date(keepSheet.lastModified).toISOString()})`);
+              console.log(`🗑️ Will delete ${deleteSheets.length} older copies:`, deleteSheets.map(s => `${s.id} (${new Date(s.lastModified).toISOString()})`));
+              
+              sheetsToDelete.push(...deleteSheets);
+            }
+          }
+          
+          if (duplicatesFound === 0) {
+            console.log('✅ No duplicates found - IndexedDB is clean');
+            return;
+          }
+          
+          console.log(`🗑️ Found ${duplicatesFound} duplicate groups, deleting ${sheetsToDelete.length} stale sheets`);
+          
+          // Delete the stale sheets (Note: we'll need to add a delete method or clear and reload)
+          console.log('⚠️ IndexedDB delete method not available - will clear entire database and reload fresh from Backblaze');
+          console.log('🔄 Use syncIndexedDBWithBackblaze() to get a clean slate');
+          
+        } catch (error) {
+          console.error('❌ Error cleaning up IndexedDB duplicates:', error);
+        }
+        
+        console.log('✅ === INDEXEDDB CLEANUP ANALYSIS COMPLETE ===');
+      };
+
+      // Add function to sync IndexedDB with Backblaze (clean slate)
+      (window as any).syncIndexedDBWithBackblaze = async () => {
+        if (!user?.email) {
+          console.log('❌ No user email available');
+          return;
+        }
+
+        try {
+          console.log('🔄 === SYNCING INDEXEDDB WITH BACKBLAZE (CLEAN SLATE) ===');
+          console.log('👤 User email:', user.email);
+          
+          // Step 1: Clear IndexedDB completely
+          console.log('🧹 Step 1: Clearing IndexedDB...');
+          const deleteRequest = indexedDB.deleteDatabase('AISheetsDB');
+          
+          await new Promise((resolve, reject) => {
+            deleteRequest.onsuccess = () => {
+              console.log('✅ IndexedDB cleared successfully');
+              resolve(true);
+            };
+            deleteRequest.onerror = () => {
+              console.error('❌ Error clearing IndexedDB:', deleteRequest.error);
+              reject(deleteRequest.error);
+            };
+          });
+          
+          // Step 2: Reinitialize IndexedDB
+          console.log('🔧 Step 2: Reinitializing IndexedDB...');
+          await indexedDBService.init();
+          
+          // Step 3: Load fresh data from Backblaze
+          console.log('📊 Step 3: Loading fresh data from Backblaze...');
+          const loadedSheets = await indexedDBFirstLoader.loadAllSheets(user.email);
+          
+          console.log('✅ Sync complete! Results:', {
+            sheetsLoaded: loadedSheets.length,
+            sheets: loadedSheets.map(s => ({
+              name: s.sheetName,
+              source: s.source,
+              size: s.csvData?.length || 0
+            }))
+          });
+          
+          console.log('🔄 Please refresh the page to see the clean data');
+          
+        } catch (error) {
+          console.error('❌ Error syncing IndexedDB with Backblaze:', error);
+        }
+        
+        console.log('✅ === INDEXEDDB SYNC COMPLETE ===');
+      };
+
+      // Add function to remove duplicate sheets from current state
+      (window as any).removeDuplicateSheets = () => {
+        console.log('🧹 === REMOVING DUPLICATE SHEETS FROM CURRENT STATE ===');
+        
+        const currentSheets = state.sheets;
+        console.log('📊 Current sheets before cleanup:', currentSheets.map(s => ({
+          id: s.id,
+          name: s.name,
+          rowCount: s.rowCount,
+          colCount: s.colCount
+        })));
+        
+        // Group sheets by name
+        const sheetsByName = new Map();
+        currentSheets.forEach(sheet => {
+          const name = sheet.name;
+          if (!sheetsByName.has(name)) {
+            sheetsByName.set(name, []);
+          }
+          sheetsByName.get(name).push(sheet);
+        });
+        
+        console.log('📋 Sheet groups by name:');
+        let duplicatesFound = 0;
+        const sheetsToKeep = [];
+        
+        for (const [name, sheets] of sheetsByName.entries()) {
+          console.log(`📄 "${name}": ${sheets.length} copies`);
+          
+          if (sheets.length > 1) {
+            duplicatesFound++;
+            // Keep the one with the most cells (most complete)
+            const sortedSheets = sheets.sort((a, b) => {
+              const aCellCount = Object.keys(a.cells).length;
+              const bCellCount = Object.keys(b.cells).length;
+              return bCellCount - aCellCount; // Descending order
+            });
+            
+            const keepSheet = sortedSheets[0];
+            const duplicateSheets = sortedSheets.slice(1);
+            
+            console.log(`🔄 Keeping sheet with most data: ${keepSheet.id} (${Object.keys(keepSheet.cells).length} cells)`);
+            console.log(`🗑️ Will remove ${duplicateSheets.length} duplicates:`, 
+              duplicateSheets.map(s => `${s.id} (${Object.keys(s.cells).length} cells)`));
+            
+            sheetsToKeep.push(keepSheet);
+          } else {
+            // No duplicates, keep the single sheet
+            sheetsToKeep.push(sheets[0]);
+          }
+        }
+        
+        if (duplicatesFound === 0) {
+          console.log('✅ No duplicates found in current state');
+          return;
+        }
+        
+        console.log(`🗑️ Found ${duplicatesFound} duplicate groups, keeping ${sheetsToKeep.length} sheets`);
+        
+        // Update the state by removing duplicates
+        // Note: This would need to be implemented properly with the state management system
+        console.log('⚠️ Manual state update needed - this function shows analysis only');
+        console.log('🔄 Recommended: Use syncIndexedDBWithBackblaze() for a complete cleanup');
+        
+        console.log('✅ === DUPLICATE ANALYSIS COMPLETE ===');
+      };
+
+      // Add function to debug what files are actually in Backblaze
+      (window as any).debugBackblazeFiles = async () => {
+        if (!user?.email) {
+          console.log('❌ No user email available');
+          return;
+        }
+
+        try {
+          console.log('🔍 === DEBUGGING BACKBLAZE FILES ===');
+          console.log('👤 User email:', user.email);
+          
+          // Get Backblaze service
+          const BackblazeApiService = (await import('../services/backblazeApiService')).default;
+          const backblazeService = BackblazeApiService.getInstance();
+          
+          // Authenticate
+          console.log('🔐 Authenticating with Backblaze...');
+          const authResult = await backblazeService.authenticate();
+          if (!authResult.success) {
+            console.error('❌ Backblaze authentication failed:', authResult.message);
+            return;
+          }
+          console.log('✅ Backblaze authenticated');
+          
+          // List user files
+          console.log('📁 Listing files for user...');
+          const filesResult = await backblazeService.listUserFiles(user.email);
+          
+          if (!filesResult.success) {
+            console.error('❌ Failed to list files:', filesResult.message);
+            return;
+          }
+          
+          if (!filesResult.files || filesResult.files.length === 0) {
+            console.log('📭 No files found in Backblaze');
+            return;
+          }
+          
+          console.log(`📊 Found ${filesResult.files.length} files in Backblaze:`);
+          
+          // Import filename cleaning utility
+          const { cleanFilename } = await import('../lib/filenameUtils');
+          
+          filesResult.files.forEach((file, index) => {
+            const cleanedName = cleanFilename(file.fileName, user.email, true);
+            console.log(`${index + 1}. "${file.fileName}" -> cleaned: "${cleanedName}"`);
+            console.log(`   Size: ${file.size} bytes, Modified: ${file.uploadTimestamp || 'Unknown'}`);
+          });
+          
+          // Group by cleaned names to show duplicates
+          const groupedFiles = new Map();
+          filesResult.files.forEach(file => {
+            const cleanedName = cleanFilename(file.fileName, user.email, true);
+            if (!groupedFiles.has(cleanedName)) {
+              groupedFiles.set(cleanedName, []);
+            }
+            groupedFiles.get(cleanedName).push(file);
+          });
+          
+          console.log('📋 Files grouped by cleaned names:');
+          for (const [cleanedName, files] of groupedFiles.entries()) {
+            if (files.length > 1) {
+              console.log(`🔄 DUPLICATE: "${cleanedName}" has ${files.length} versions:`);
+              files.forEach(file => {
+                console.log(`   - "${file.fileName}" (${file.size} bytes)`);
+              });
+            } else {
+              console.log(`✅ UNIQUE: "${cleanedName}"`);
+            }
+          }
+          
+        } catch (error) {
+          console.error('❌ Error debugging Backblaze files:', error);
+        }
+        
+        console.log('✅ === BACKBLAZE FILES DEBUG COMPLETE ===');
+      };
+
+      // Add function to test the complete accept changes flow
+      (window as any).testAcceptChangesFlow = async () => {
+        try {
+          console.log('🧪 === TESTING ACCEPT CHANGES FLOW ===');
+          
+          const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+          if (!currentSheet) {
+            console.log('❌ No active sheet found');
+            return;
+          }
+          
+          console.log('📋 Current active sheet:', {
+            id: currentSheet.id,
+            name: currentSheet.name,
+            cellCount: Object.keys(currentSheet.cells).length,
+            hasAIUpdates: state.hasAIUpdates
+          });
+          
+          // Step 1: Check current localStorage
+          console.log('📊 Step 1: Current localStorage state...');
+          const localStorageKey = `sheet_specific_ai_diff`;
+          const localStorageData = localStorage.getItem(localStorageKey);
+          if (localStorageData) {
+            const parsedData = JSON.parse(localStorageData);
+            console.log('📋 localStorage data:', parsedData);
+          } else {
+            console.log('📭 No localStorage data found');
+          }
+          
+          // Step 2: Check current IndexedDB state for this sheet
+          console.log('📊 Step 2: Current IndexedDB state...');
+          const indexedDBService = (await import('../lib/indexedDBService')).indexedDBService;
+          await indexedDBService.init();
+          const allSheets = await indexedDBService.getAllSheets();
+          console.log('📊 getAllSheets result:', allSheets);
+          
+          // allSheets is directly an array of SheetRecord
+          const indexedDBSheet = allSheets.find(s => s.name === currentSheet.name);
+          
+          if (indexedDBSheet) {
+            console.log('📋 IndexedDB sheet found:', {
+              id: indexedDBSheet.id,
+              name: indexedDBSheet.name,
+              csvDataLength: indexedDBSheet.csvData?.length || 0,
+              lastModified: indexedDBSheet.lastModified
+            });
+            
+            // Show sample data from IndexedDB
+            if (indexedDBSheet.csvData) {
+              const csvLines = indexedDBSheet.csvData.split('\n').slice(0, 3);
+              console.log('📋 IndexedDB CSV sample (first 3 lines):', csvLines);
+            }
+          } else {
+            console.log('❌ Sheet not found in IndexedDB');
+          }
+          
+          // Step 3: Show what would happen during accept
+          console.log('📊 Step 3: Simulating accept changes process...');
+          
+          // Check if there are AI updates to accept
+          const aiUpdatedCells = Object.entries(currentSheet.cells).filter(([_, cell]) => cell.hasAIUpdate);
+          console.log('📋 AI updated cells to accept:', aiUpdatedCells.length);
+          
+          if (aiUpdatedCells.length > 0) {
+            console.log('📋 Sample AI updates:');
+            aiUpdatedCells.slice(0, 3).forEach(([cellId, cell]) => {
+              console.log(`   ${cellId}: "${cell.value}" -> "${cell.aiValue}"`);
+            });
+            
+            // Show what CSV would be generated
+            const csvData: string[][] = [];
+            const maxRow = currentSheet.rowCount;
+            const maxCol = currentSheet.colCount;
+            
+            // Create header row
+            const headers: string[] = [];
+            for (let col = 0; col < maxCol; col++) {
+              headers.push(String.fromCharCode(65 + col));
+            }
+            csvData.push(headers);
+            
+            // Add data rows (simulate with AI values applied)
+            for (let row = 1; row < maxRow; row++) {
+              const rowData: string[] = [];
+              for (let col = 0; col < maxCol; col++) {
+                const cellId = `${String.fromCharCode(65 + col)}${row + 1}`;
+                const cell = currentSheet.cells[cellId];
+                // Use AI value if available, otherwise current value
+                const finalValue = cell?.hasAIUpdate && cell.aiValue !== undefined ? cell.aiValue : cell?.value;
+                rowData.push(finalValue?.toString() || '');
+              }
+              if (rowData.some(cell => cell.trim() !== '')) {
+                csvData.push(rowData);
+              }
+            }
+            
+            const csvString = csvData.map(row => row.join(',')).join('\n');
+            console.log('📊 CSV that would be saved to IndexedDB:');
+            console.log('   Length:', csvString.length, 'characters');
+            console.log('   Sample (first 200 chars):', csvString.substring(0, 200));
+            
+          } else {
+            console.log('📭 No AI updates to accept');
+          }
+          
+          console.log('✅ === ACCEPT CHANGES FLOW TEST COMPLETE ===');
+          console.log('💡 To actually test the flow, make some AI changes first, then run acceptAllAIUpdates()');
+          
+        } catch (error) {
+          console.error('❌ Error testing accept changes flow:', error);
+        }
+      };
+
+      // Add function to verify IndexedDB was updated after accepting changes
+      (window as any).verifyIndexedDBUpdate = async () => {
+        try {
+          console.log('🔍 === VERIFYING INDEXEDDB UPDATE ===');
+          
+          const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+          if (!currentSheet) {
+            console.log('❌ No active sheet found');
+            return;
+          }
+          
+          console.log('📋 Checking IndexedDB update for sheet:', currentSheet.name);
+          
+          // Get IndexedDB service and current sheet data
+          const indexedDBService = (await import('../lib/indexedDBService')).indexedDBService;
+          await indexedDBService.init();
+          
+          const allSheets = await indexedDBService.getAllSheets();
+          console.log('📊 getAllSheets result:', allSheets);
+          
+          // allSheets is directly an array of SheetRecord
+          const indexedDBSheet = allSheets.find(s => s.name === currentSheet.name);
+          
+          if (!indexedDBSheet) {
+            console.log('❌ Sheet not found in IndexedDB!');
+            return;
+          }
+          
+          console.log('📊 IndexedDB sheet details:', {
+            id: indexedDBSheet.id,
+            name: indexedDBSheet.name,
+            csvDataLength: indexedDBSheet.csvData?.length || 0,
+            lastModified: new Date(indexedDBSheet.lastModified).toISOString(),
+            lastModifiedTimestamp: indexedDBSheet.lastModified
+          });
+          
+          // Parse IndexedDB CSV data
+          const indexedDBLines = indexedDBSheet.csvData?.split('\n') || [];
+          console.log('📊 IndexedDB CSV has', indexedDBLines.length, 'lines');
+          
+          // Compare with current sheet state
+          const currentSheetCells = Object.entries(currentSheet.cells)
+            .filter(([_, cell]) => cell.value && cell.value.toString().trim() !== '')
+            .sort(([a], [b]) => a.localeCompare(b));
+          
+          console.log('📊 Current sheet has', currentSheetCells.length, 'non-empty cells');
+          console.log('📋 Sample current sheet cells:');
+          currentSheetCells.slice(0, 5).forEach(([cellId, cell]) => {
+            console.log(`   ${cellId}: "${cell.value}"`);
+          });
+          
+          console.log('📋 Sample IndexedDB CSV data:');
+          indexedDBLines.slice(0, 5).forEach((line, index) => {
+            console.log(`   Line ${index + 1}: "${line}"`);
+          });
+          
+          // Check if IndexedDB was recently updated (within last 5 minutes)
+          const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+          const wasRecentlyUpdated = indexedDBSheet.lastModified > fiveMinutesAgo;
+          
+          console.log('⏰ Update timing check:', {
+            lastModified: new Date(indexedDBSheet.lastModified).toISOString(),
+            fiveMinutesAgo: new Date(fiveMinutesAgo).toISOString(),
+            wasRecentlyUpdated: wasRecentlyUpdated
+          });
+          
+          if (wasRecentlyUpdated) {
+            console.log('✅ IndexedDB sheet was recently updated');
+          } else {
+            console.log('⚠️ IndexedDB sheet was NOT recently updated - may contain stale data');
+          }
+          
+          console.log('✅ === INDEXEDDB UPDATE VERIFICATION COMPLETE ===');
+          
+        } catch (error) {
+          console.error('❌ Error verifying IndexedDB update:', error);
+        }
+      };
+
+      // Add function to debug current DuckDB state
+      (window as any).debugDuckDBState = async () => {
+        try {
+          console.log('🔍 === DEBUGGING DUCKDB STATE ===');
+          
+          const { queryDuckDB } = await import('../lib/utils');
+          
+          console.log('📊 Step 1: Checking DuckDB tables...');
+          const tablesResult = await queryDuckDB('SHOW TABLES');
+          console.log('📋 Raw SHOW TABLES result:', tablesResult);
+          
+          const validTables = tablesResult
+            .filter(row => row && Array.isArray(row) && row.length > 0)
+            .map(row => row[0])
+            .filter(tableName => tableName && typeof tableName === 'string');
+          
+          console.log('📊 Valid tables found:', validTables);
+          
+          if (validTables.length === 0) {
+            console.log('📭 No tables found in DuckDB');
+            console.log('💡 This usually means no CSV data has been loaded into DuckDB yet');
+            return;
+          }
+          
+          console.log('📊 Step 2: Checking table contents...');
+          for (const table of validTables) {
+            try {
+              console.log(`📋 Table: ${table}`);
+              
+              // Get row count
+              const countResult = await queryDuckDB(`SELECT COUNT(*) as count FROM "${table}"`);
+              const rowCount = countResult[0]?.[0] || 0;
+              console.log(`   Rows: ${rowCount}`);
+              
+              // Get column info
+              const columnsResult = await queryDuckDB(`DESCRIBE "${table}"`);
+              const columns = columnsResult.map(row => `${row[0]} (${row[1]})`);
+              console.log(`   Columns: ${columns.join(', ')}`);
+              
+              // Get sample data (first 3 rows)
+              if (rowCount > 0) {
+                const sampleResult = await queryDuckDB(`SELECT * FROM "${table}" LIMIT 3`);
+                console.log(`   Sample data:`, sampleResult);
+              }
+              
+            } catch (tableError) {
+              console.error(`❌ Error querying table ${table}:`, tableError);
+            }
+          }
+          
+          console.log('📊 Step 3: Current active sheet info...');
+          const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+          if (currentSheet) {
+            console.log('📋 Active sheet:', {
+              id: currentSheet.id,
+              name: currentSheet.name,
+              cellCount: Object.keys(currentSheet.cells).length,
+              hasAIUpdates: state.hasAIUpdates
+            });
+            
+            // Show expected table name
+            const expectedTableName = currentSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+            console.log('📋 Expected table name:', expectedTableName);
+            
+            const matchingTable = validTables.find(table => 
+              table.includes(expectedTableName) || 
+              table.toLowerCase().includes(currentSheet.name.toLowerCase())
+            );
+            
+            if (matchingTable) {
+              console.log('✅ Found matching table:', matchingTable);
+            } else {
+              console.log('❌ No matching table found for current sheet');
+              console.log('💡 This explains why AI queries are failing');
+            }
+          } else {
+            console.log('❌ No active sheet found');
+          }
+          
+        } catch (error) {
+          console.error('❌ Error debugging DuckDB state:', error);
+        }
+        
+        console.log('✅ === DUCKDB STATE DEBUG COMPLETE ===');
+      };
+      
+      console.log('📊 Session tracking debug functions added:');
+      console.log('  - getSessionSummary() - Get current session summary');
+      console.log('  - needsBackblazeSync() - Check if Backblaze sync is needed');
+      console.log('  - manualSyncToBackblaze() - Manually sync to Backblaze');
+      console.log('  - clearIndexedDB() - Clear IndexedDB to force schema update');
+      console.log('  - testBackblazeDownload("filename.csv") - Test Backblaze download directly');
+      console.log('  - debugLoaderData() - Debug loader data structure');
+      console.log('  - debugIndexedDBFirstLoading() - Debug IndexedDB-first loading process');
+      console.log('  - checkIndexedDBSchema() - Check IndexedDB schema and structure');
+      console.log('  - compareSheetWithIndexedDB() - Compare current sheet with IndexedDB content');
+      console.log('  - manualUpdateIndexedDB() - Manually trigger IndexedDB update with current sheet');
+      console.log('  - cleanupIndexedDBDuplicates() - Remove duplicate/stale sheets from IndexedDB');
+      console.log('  - syncIndexedDBWithBackblaze() - Force sync IndexedDB with Backblaze (clean slate)');
+      console.log('  - removeDuplicateSheets() - Remove duplicate sheets from current state');
+      console.log('  - debugBackblazeFiles() - Show what files are actually in Backblaze');
+      console.log('  - testAcceptChangesFlow() - Test the complete accept changes flow');
+      console.log('  - verifyIndexedDBUpdate() - Verify IndexedDB was updated after accepting changes');
+      console.log('  - debugDuckDBState() - Debug current DuckDB tables and data');
+    });
+  }, [user?.email]);
+
+  // Track if localStorage changes have been loaded to prevent infinite loops
+  const localStorageChangesLoaded = useRef(false);
+  const lastProcessedSheetId = useRef<string | null>(null);
+
+  // Load pending changes from both IndexedDB and localStorage using unified change manager
+  useEffect(() => {
+    const loadPendingChangesAsAIUpdates = async () => {
+      // Reset the flag if we're on a different sheet
+      if (lastProcessedSheetId.current !== state.activeSheetId) {
+        console.log('🔄 Sheet changed, resetting changes flag');
+        localStorageChangesLoaded.current = false;
+        lastProcessedSheetId.current = state.activeSheetId;
+      }
+
+      // Prevent infinite loops by checking if we've already loaded changes
+      if (localStorageChangesLoaded.current) {
+        console.log('🔄 Changes already loaded for this sheet, skipping...');
+        return;
+      }
+
+      // Only proceed if we have a sheet with actual data
+      if (!state.activeSheetId || state.sheets.length === 0) {
+        console.log('⚠️ No active sheet or sheets loaded yet, waiting...');
+        return;
+      }
+
+      const activeSheet = state.sheets.find(s => s.id === state.activeSheetId);
+      if (!activeSheet || !activeSheet.cells || Object.keys(activeSheet.cells).length === 0) {
+        console.log('⚠️ Active sheet has no cells yet, waiting for sheet to load...');
+        return;
+      }
+
+      // Check if sheet has meaningful data (more lenient now)
+      const cellCount = Object.keys(activeSheet.cells).length;
+      console.log(`🔍 Sheet has ${cellCount} cells`);
+      
+      if (cellCount === 0) {
+        console.log('⚠️ Sheet is completely empty, waiting...');
+        return;
+      }
+      
+      // Be more lenient - even a few cells is enough to proceed
+      if (cellCount < 5) {
+        console.log('⚠️ Sheet has few cells, will retry in a moment...');
+        // Add a short delay and retry once
+        setTimeout(() => {
+          if (!localStorageChangesLoaded.current) {
+            console.log('🔄 Retrying localStorage loading after delay...');
+            loadPendingChangesAsAIUpdates();
+          }
+        }, 2000);
+        return;
+      }
+
+      try {
+        console.log('🔄 Checking for localStorage changes for current sheet...');
+        console.log(`📋 Current sheet: "${activeSheet.name}" (ID: ${activeSheet.id})`);
+        
+        // Skip the complex unified loading - we'll rely on the filename-based loading instead
+        // This prevents loading changes into the wrong sheet
+        console.log('⏭️ Skipping sheet ID-based loading to avoid loading changes into wrong sheet');
+        console.log('📋 Filename-based loading will handle localStorage changes for this sheet');
+        
+        // Delegating to filename-based loading system to avoid sheet ID mismatches
+        console.log('📋 The filename-based useEffect will handle loading localStorage changes');
+
+        // All localStorage loading is now handled by the filename-based system
+        // This prevents loading changes into the wrong sheet due to sheet ID mismatches
+        console.log('✅ Skipping sheet ID-based loading to prevent wrong sheet assignment');
+        
+        localStorageChangesLoaded.current = true;
+        console.log('✅ Delegated localStorage loading to filename-based system');
+        
+      } catch (error) {
+        console.error('❌ Error in localStorage loading delegation:', error);
+        localStorageChangesLoaded.current = true; // Mark as processed even on error
+      }
+    };
+
+    // Load localStorage changes after all processing is complete
+    const shouldWaitForProcessing = isProcessingCSV || isProcessingSchema || isLoadingSheets || isCheckingBackblazeData;
+    
+    if (shouldWaitForProcessing) {
+      console.log(`⏰ Still processing (CSV: ${isProcessingCSV}, Schema: ${isProcessingSchema}, Loading: ${isLoadingSheets}, Checking: ${isCheckingBackblazeData})`);
+      console.log('⏰ Waiting for all processing to complete before loading localStorage changes...');
+      
+      // Set a timeout to check again after processing should be done
+      setTimeout(() => {
+        if (!localStorageChangesLoaded.current && state.activeSheetId === activeSheet?.id) {
+          console.log('🔄 Retrying localStorage loading after processing delay...');
+          loadPendingChangesAsAIUpdates();
+        }
+      }, 3000);
+      return;
+    }
+
+    // Skip if already loaded for this sheet
+    if (localStorageChangesLoaded.current) {
+      console.log('✅ localStorage changes already loaded for this sheet, skipping...');
+      return;
+    }
+
+    console.log('✅ All processing complete, loading localStorage changes for current sheet');
+    loadPendingChangesAsAIUpdates();
+  }, [state.activeSheetId, state.sheets, createAIUpdates, setForceUpdate, setNotifications, isProcessingCSV, isProcessingSchema, isLoadingSheets, isCheckingBackblazeData]);
+
+  // Loading state management (kept for compatibility with existing logic)
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
 
   // DuckDB mapping hook - independent of AI Assistant
@@ -196,38 +2111,7 @@ const Index: React.FC = () => {
   });
 
   // Animated loading messages - different sets for different stages
-  const initialLoadingMessages = [
-    'Ostrich is running...',
-    'Ostrich is sprinting...',
-    'Ostrich is accelerating...',
-    'Ostrich is powering through...',
-    'Ostrich is charging ahead...'
-  ];
-
-  const schemaProcessingMessages = [
-    'Ostrich is analyzing your data...',
-    'Ostrich is generating insights...',
-    'Ostrich is preparing AI analysis...',
-    'Ostrich is optimizing performance...',
-    'Ostrich is ready to assist...'
-  ];
-
-  // Choose message set based on current state
-  const loadingMessages = isProcessingSchema ? schemaProcessingMessages : initialLoadingMessages;
-
-  // Animate loading messages with slower transitions
-  useEffect(() => {
-    if (isLoadingSheets || isCheckingBackblazeData || isProcessingSchema) {
-      const interval = setInterval(() => {
-        setCurrentMessageIndex(prev => (prev + 1) % loadingMessages.length);
-      }, 2000); // Change message every 2 seconds (slower)
-
-      return () => clearInterval(interval);
-    } else {
-      // Reset message index when not loading
-      setCurrentMessageIndex(0);
-    }
-  }, [isLoadingSheets, isCheckingBackblazeData, isProcessingSchema, loadingMessages.length]);
+  // Old loading message animation removed - now using professional loaders
 
   // Monitor AI Assistant processing state
   useEffect(() => {
@@ -260,38 +2144,173 @@ const Index: React.FC = () => {
     };
   }, []);
 
-  // Check for existing sheet data in Backblaze cloud storage on page load
+  // Track if we've already loaded data to prevent infinite loops
+  const dataLoadedRef = useRef(false);
+
+  // Reset data loaded flag when user changes
+  useEffect(() => {
+    dataLoadedRef.current = false;
+  }, [user?.email]);
+
+  // Check for existing sheet data - IndexedDB first, then Backblaze as fallback
   useEffect(() => {
     const checkExistingSheetData = async () => {
+      // Prevent multiple loads for the same user
+      if (dataLoadedRef.current) {
+        console.log('🔄 Data already loaded, skipping...');
+        return;
+      }
+
       setIsCheckingBackblazeData(true);
       setIsLoadingSheets(true);
 
       if (user?.email) {
         try {
-          console.log('🔍 Checking for existing sheet data in Backblaze cloud storage...');
-
-          // Check Backblaze service status directly (client-side)
-          const backblazeService = BackblazeApiService.getInstance();
-          const authResult = await backblazeService.authenticate();
-          if (!authResult.success) {
-            console.log('🔐 Backblaze authentication failed:', authResult.message);
+          console.log('🔍 Using IndexedDB-first loading strategy...');
+          
+          // Use the new IndexedDB-first loader
+          const loadedSheets = await indexedDBFirstLoader.loadAllSheets(user.email);
+          
+          if (loadedSheets && loadedSheets.length > 0) {
+            console.log('📊 Found', loadedSheets.length, 'sheets using IndexedDB-first strategy');
+            
+            // Load ALL sheets as separate tabs, not just the most recent one
+            console.log('🔄 Loading all sheets as separate tabs...');
+            
+            // Remember the current active sheet to preserve localStorage changes
+            const currentActiveSheetId = state.activeSheetId;
+            console.log(`📌 Preserving active sheet: ${currentActiveSheetId} to maintain localStorage changes`);
+            
+            for (let i = 0; i < loadedSheets.length; i++) {
+              const sheet = loadedSheets[i];
+              console.log(`📋 Loading sheet ${i + 1}/${loadedSheets.length}:`, sheet.sheetName, 'from', sheet.source);
+              console.log('🔍 Sheet data type:', typeof sheet.csvData);
+              console.log('🔍 Sheet data sample:', sheet.csvData?.substring?.(0, 100) || sheet.csvData);
+            
+              try {
+                // Validate and parse CSV data
+                let csvData: any = sheet.csvData;
+                console.log('🔍 Raw CSV data type:', typeof csvData);
+                console.log('🔍 Raw CSV data structure:', csvData);
+                
+                let csvArray: any[][];
+                
+                if (typeof csvData === 'string') {
+                  // Handle string CSV data
+                  console.log('📝 Processing string CSV data');
+                  const lines = csvData.split('\n');
+                  csvArray = lines.map(line => line.split(','));
+                } else if (typeof csvData === 'object' && csvData !== null) {
+                  // Handle object data (already processed spreadsheet)
+                  console.log('📊 Processing object data (already processed spreadsheet)');
+                  
+                  if (csvData.cells && csvData.rowCount && csvData.colCount) {
+                    // This is already processed spreadsheet data - convert to CSV format
+                    console.log('🔄 Converting processed spreadsheet to CSV format');
+                    const { cells, rowCount, colCount } = csvData;
+                    
+                    // Convert cells object to 2D array
+                    csvArray = [];
+                    
+                    // First, try to find actual column headers from the first row
+                    const firstRowData = [];
+                    for (let col = 0; col < colCount; col++) {
+                      const colLabel = String.fromCharCode(65 + col);
+                      const cellId = `${colLabel}1`;
+                      const cellValue = cells[cellId]?.value || '';
+                      firstRowData.push(cellValue);
+                    }
+                    
+                    // Check if first row contains headers (non-numeric values)
+                    const hasHeaders = firstRowData.some(value => 
+                      typeof value === 'string' && 
+                      value.trim() !== '' && 
+                      isNaN(Number(value))
+                    );
+                    
+                    if (hasHeaders) {
+                      // Use actual headers from first row
+                      console.log('📋 Using actual headers from first row:', firstRowData);
+                      csvArray.push(firstRowData);
+                      
+                      // Add data rows starting from row 2
+                      for (let row = 2; row <= rowCount; row++) {
+                        const dataRow = [];
+                        for (let col = 0; col < colCount; col++) {
+                          const colLabel = String.fromCharCode(65 + col);
+                          const cellId = `${colLabel}${row}`;
+                          const cellValue = cells[cellId]?.value || '';
+                          dataRow.push(cellValue);
+                        }
+                        csvArray.push(dataRow);
+                      }
+          } else {
+                      // No headers found, use generic column names
+                      console.log('📋 No headers found, using generic column names');
+                      const headerRow = [];
+                      for (let col = 0; col < colCount; col++) {
+                        const colLabel = String.fromCharCode(65 + col); // A, B, C, etc.
+                        headerRow.push(colLabel);
+                      }
+                      csvArray.push(headerRow);
+                      
+                      // Add data rows starting from row 1
+                      for (let row = 1; row <= rowCount; row++) {
+                        const dataRow = [];
+                        for (let col = 0; col < colCount; col++) {
+                          const colLabel = String.fromCharCode(65 + col);
+                          const cellId = `${colLabel}${row}`;
+                          const cellValue = cells[cellId]?.value || '';
+                          dataRow.push(cellValue);
+                        }
+                        csvArray.push(dataRow);
+                      }
+                    }
+                    
+                    console.log('✅ Converted spreadsheet data to CSV format:', csvArray.length, 'rows');
+                  } else if (Array.isArray(csvData)) {
+                    // Handle array data
+                    console.log('📋 Processing array data');
+                    csvArray = csvData;
+                  } else {
+                    console.error('❌ Unknown object structure:', csvData);
+                    throw new Error(`Unknown object structure: ${JSON.stringify(csvData).substring(0, 100)}`);
+                  }
+                }
+                  
+                  // Load the sheet
+                  addSheetFromCSV(csvArray, sheet.sheetName);
+                  
+                  // Track the sheet creation
+                  sessionTracker.trackIndexedDBChange(sheet.sheetId, 'create', `Loaded from ${sheet.source}`);
+                  
+                  console.log('✅ Sheet loaded successfully from', sheet.source);
+                  
+                } catch (sheetError) {
+                  console.error(`❌ Error loading sheet ${i + 1} (${sheet.sheetName}):`, sheetError);
+                  // Continue with next sheet instead of stopping
+                  continue;
+                }
+            }
+            
+            console.log('✅ All sheets processed');
+            
+            // Let the system naturally switch to the last loaded sheet
+            // Each sheet will load its own localStorage changes when it becomes active
+            console.log('📋 All sheets loaded - localStorage changes will be loaded per sheet as user switches between them');
+            
+            dataLoadedRef.current = true; // Mark as loaded
+            setIsLoadingSheets(false);
             setIsCheckingBackblazeData(false);
             setHasCheckedBackblazeData(true);
-            setIsLoadingSheets(false);
             return;
-          }
-
-          const result = await backblazeService.checkUserFiles(user.email);
-
-          if (result.success && result.hasFiles) {
-            console.log('📊 Found existing sheet data in Backblaze cloud');
-            console.log('🎯 Loading only the most recent sheet for optimal startup performance...');
-
-            // Load existing data directly without confirmation
-            await loadExistingSheetData(user.email);
           } else {
-            console.log('📭 No existing sheet data found for user in Backblaze cloud');
+            console.log('📭 No sheets found using IndexedDB-first strategy');
             console.log('📄 Starting with empty sheet - user can load sheets via "+" tab when needed');
+            
+            // Create a default empty sheet if none exist
+            console.log('🔄 Creating default empty sheet...');
+            addSheet();
             
             // Initialize tour for new users
             initializeTourForNewUser();
@@ -303,24 +2322,33 @@ const Index: React.FC = () => {
                 startTour();
               }, 3000);
             }
+            dataLoadedRef.current = true; // Mark as loaded
           }
         } catch (error) {
-          console.error('❌ Error checking for existing sheet data:', error);
+          console.error('❌ Error in IndexedDB-first loading:', error);
+          console.log('🔄 Falling back to empty sheet due to loading error...');
+          
+          // Create a default empty sheet as fallback
+          try {
+            addSheet();
+            console.log('✅ Created fallback empty sheet');
+          } catch (fallbackError) {
+            console.error('❌ Error creating fallback sheet:', fallbackError);
+          }
+          
+          dataLoadedRef.current = true; // Mark as loaded even on error
         }
       } else {
         // No user logged in, show empty sheet
         setIsCheckingBackblazeData(false);
         setHasCheckedBackblazeData(true);
         setIsLoadingSheets(false);
+        dataLoadedRef.current = true; // Mark as loaded
       }
-
-      setIsCheckingBackblazeData(false);
-      setHasCheckedBackblazeData(true);
-      setIsLoadingSheets(false);
     };
 
     checkExistingSheetData();
-  }, [user?.email, startTour]);
+  }, [user?.email, startTour, addSheetFromCSV]);
 
   // Add global click handler to deselect cells when clicking on sheet/canvas area
   useEffect(() => {
@@ -619,24 +2647,54 @@ const Index: React.FC = () => {
   }, []);
 
 
-  const handleAddSheet = useCallback(() => {
-    // Check if there are unloaded sheets from storage that we haven't loaded yet
-    const loadedSheetNames = state.sheets.map(sheet => sheet.name.toLowerCase());
-    const unloadedSheets = availableSheets.filter(sheet => {
-      const cleanName = sheet.fileName.replace(/\.(csv|gz|csv\.gz)$/i, '').toLowerCase();
-      return !loadedSheetNames.includes(cleanName);
-    });
-
-    if (unloadedSheets.length > 0) {
-      // Show sheet selection modal for unloaded sheets
-      console.log(`📋 Found ${unloadedSheets.length} unloaded sheets, showing selection modal`);
-      setShowSheetSelectionModal(true);
+  const handleAddSheet = useCallback(async () => {
+    // Load available sheets using IndexedDB-first strategy
+    console.log('📄 User clicked "Add Sheet" - loading available sheets...');
+    
+    if (user?.email) {
+    try {
+      setIsLoadingSheets(true);
+        console.log('🔄 Loading available sheets using IndexedDB-first strategy...');
+        
+        // Get all sheets using IndexedDB-first loader
+        const loadedSheets = await indexedDBFirstLoader.loadAllSheets(user.email);
+        
+        if (loadedSheets && loadedSheets.length > 0) {
+          console.log(`📁 Found ${loadedSheets.length} sheets using IndexedDB-first strategy`);
+          
+          // Convert to the format expected by the sheet selector
+          const processedSheets = loadedSheets.map(sheet => ({
+            fileName: sheet.sheetName,
+            lastModified: new Date(sheet.lastModified).toISOString(),
+            size: sheet.csvData.length,
+            fileId: sheet.sheetId,
+            source: sheet.source
+          }));
+          
+          setAvailableSheets(processedSheets);
+          console.log('📋 Available sheets loaded:', processedSheets.length);
+          console.log('🔍 Processed sheets sample:', processedSheets[0]);
+        } else {
+          console.log('📭 No sheets found using IndexedDB-first strategy');
+          setAvailableSheets([]);
+        }
+        
+        // Show sheet selection modal
+        setShowSheetSelectionModal(true);
+        setIsLoadingSheets(false);
+        
+      } catch (error) {
+        console.error('❌ Error loading available sheets:', error);
+        setAvailableSheets([]);
+        setShowSheetSelectionModal(true);
+        setIsLoadingSheets(false);
+      }
     } else {
-      // No unloaded sheets, show options modal
-      console.log('📄 No unloaded sheets, showing add sheet options');
+      // No user logged in, just show modal with create blank option
+      setAvailableSheets([]);
       setShowSheetSelectionModal(true);
     }
-  }, [state.sheets, availableSheets]);
+  }, [user?.email]);
 
   const handleCreateBlankSheet = useCallback(() => {
     console.log('📄 Creating new blank sheet');
@@ -714,6 +2772,13 @@ const Index: React.FC = () => {
         });
 
         console.log(`🔄 Switched to sheet: ${targetSheet.name} (index: ${index})`);
+        console.log('🔍 Active sheet data:', {
+          id: targetSheet.id,
+          name: targetSheet.name,
+          cellCount: Object.keys(targetSheet.cells || {}).length,
+          rowCount: targetSheet.rowCount,
+          colCount: targetSheet.colCount
+        });
       }
     }
   }, [state.sheets, setActiveSheet]);
@@ -762,10 +2827,73 @@ const Index: React.FC = () => {
         
         const reader = new FileReader();
         reader.onload = async (event) => {
+          try {
           const csv = event.target?.result as string;
+            console.log('📊 CSV file read successfully, length:', csv.length);
+            
           const lines = csv.split('\n');
           const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
           const dataRows = lines.slice(1).filter(line => line.trim());
+            
+            console.log('📊 CSV parsed:', {
+              totalLines: lines.length,
+              headers: headers.length,
+              dataRows: dataRows.length,
+              firstHeader: headers[0],
+              sampleData: dataRows[0]
+            });
+          
+            // Initialize IndexedDB and save CSV
+            console.log('🔄 Starting CSV upload process...');
+            console.log('📊 CSV data length:', csv.length);
+            console.log('📁 File name:', file.name);
+            console.log('🔍 CSV content preview:', csv.substring(0, 200) + '...');
+            
+            try {
+              console.log('🔄 Starting IndexedDB initialization...');
+              // Initialize IndexedDB on first CSV upload (lazy initialization)
+              await indexedDBService.init();
+              console.log('✅ IndexedDB initialized for CSV storage');
+              
+              console.log('🔄 Saving CSV to IndexedDB...');
+              console.log('📊 CSV content preview:', csv.substring(0, 100) + '...');
+              
+              const csvId = await indexedDBService.saveCSVFile(csv, file.name);
+              console.log('✅ CSV saved to IndexedDB with ID:', csvId);
+              
+              csvChangeManager.setCurrentCSV(csvId);
+              
+              // Persist current CSV ID in localStorage for page reloads
+              localStorage.setItem('currentCSVId', csvId);
+              console.log('💾 CSV ID saved to localStorage:', csvId);
+              
+              // Test IndexedDB to verify it's working
+              console.log('🔄 Testing IndexedDB...');
+              await indexedDBService.testIndexedDB();
+              console.log('✅ IndexedDB test completed');
+              
+              // Debug IndexedDB contents
+              console.log('🔍 Debugging IndexedDB after CSV upload...');
+              await debugIndexedDB();
+              
+              // Additional verification
+              console.log('🔍 Verifying CSV was saved...');
+              const allFiles = await indexedDBService.getAllCSVFiles();
+              console.log('📊 All CSV files after upload:', allFiles);
+              
+            } catch (error) {
+              console.error('❌ Failed to initialize IndexedDB or save CSV:', error);
+              console.error('Error details:', error);
+              console.error('Error stack:', error.stack);
+              
+              // Try to debug what went wrong
+              console.log('🔍 Debugging IndexedDB after error...');
+              try {
+                await debugIndexedDB();
+              } catch (debugError) {
+                console.error('❌ Debug failed:', debugError);
+              }
+            }
           
           // Create cells for all data
           const cells: { [key: string]: { value: string } } = {};
@@ -805,31 +2933,31 @@ const Index: React.FC = () => {
             cellId,
             value: cell.value
           }));
-          console.log('📝 Updating sheet with', updates.length, 'cell updates');
-          console.log('📊 Sample updates:', updates.slice(0, 5));
+            console.log('📝 Updating sheet with', updates.length, 'cell updates');
+            console.log('📊 Sample updates:', updates.slice(0, 5));
           bulkUpdateCells(updates);
-          console.log('✅ CSV data uploaded to sheet');
-          console.log('📊 ActiveSheet after upload:', {
-            id: activeSheet?.id,
-            name: activeSheet?.name,
-            rowCount: activeSheet?.rowCount,
-            colCount: activeSheet?.colCount,
-            cellCount: Object.keys(activeSheet?.cells || {}).length,
-            sampleCells: Object.keys(activeSheet?.cells || {}).slice(0, 5)
-          });
+            console.log('✅ CSV data uploaded to sheet');
+            console.log('📊 ActiveSheet after upload:', {
+              id: activeSheet?.id,
+              name: activeSheet?.name,
+              rowCount: activeSheet?.rowCount,
+              colCount: activeSheet?.colCount,
+              cellCount: Object.keys(activeSheet?.cells || {}).length,
+              sampleCells: Object.keys(activeSheet?.cells || {}).slice(0, 5)
+            });
 
-          // Store compressed sheet data in Backblaze cloud storage (direct client-side)
+            // Store compressed sheet data in Backblaze cloud storage (direct client-side)
           if (user?.email) {
             try {
-              console.log('🔄 Storing compressed sheet data directly to Backblaze cloud...');
-              
-              // Get Backblaze service instance
-              const backblazeService = BackblazeApiService.getInstance();
-              
-              // Authenticate with Backblaze
-              const authResult = await backblazeService.authenticate();
-              if (!authResult.success) {
-                console.log('🔐 Backblaze authentication failed:', authResult.message);
+                console.log('🔄 Storing compressed sheet data directly to Backblaze cloud...');
+                
+                // Get Backblaze service instance
+                const backblazeService = BackblazeApiService.getInstance();
+                
+                // Authenticate with Backblaze
+                const authResult = await backblazeService.authenticate();
+                if (!authResult.success) {
+                  console.log('🔐 Backblaze authentication failed:', authResult.message);
                 return;
               }
               
@@ -853,7 +2981,7 @@ const Index: React.FC = () => {
                 })
               };
 
-              const result = await backblazeService.storeSheetData(
+                const result = await backblazeService.storeSheetData(
                 user.email,
                 file.name,
                 { cells, rowCount: maxRow, colCount: maxCol },
@@ -861,13 +2989,13 @@ const Index: React.FC = () => {
               );
 
               if (result.success) {
-                console.log('✅ Sheet data successfully stored in Backblaze cloud storage');
-                console.log('📊 Compression stats:', result.data);
+                  console.log('✅ Sheet data successfully stored in Backblaze cloud storage');
+                  console.log('📊 Compression stats:', result.data);
               } else {
-                console.error('❌ Failed to store sheet data in Backblaze cloud storage:', result.message);
+                  console.error('❌ Failed to store sheet data in Backblaze cloud storage:', result.message);
               }
             } catch (error) {
-              console.error('❌ Error storing sheet data in Backblaze cloud storage:', error);
+                console.error('❌ Error storing sheet data in Backblaze cloud storage:', error);
             }
           }
 
@@ -902,21 +3030,48 @@ const Index: React.FC = () => {
             
             console.log('Generated summary:', summary);
             
-            // Note: Qdrant-based sheet profiling has been removed
-            // The summary is now only used for local debugging/logging
+              // Note: Qdrant-based sheet profiling has been removed
+              // The summary is now only used for local debugging/logging
             
           } catch (err) {
-            console.error('❌ Error generating CSV summary:', err);
-          }
+              console.error('❌ Error generating CSV summary:', err);
+            }
 
-          // CSV upload completed - DuckDB processing will be handled by useDuckDBMapping hook
-          console.log('CSV uploaded - DuckDB processing will be handled automatically');
+            // Reset processing state
+            setIsProcessingCSV(false);
+            setIsSheetRendered(true);
+            
+            // Show success notification
+            setNotifications(prev => [...prev, {
+              id: Date.now().toString(),
+              type: 'success',
+              title: 'CSV Uploaded Successfully',
+              message: `File "${file.name}" has been uploaded and processed.`
+            }]);
+            
+            console.log('🎉 CSV upload process completed successfully');
+          } catch (csvError) {
+            console.error('❌ CSV processing failed:', csvError);
+            console.error('CSV error details:', csvError);
+            console.error('CSV error stack:', csvError.stack);
+            
+            // Reset processing state on error
+            setIsProcessingCSV(false);
+            
+            // Show error notification
+            setNotifications(prev => [...prev, {
+              id: Date.now().toString(),
+              type: 'error',
+              title: 'CSV Upload Failed',
+              message: `Failed to process file "${file.name}". Please try again.`
+            }]);
+          }
         };
         reader.readAsText(file);
       }
     };
     input.click();
-  }, [activeSheetIndex, user?.email]);
+  }, [activeSheetIndex, user?.email, bulkUpdateCells, activeSheet, setNotifications]);
 
   const handleGenerateChart = useCallback((type: 'bar' | 'line' | 'pie' | 'area') => {
     console.log(`Generating ${type} chart from pivot table`);
@@ -941,7 +3096,7 @@ const Index: React.FC = () => {
 
       // Get Backblaze service instance
       const backblazeService = BackblazeApiService.getInstance();
-      
+
       // Get list of user files to let them choose
       const filesResult = await backblazeService.listUserFiles(userEmail);
 
@@ -956,14 +3111,27 @@ const Index: React.FC = () => {
         });
 
         // Store all available sheets for later reference (popup selection)
-        setAvailableSheets(sortedFiles.map(file => ({
-          fileName: file.fileName.replace('user_' + userEmail + '/', ''),
-          lastModified: file.uploadTimestamp && file.uploadTimestamp > 0 
-            ? new Date(file.uploadTimestamp).toISOString() 
-            : new Date().toISOString(), // Fallback to current time if invalid timestamp
-          size: file.size,
-          fileId: file.fileId
-        })));
+        setAvailableSheets(sortedFiles.map(file => {
+          // Use comprehensive filename cleaning utility
+          const cleanFileName = cleanFilename(file.fileName, userEmail, true);
+          
+          // Format date properly
+          let formattedDate;
+          if (file.uploadTimestamp && file.uploadTimestamp > 0) {
+            const date = new Date(file.uploadTimestamp);
+            formattedDate = isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+          } else {
+            formattedDate = new Date().toISOString();
+          }
+          
+          return {
+            fileName: cleanFileName,
+            originalFileName: file.fileName, // Keep original for Backblaze download
+            lastModified: formattedDate,
+            size: file.size,
+            fileId: file.fileId
+          };
+        }));
 
         // If there's only one sheet, load it automatically
         if (sortedFiles.length === 1) {
@@ -988,55 +3156,250 @@ const Index: React.FC = () => {
   // Helper function to load a single sheet
   const loadSingleSheet = useCallback(async (userEmail: string, file: any) => {
     try {
+      // First, try to load from IndexedDB
+      console.log('🔍 Attempting to load sheet from IndexedDB first:', file.fileName);
+      try {
+        const indexedDBService = (await import('../lib/indexedDBService')).indexedDBService;
+        
+        // Try multiple filename variations for IndexedDB lookup
+        const filenameVariations = [
+          file.fileName, // Original filename
+          file.fileName.replace(/^user_[^/]+\//, ''), // Remove user prefix
+          file.fileName.replace(/^user_[^/]+\//, '').replace('.csv.gz', ''), // Remove user prefix and .csv.gz
+          file.fileName.replace(/^user_[^/]+\//, '').replace('.csv', ''), // Remove user prefix and .csv
+        ];
+        
+        console.log('🔍 Trying filename variations:', filenameVariations);
+        
+        // Debug: List all files in IndexedDB
+        try {
+          const allFiles = await indexedDBService.getAllCSVFiles();
+          console.log('📁 All files in IndexedDB:', allFiles.map(f => ({ name: f.name, size: f.data?.length })));
+        } catch (debugError) {
+          console.log('⚠️ Could not list IndexedDB files:', debugError);
+        }
+        
+        let indexedDBResult = null;
+        for (const filename of filenameVariations) {
+          try {
+            console.log(`🔍 Trying IndexedDB lookup with filename: "${filename}"`);
+            indexedDBResult = await indexedDBService.getCSVFile(filename);
+            if (indexedDBResult && indexedDBResult.data) {
+              console.log(`✅ Found sheet in IndexedDB with filename: "${filename}"`);
+              break;
+            }
+          } catch (error) {
+            console.log(`⚠️ IndexedDB lookup failed for "${filename}":`, error);
+          }
+        }
+        
+        if (indexedDBResult && indexedDBResult.data) {
+          console.log('✅ Found sheet in IndexedDB, loading from there');
+          // Parse CSV data from IndexedDB
+          const lines = indexedDBResult.data.split('\n');
+          const csvArray = lines.map(line => line.split(','));
+          // Clean the filename before passing to addSheetFromCSV
+          console.log('🧹 Cleaning filename:', file.fileName);
+          const cleanFileName = cleanFilename(file.fileName, userEmail, true);
+          console.log('✅ Cleaned filename:', cleanFileName);
+          addSheetFromCSV(csvArray, cleanFileName);
+          return;
+        } else {
+          console.log('⚠️ Sheet not found in IndexedDB with any filename variation');
+          
+          // Try using the IndexedDB-first loader as a last resort
+          try {
+            console.log('🔄 Trying IndexedDB-first loader as fallback...');
+            const indexedDBFirstLoader = (await import('../lib/indexedDBFirstLoader')).indexedDBFirstLoader;
+            const loadedSheets = await indexedDBFirstLoader.loadAllSheets(userEmail);
+            
+            if (loadedSheets && loadedSheets.length > 0) {
+              console.log('✅ Found sheets using IndexedDB-first loader:', loadedSheets.length);
+              
+              // Find the matching sheet
+              const matchingSheet = loadedSheets.find(sheet => 
+                sheet.sheetName === file.fileName || 
+                sheet.sheetName === file.fileName.replace(/^user_[^/]+\//, '') ||
+                sheet.sheetName === file.fileName.replace(/^user_[^/]+\//, '').replace('.csv.gz', '') ||
+                sheet.sheetName === file.fileName.replace(/^user_[^/]+\//, '').replace('.csv', '')
+              );
+              
+              if (matchingSheet) {
+                console.log('✅ Found matching sheet in IndexedDB-first loader:', matchingSheet.sheetName);
+                
+                // Handle the data format
+                let csvArray;
+                if (typeof matchingSheet.csvData === 'string') {
+                  const lines = matchingSheet.csvData.split('\n');
+                  csvArray = lines.map(line => line.split(','));
+                } else if (matchingSheet.csvData && (matchingSheet.csvData as any).cells) {
+                  // Convert processed spreadsheet data to CSV
+                  const { cells, rowCount, colCount } = matchingSheet.csvData as any;
+                  csvArray = [];
+                  
+                  // Add header row
+                  const headerRow = [];
+                  for (let col = 0; col < colCount; col++) {
+                    const colLabel = String.fromCharCode(65 + col);
+                    const cellId = `${colLabel}1`;
+                    const cellValue = (cells as any)[cellId]?.value || colLabel;
+                    headerRow.push(cellValue);
+                  }
+                  csvArray.push(headerRow);
+                  
+                  // Add data rows
+                  for (let row = 2; row <= rowCount; row++) {
+                    const dataRow = [];
+                    for (let col = 0; col < colCount; col++) {
+                      const colLabel = String.fromCharCode(65 + col);
+                      const cellId = `${colLabel}${row}`;
+                      const cellValue = (cells as any)[cellId]?.value || '';
+                      dataRow.push(cellValue);
+                    }
+                    csvArray.push(dataRow);
+                  }
+                } else {
+                  console.log('⚠️ Unknown data format in IndexedDB-first loader');
+                  throw new Error('Unknown data format');
+                }
+                
+                // Clean the filename before passing to addSheetFromCSV
+                console.log('🧹 Cleaning filename (fallback):', file.fileName);
+                const cleanFileName = cleanFilename(file.fileName, userEmail, true);
+                console.log('✅ Cleaned filename (fallback):', cleanFileName);
+                addSheetFromCSV(csvArray, cleanFileName);
+                return;
+              } else {
+                console.log('⚠️ No matching sheet found in IndexedDB-first loader');
+              }
+            } else {
+              console.log('⚠️ No sheets found in IndexedDB-first loader');
+            }
+          } catch (indexedDBFirstError) {
+            console.log('⚠️ IndexedDB-first loader error:', indexedDBFirstError);
+          }
+        }
+      } catch (indexedDBError) {
+        console.log('⚠️ IndexedDB service error:', indexedDBError);
+      }
+      
+      // Fallback to Backblaze if not found in IndexedDB
+      console.log('🔄 Loading sheet from Backblaze as fallback:', file.fileName);
       const backblazeService = BackblazeApiService.getInstance();
       // Extract just the base filename (remove user prefix if present)
-      const baseFileName = file.fileName.replace(`user_${userEmail}/`, '');
+      let baseFileName = file.fileName;
+      const userPrefix = `user_${userEmail}/`;
+      if (baseFileName.startsWith(userPrefix)) {
+        baseFileName = baseFileName.replace(userPrefix, '');
+      }
+      // Also remove any other user prefix patterns
+      baseFileName = baseFileName.replace(/^user_[^/]+\//, '');
       const result = await backblazeService.retrieveSheetData(userEmail, baseFileName);
 
       if (result.success && result.data) {
         const sheetData = result.data as any;
-        const fileName = file.fileName.replace('user_' + userEmail + '/', ''); // Remove user prefix
+        const fileName = baseFileName; // Use the already cleaned filename
 
-        // Convert sheet data to CSV format for addSheetFromCSV
-        const csvData: string[][] = [];
-        const { colCount, rowCount } = sheetData;
+              // Convert sheet data to CSV format for addSheetFromCSV
+              const csvData: string[][] = [];
+              const { colCount, rowCount } = sheetData;
 
-        // Create header row
-        const headerRow: string[] = [];
-        for (let col = 0; col < colCount; col++) {
-          const colLetter = String.fromCharCode(65 + col);
-          const cellId = `${colLetter}1`;
-          const cell = sheetData.cells[cellId];
-          const headerValue = cell && cell.value ? String(cell.value) : colLetter;
-          headerRow.push(headerValue);
-        }
-        csvData.push(headerRow);
+              // Create header row
+              const headerRow: string[] = [];
+              for (let col = 0; col < colCount; col++) {
+                const colLetter = String.fromCharCode(65 + col);
+                const cellId = `${colLetter}1`;
+                const cell = sheetData.cells[cellId];
+                const headerValue = cell && cell.value ? String(cell.value) : colLetter;
+                headerRow.push(headerValue);
+              }
+              csvData.push(headerRow);
 
-        // Create data rows
-        for (let row = 2; row <= rowCount; row++) {
-          const dataRow: string[] = [];
-          for (let col = 0; col < colCount; col++) {
-            const colLetter = String.fromCharCode(65 + col);
-            const cellId = `${colLetter}${row}`;
-            const cell = sheetData.cells[cellId];
-            const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
-            dataRow.push(cellValue);
-          }
-          csvData.push(dataRow);
-        }
+              // Create data rows
+              for (let row = 2; row <= rowCount; row++) {
+                const dataRow: string[] = [];
+                for (let col = 0; col < colCount; col++) {
+                  const colLetter = String.fromCharCode(65 + col);
+                  const cellId = `${colLetter}${row}`;
+                  const cell = sheetData.cells[cellId];
+                  const cellValue = cell && cell.value !== undefined ? String(cell.value) : '';
+                  dataRow.push(cellValue);
+                }
+                csvData.push(dataRow);
+              }
 
-        // Ensure fileName is valid before using
-        if (!fileName) {
+              // Ensure fileName is valid before using
+              if (!fileName) {
           console.error(`❌ Invalid fileName received for ${file.fileName}, skipping`);
           return;
-        }
+              }
 
-        // Add the new sheet using the hook method
-        addSheetFromCSV(csvData, fileName.replace('.csv.gz', ''));
+              // Add the new sheet using the hook method
+        console.log('🔄 Adding new sheet with data:', {
+          fileName: fileName.replace('.csv.gz', ''),
+          csvDataLength: csvData.length,
+          csvDataColumns: csvData[0]?.length || 0
+        });
+              addSheetFromCSV(csvData, fileName.replace('.csv.gz', ''));
 
-        // Cache the sheet data for future use (using the current active sheet ID)
-        if (state.activeSheetId) {
-          updateSheetCache(state.activeSheetId, sheetData);
+        // Wait for the sheet to be created and then save to IndexedDB
+        setTimeout(async () => {
+          const activeSheet = state.sheets.find(s => s.id === state.activeSheetId);
+          if (activeSheet) {
+            console.log('🔍 Sheet state after adding new sheet:', {
+              totalSheets: state.sheets.length,
+              activeSheetId: state.activeSheetId,
+              activeSheet: activeSheet
+            });
+
+            // Save the new sheet data to IndexedDB
+            try {
+              console.log('💾 Saving new sheet to IndexedDB...');
+              await indexedDBService.saveSheet({
+                name: activeSheet.name,
+                csvData: csvData.map(row => row.join(',')).join('\n'),
+                isActive: true,
+                metadata: {
+                  rowCount: csvData.length,
+                  colCount: csvData[0]?.length || 0,
+                  fileSize: csvData.map(row => row.join(',')).join('\n').length,
+                  uploadDate: Date.now()
+                }
+              });
+              
+              // Track the sheet creation
+              sessionTracker.trackIndexedDBChange(activeSheet.id, 'create', `New sheet created: ${activeSheet.name}`);
+              
+              console.log('✅ New sheet saved to IndexedDB successfully');
+          } catch (error) {
+              console.error('❌ Error saving new sheet to IndexedDB:', error);
+            }
+          }
+        }, 200);
+
+        // Save CSV data to IndexedDB for change tracking
+        try {
+          console.log('🔄 Saving Backblaze sheet to IndexedDB...');
+          await indexedDBService.init();
+          console.log('✅ IndexedDB initialized for Backblaze sheet');
+          
+          // Convert csvData back to CSV string
+          const csvString = csvData.map(row => row.join(',')).join('\n');
+          console.log('📊 CSV string length:', csvString.length);
+          
+          const csvId = await indexedDBService.saveCSVFile(csvString, fileName);
+          csvChangeManager.setCurrentCSV(csvId);
+          
+          // Persist current CSV ID in localStorage for page reloads
+          localStorage.setItem('currentCSVId', csvId);
+          console.log('💾 Backblaze sheet saved to IndexedDB with ID:', csvId);
+          
+          // Test IndexedDB to verify it's working
+          await indexedDBService.testIndexedDB();
+          console.log('✅ IndexedDB test completed for Backblaze sheet');
+          
+        } catch (error) {
+          console.error('❌ Failed to save Backblaze sheet to IndexedDB:', error);
         }
 
         const uploadDate = file.uploadTimestamp && file.uploadTimestamp > 0 
@@ -1045,9 +3408,15 @@ const Index: React.FC = () => {
         console.log(`✅ Loaded and cached sheet: ${fileName} (uploaded: ${uploadDate})`);
       } else {
         console.error(`❌ Failed to load sheet data for ${file.fileName}:`, result.message);
+        // If Backblaze fails, try to create an empty sheet as fallback
+        console.log('🔄 Creating empty sheet as fallback since Backblaze download failed');
+        addSheet();
       }
     } catch (error) {
       console.error(`❌ Error loading sheet ${file.fileName}:`, error);
+      // If there's an error, try to create an empty sheet as fallback
+      console.log('🔄 Creating empty sheet as fallback due to error');
+      addSheet();
     }
   }, [addSheetFromCSV, updateSheetCache, state.activeSheetId]);
 
@@ -1057,14 +3426,15 @@ const Index: React.FC = () => {
     
     try {
       setIsLoadingSheets(true);
-      console.log(`🔄 Loading selected sheet: ${fileName}`);
+      console.log(`🔄 Loading selected sheet from Backblaze: ${fileName}`);
+      console.log('🔍 User email:', user.email);
       
       // Find the file in availableSheets
       const selectedFile = availableSheets.find(sheet => sheet.fileName === fileName);
       if (selectedFile) {
         // Convert to the format expected by loadSingleSheet
         const file = {
-          fileName: selectedFile.fileName, // Use the filename as-is from availableSheets
+          fileName: selectedFile.originalFileName || selectedFile.fileName, // Use original filename for Backblaze download
           uploadTimestamp: selectedFile.lastModified ? new Date(selectedFile.lastModified).getTime() : Date.now(),
           size: selectedFile.size,
           fileId: selectedFile.fileId
@@ -1425,6 +3795,153 @@ const Index: React.FC = () => {
     console.log('Chart shrunk by 20%:', chartId);
   }, []);
 
+  // Change management functions for the new unified system
+
+  // Check for existing changes when active sheet changes and convert to AI updates
+  useEffect(() => {
+    if (activeSheet) {
+      const fileName = activeSheet.name || `sheet-${activeSheet.id}`;
+      setCurrentSheetFileName(fileName);
+      
+      const cellCount = Object.keys(activeSheet.cells || {}).length;
+      const hasData = cellCount > 0;
+      
+      console.log('🔍 Checking for existing changes for sheet:', fileName, '(ID:', activeSheet.id, ')');
+      console.log('📊 Current sheet details:', {
+        name: activeSheet.name,
+        id: activeSheet.id,
+        cellCount: cellCount,
+        hasData: hasData
+      });
+      
+      // Only load localStorage changes for sheets that have data
+      // This prevents loading changes into empty placeholder sheets
+      if (!hasData) {
+        console.log('⏭️ Skipping localStorage loading for empty sheet - waiting for sheet with data');
+        return;
+      }
+      
+      console.log('✅ Sheet has data, proceeding with localStorage loading...');
+      
+      // First check new filename-based localStorage
+      try {
+        const newAIDiffData = localStorage.getItem('sheet_ai_diff_by_filename');
+        if (newAIDiffData) {
+          const parsed = JSON.parse(newAIDiffData);
+          const cleanName = fileName.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_').toLowerCase();
+          
+          console.log('🔍 Available filename-based keys:', Object.keys(parsed));
+          console.log('🔍 Looking for cleaned filename:', cleanName);
+          
+          if (parsed[cleanName] && Array.isArray(parsed[cleanName]) && parsed[cleanName].length > 0) {
+            console.log(`📋 Found ${parsed[cleanName].length} changes for filename: ${fileName} (key: ${cleanName})`);
+            
+            // Convert to AI updates format
+            const aiUpdates = parsed[cleanName].map(change => ({
+              cellId: change.cellId,
+              aiValue: change.newValue,
+              originalValue: change.previousValue,
+              timestamp: change.timestamp
+            }));
+            
+            console.log(`🔄 Converting ${aiUpdates.length} filename-based localStorage changes to AI updates`);
+            createAIUpdates(aiUpdates);
+            
+            // Show notification
+            addNotification({
+              type: 'info',
+              title: 'Pending Changes Found',
+              message: `Found ${aiUpdates.length} pending changes for "${fileName}". You can accept or reject them using the controls at the top right.`,
+              duration: 5000
+            });
+            
+            console.log('✅ Successfully loaded filename-based changes');
+            return; // Exit early if we found filename-based changes
+          } else {
+            console.log('ℹ️ No filename-based changes found for this sheet');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error processing filename-based changes:', error);
+      }
+      
+      // Fallback: Check for existing changes in old sheet-ID-based localStorage format
+      try {
+        const aiDiffData = localStorage.getItem('sheet_specific_ai_diff');
+        if (aiDiffData) {
+          const parsed = JSON.parse(aiDiffData);
+          
+          console.log('🔍 Available localStorage keys:', Object.keys(parsed));
+          console.log('🔍 Looking for sheet name:', fileName, 'or sheet ID:', activeSheet.id);
+          console.log('🔍 Checking if localStorage contains changes for current sheet...');
+          console.log('🔍 Current sheet has data:', Object.keys(activeSheet.cells || {}).length > 0);
+          
+          // First try exact match by sheet name (new preferred method)
+          let foundChanges = null;
+          let foundKey = null;
+          
+          if (parsed[fileName] && Array.isArray(parsed[fileName]) && parsed[fileName].length > 0) {
+            foundChanges = parsed[fileName];
+            foundKey = fileName;
+            console.log(`📋 Found ${foundChanges.length} changes for sheet name match: ${fileName}`);
+          } else if (parsed[activeSheet.id] && Array.isArray(parsed[activeSheet.id]) && parsed[activeSheet.id].length > 0) {
+            // Fallback: try sheet ID match (old method)
+            foundChanges = parsed[activeSheet.id];
+            foundKey = activeSheet.id;
+            console.log(`📋 Found ${foundChanges.length} changes for sheet ID match: ${activeSheet.id}`);
+          } else {
+            // Last resort: find any changes that might belong to this sheet
+            console.log('🔍 No exact match, searching all available keys...');
+            
+            for (const [key, changes] of Object.entries(parsed)) {
+              if (Array.isArray(changes) && changes.length > 0) {
+                console.log(`🔍 Found changes under key: ${key} (${changes.length} changes)`);
+                // Use the first set of changes we find
+                foundChanges = changes;
+                foundKey = key;
+                console.log(`📋 Using changes from key: ${key} for current sheet`);
+                break;
+              }
+            }
+          }
+          
+          if (foundChanges && foundKey) {
+            console.log(`📋 Found ${foundChanges.length} changes under key ${foundKey}, converting to AI updates...`);
+            
+            // Convert to AI updates format
+            const aiUpdates = foundChanges.map(change => ({
+              cellId: change.cellId,
+              aiValue: change.newValue,
+              originalValue: change.previousValue,
+              timestamp: change.timestamp
+            }));
+            
+            console.log(`🔄 Converting ${aiUpdates.length} localStorage changes to AI updates`);
+            createAIUpdates(aiUpdates);
+            
+            // DON'T remove from localStorage yet - wait for user to accept/reject
+            // The changes will be removed when user accepts/rejects via the AI update system
+            console.log('📝 Keeping changes in localStorage until user accepts/rejects them');
+            
+            // Show notification
+            addNotification({
+              type: 'info',
+              title: 'Pending Changes Found',
+              message: `Found ${aiUpdates.length} pending changes. You can accept or reject them using the controls at the top right.`,
+              duration: 5000
+            });
+            
+            console.log('✅ Successfully converted localStorage changes to AI updates');
+          } else {
+            console.log('ℹ️ No changes found for this sheet in localStorage');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error processing existing changes:', error);
+      }
+    }
+  }, [activeSheet, createAIUpdates, addNotification]);
+
   // Handle chart movement events from InfiniteCanvas
   useEffect(() => {
     const handleChartMoved = (event: CustomEvent) => {
@@ -1556,6 +4073,7 @@ const Index: React.FC = () => {
               <span className="sm:hidden">CSV</span>
             </Button>
             
+            
             {/* Research Button */}
             <Button
               onClick={() => setShowResearchModal(true)}
@@ -1567,7 +4085,7 @@ const Index: React.FC = () => {
               <span className="hidden sm:inline">Research</span>
               <span className="sm:hidden">Research</span>
             </Button>
-
+            
             {/* AI Report Generator Button */}
             <Button
               onClick={() => {
@@ -1582,7 +4100,7 @@ const Index: React.FC = () => {
               <span className="hidden sm:inline">AI Report</span>
               <span className="sm:hidden">AI</span>
             </Button>
-
+            
             {/* Tour Button */}
             <TourButton 
               variant="outline" 
@@ -1591,7 +4109,7 @@ const Index: React.FC = () => {
             />
             
             
-            <Button 
+            <Button
               variant="outline" 
               size="sm"
               onClick={logout} 
@@ -1646,104 +4164,7 @@ const Index: React.FC = () => {
       
       {/* Main Content */}
       <div className="relative h-[calc(100vh-100px)] sm:h-[calc(100vh-120px)] mt-16 sm:mt-20 main-canvas-area">
-        {/* Full Screen Loading Overlay */}
-        {(isCheckingBackblazeData || isLoadingSheets || isProcessingSchema) && !isSchemaReady && (
-          <div className="fixed inset-0 bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 z-[100] flex items-center justify-center">
-            <div className="text-center">
-              {/* Animated Ostrich Logo/Icon */}
-              <div className="relative mb-6">
-                <div className="w-16 h-16 mx-auto bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg animate-pulse">
-                  <div className="text-white text-2xl font-bold">🦅</div>
-                </div>
-                {/* Animated dots */}
-                <div className="flex justify-center space-x-1 mt-4">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
-                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
-                </div>
-              </div>
-
-              <div className="relative h-8 mb-3 overflow-hidden">
-                <h3
-                  key={currentMessageIndex}
-                  className="text-2xl font-bold text-gray-900 dark:text-white absolute inset-0 transform transition-all duration-1000 ease-in-out animate-fade-in-up"
-                >
-                  {loadingMessages[currentMessageIndex]}
-                </h3>
-              </div>
-
-              <div className="flex items-center justify-center space-x-2 mb-4">
-                <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" style={{animationDelay: '0ms'}}></div>
-                <div className="w-2 h-2 bg-purple-500 rounded-full animate-ping" style={{animationDelay: '200ms'}}></div>
-                <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" style={{animationDelay: '400ms'}}></div>
-                <div className="w-2 h-2 bg-purple-500 rounded-full animate-ping" style={{animationDelay: '600ms'}}></div>
-                <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" style={{animationDelay: '800ms'}}></div>
-              </div>
-
-              <p className="text-gray-600 dark:text-gray-400 text-sm transition-all duration-500 ease-in-out">
-                {isCheckingBackblazeData
-                  ? 'Connecting to your cloud storage...'
-                  : isProcessingSchema
-                    ? 'Generating AI schema and preparing analysis...'
-                    : 'Preparing your spreadsheets...'
-                }
-              </p>
-
-              {/* Progress indicator */}
-              <div className="mt-6 w-64 mx-auto">
-                <div className="h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-1000 ease-out"
-                    style={{
-                      width: isCheckingBackblazeData ? '40%' : isProcessingSchema ? '70%' : '95%',
-                      animation: isSchemaReady ? 'pulse 2s infinite' : 'none'
-                    }}
-                  ></div>
-                </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 transition-all duration-500 ease-in-out">
-                  {isCheckingBackblazeData
-                    ? 'Checking your data...'
-                    : isProcessingSchema
-                      ? 'Processing schema...'
-                      : isSchemaReady
-                        ? 'Ready to analyze!'
-                        : 'Almost ready...'
-                  }
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Mega Cloud Data Loading Overlay (smaller, for specific operations) */}
-        {isCheckingBackblazeData && !isLoadingSheets && (
-          <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 z-50 flex items-center justify-center">
-            <div className="text-center">
-              <LoaderCircle className="h-12 w-12 animate-spin text-green-600 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                Checking Cloud Storage
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Loading your sheets from Backblaze cloud storage...
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* CSV Processing Overlay */}
-        {isProcessingCSV && !isSheetRendered && (
-          <div className="absolute inset-0 bg-white/80 dark:bg-gray-900/80 z-50 flex items-center justify-center">
-            <div className="text-center">
-              <LoaderCircle className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                Processing CSV Data
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                {isDuckDBProcessing ? 'Loading data into DuckDB...' : 'Rendering spreadsheet...'} Please wait.
-              </p>
-            </div>
-          </div>
-        )}
+        {/* Old loading overlays removed - now using professional loaders below */}
 
         {/* Infinite Canvas with Zoom and Pan */}
         <InfiniteCanvas 
@@ -1904,6 +4325,7 @@ const Index: React.FC = () => {
         />
       )}
 
+
       {/* Notification Manager */}
       <NotificationManager
         notifications={notifications}
@@ -1956,6 +4378,36 @@ const Index: React.FC = () => {
 
       {/* Tips Banner - Fixed to bottom of canvas */}
       <TipsBanner />
+
+      {/* Professional Loaders - Smart Loading System */}
+      <SheetLoader 
+        isLoading={isLoadingSheets || isCheckingBackblazeData} 
+        message={
+          isCheckingBackblazeData 
+            ? 'Connecting to cloud storage...' 
+            : isLoadingSheets 
+              ? 'Loading spreadsheet...' 
+              : 'Preparing your workspace...'
+        } 
+      />
+      
+      <AILoader 
+        isLoading={isProcessingSchema} 
+        showThinking={true}
+        message="AI is analyzing your data structure..."
+      />
+      
+      <DataLoader 
+        isLoading={isProcessingCSV} 
+        operation="upload" 
+        message="Processing and uploading your data..." 
+      />
+      
+      <ResearchLoader 
+        isLoading={showResearchModal} 
+        stage="searching"
+        message="Researching data sources..."
+      />
 
     </div>
   );

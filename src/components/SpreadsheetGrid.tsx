@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { SheetData, Cell } from '@/types/spreadsheet';
+import { changeDetector } from '@/lib/changeDetector';
 
 interface SpreadsheetGridProps {
   sheet: SheetData;
@@ -163,11 +164,34 @@ export const SpreadsheetGrid = ({ sheet, updateCell, onSelectionChange, selected
 
   const handleEditSubmit = useCallback(() => {
     if (editingCell) {
-      updateCell(editingCell, editValue);
+      // Get the previous value for change detection
+      const cell = sheet.cells[editingCell];
+      const previousValue = cell?.value;
+      
+      // Only update if value actually changed
+      if (previousValue !== editValue) {
+        console.log('🔍 Manual change detected:', {
+          cellId: editingCell,
+          previousValue,
+          newValue: editValue
+        });
+        
+        // Log manual change
+        changeDetector.detectManualChange(editingCell, editValue);
+        
+        // Update the cell
+        updateCell(editingCell, editValue);
+      } else {
+        console.log('🚫 No change detected - values are the same:', {
+          cellId: editingCell,
+          value: editValue
+        });
+      }
+      
       setEditingCell(null);
       setEditValue('');
     }
-  }, [editingCell, editValue, updateCell]);
+  }, [editingCell, editValue, updateCell, sheet.cells]);
 
   const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -251,19 +275,22 @@ export const SpreadsheetGrid = ({ sheet, updateCell, onSelectionChange, selected
               const isSelected = selectedCell === cellId;
               const isInRange = selectedRangeSet.has(cellId);
               const isEditing = editingCell === cellId;
+              const isHeaderRow = row === 0; // First row (row 0) is the header row
 
               return (
                 <div
                   key={cellId}
                   className={`
                     w-32 h-12 border-r border-b border-slate-200 dark:border-slate-600 relative cursor-cell transition-all duration-100 text-sm
-                    ${isSelected 
+                    ${isHeaderRow 
+                      ? 'bg-gradient-to-b from-blue-50 to-blue-100 dark:from-blue-900/50 dark:to-blue-800/50 border-blue-300 dark:border-blue-600' 
+                      : isSelected 
                       ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/50 z-10' 
                       : isInRange
                       ? 'bg-blue-100/70 dark:bg-blue-900/30'
                       : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'
                     }
-                    ${cell?.value ? 'bg-white dark:bg-slate-900' : ''}
+                    ${cell?.value && !isHeaderRow ? 'bg-white dark:bg-slate-900' : ''}
                   `}
                   onClick={(e) => handleCellClick(cellId, e)}
                   onDoubleClick={(e) => handleCellDoubleClick(cellId, e)}
@@ -284,7 +311,9 @@ export const SpreadsheetGrid = ({ sheet, updateCell, onSelectionChange, selected
                   ) : (
                     <div 
                       className={`w-full h-full flex items-center px-3 text-slate-900 dark:text-slate-100 font-normal truncate ${
-                        cell?.style?.bold ? 'font-bold' : ''
+                        isHeaderRow 
+                          ? 'font-bold text-blue-800 dark:text-blue-200 text-sm' 
+                          : cell?.style?.bold ? 'font-bold' : ''
                       } ${
                         cell?.style?.italic ? 'italic' : ''
                       } ${

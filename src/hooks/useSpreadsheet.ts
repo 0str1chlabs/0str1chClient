@@ -1,4 +1,8 @@
-import { useReducer, useCallback, useMemo, useState } from 'react';
+import { useReducer, useCallback, useMemo, useState, useRef } from 'react';
+import { useEffect } from 'react';
+import { indexedDBService } from '@/lib/indexedDBService';
+import { manualUpdateStorage } from '@/lib/manualUpdateStorage';
+import { backblazeSyncManager } from '@/lib/backblazeSyncManager';
 import { SpreadsheetState, SheetData, Cell, Chart, CellStyle, AIUpdate, AIUpdateBatch } from '@/types/spreadsheet';
 import { produce } from 'immer';
 import { toast } from '@/hooks/use-toast';
@@ -15,8 +19,27 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
   return produce(state, draft => {
     switch (action.type) {
       case 'ADD_SHEET': {
-        const newId = `sheet-${Date.now()}`; // Use timestamp for unique ID
-        const newSheet = createEmptySheet(newId, `Sheet ${state.sheets.length + 1}`);
+        const proposedName = `Sheet ${state.sheets.length + 1}`;
+        
+        // Check if a sheet with this name already exists
+        const existingSheet = state.sheets.find(sheet => sheet.name === proposedName);
+        if (existingSheet) {
+          console.log(`🔄 Sheet with name "${proposedName}" already exists, skipping duplicate creation`);
+          // Just switch to the existing sheet instead of creating a duplicate
+          draft.activeSheetId = existingSheet.id;
+          break;
+        }
+        
+        // Generate unique ID by checking existing sheets
+        let newId;
+        let attempts = 0;
+        do {
+          newId = `sheet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          attempts++;
+        } while (state.sheets.some(sheet => sheet.id === newId) && attempts < 10);
+        
+        const newSheet = createEmptySheet(newId, proposedName);
+        console.log(`✅ Creating new sheet "${proposedName}" with ID ${newId}`);
         draft.sheets.push(newSheet);
         draft.activeSheetId = newId;
         break;
@@ -132,7 +155,48 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         break;
       }
       case 'ADD_SHEET_FROM_CSV': {
-        const newId = `sheet-${Date.now()}`; // Use timestamp for unique ID
+        const proposedName = action.name || `Sheet ${state.sheets.length + 1}`;
+        
+        // Enhanced deduplication: Check by name AND CSV content similarity
+        const existingSheet = state.sheets.find(sheet => {
+          if (sheet.name !== proposedName) return false;
+          
+          // If names match, also check if CSV content is similar (same dimensions)
+          const existingRowCount = sheet.rowCount;
+          const existingColCount = sheet.colCount;
+          const newRowCount = action.csvData.length;
+          const newColCount = action.csvData[0]?.length || 0;
+          
+          // Consider sheets the same if they have the same name and similar dimensions
+          const dimensionsMatch = Math.abs(existingRowCount - newRowCount) <= 1 && 
+                                  Math.abs(existingColCount - newColCount) <= 1;
+          
+          console.log(`🔍 Comparing existing sheet "${sheet.name}" vs new "${proposedName}":`, {
+            existing: { rows: existingRowCount, cols: existingColCount },
+            new: { rows: newRowCount, cols: newColCount },
+            dimensionsMatch,
+            nameMatch: sheet.name === proposedName
+          });
+          
+          return dimensionsMatch;
+        });
+        
+        if (existingSheet) {
+          console.log(`🔄 Sheet with name "${proposedName}" and similar dimensions already exists, skipping duplicate creation`);
+          console.log(`📋 Switching to existing sheet: ${existingSheet.id}`);
+          // Just switch to the existing sheet instead of creating a duplicate
+          draft.activeSheetId = existingSheet.id;
+          break;
+        }
+        
+        // Generate unique ID by checking existing sheets
+        let newId;
+        let attempts = 0;
+        do {
+          newId = `sheet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          attempts++;
+        } while (state.sheets.some(sheet => sheet.id === newId) && attempts < 10);
+        
         const cells: Record<string, Cell> = {};
         action.csvData.forEach((row: string[], rowIndex: number) => {
           row.forEach((cellValue: string, colIndex: number) => {
@@ -143,11 +207,12 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         });
         const newSheet: SheetData = {
           id: newId,
-          name: action.name || `Sheet ${state.sheets.length + 1}`,
+          name: proposedName,
           cells,
           rowCount: Math.max(1000, action.csvData.length),
           colCount: Math.max(26, action.csvData[0]?.length || 0),
         };
+        console.log(`✅ Creating new sheet "${proposedName}" with ID ${newId}`);
         draft.sheets.push(newSheet);
         draft.activeSheetId = newId;
         break;
@@ -186,17 +251,66 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         break;
       }
       case 'CREATE_AI_UPDATES': {
+        console.log('🔄 CREATE_AI_UPDATES reducer called with', action.updates.length, 'updates');
+        console.log('🔍 Action updates:', action.updates);
         // Create AI updates without applying them immediately
         const sheet = draft.sheets.find(s => s.id === draft.activeSheetId);
         if (sheet) {
+          console.log('📊 Found active sheet:', sheet.name);
+          console.log('🔍 Sheet cells count before updates:', Object.keys(sheet.cells).length);
           // Backup original state if not already backed up
           if (!draft.originalSheets) {
             draft.originalSheets = JSON.parse(JSON.stringify(draft.sheets));
+            console.log('💾 Backed up original sheets state');
           }
           
-          action.updates.forEach((update: AIUpdate) => {
+          // Filter out updates where originalValue === aiValue (no actual change)
+          // Also filter out updates for cells that already have AI updates
+          const filteredUpdates = action.updates.filter((update: AIUpdate) => {
+            const { cellId, originalValue, aiValue } = update;
+            const hasActualChange = originalValue !== aiValue;
+            const cellAlreadyHasUpdate = sheet.cells[cellId]?.hasAIUpdate;
+            
+            // Enhanced debugging for localStorage changes
+            if (update.reasoning === 'Pending change from previous session') {
+              console.log('🔍 Processing localStorage change for cell:', cellId);
+              console.log('  - originalValue:', originalValue);
+              console.log('  - aiValue:', aiValue);
+              console.log('  - hasActualChange:', hasActualChange);
+              console.log('  - cellAlreadyHasUpdate:', cellAlreadyHasUpdate);
+              console.log('  - current cell value:', sheet.cells[cellId]?.value);
+            }
+            
+            if (!hasActualChange) {
+              console.log('🚫 Skipping AI update for cell:', cellId, '- no actual change (original === ai)');
+              return false;
+            }
+            
+            if (cellAlreadyHasUpdate) {
+              console.log('🚫 Skipping AI update for cell:', cellId, '- cell already has pending AI update');
+              return false;
+            }
+            
+            return true;
+          });
+          
+          const skippedCount = action.updates.length - filteredUpdates.length;
+          console.log(`🔍 Filtered AI updates: ${action.updates.length} -> ${filteredUpdates.length} (removed ${skippedCount} unchanged/duplicate cells)`);
+          
+          if (skippedCount > 0) {
+            console.log(`📊 Skipped ${skippedCount} updates (cells already have pending changes or no actual change)`);
+          }
+          
+          // Limit the number of updates to prevent performance issues
+          const maxUpdates = 50;
+          const limitedUpdates = filteredUpdates.slice(0, maxUpdates);
+          
+          if (filteredUpdates.length > maxUpdates) {
+            console.log(`⚠️ Limiting AI updates to ${maxUpdates} (was ${filteredUpdates.length}) to prevent performance issues`);
+          }
+          
+          limitedUpdates.forEach((update: AIUpdate) => {
             const { cellId, originalValue, aiValue, timestamp, reasoning } = update;
-            console.log('🔄 Creating AI update for cell:', cellId, 'original:', originalValue, 'ai:', aiValue);
             
             if (!sheet.cells[cellId]) {
               sheet.cells[cellId] = { 
@@ -206,7 +320,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
                 hasAIUpdate: true,
                 aiUpdateTimestamp: timestamp
               };
-              console.log('📝 Created new cell with AI update:', cellId, sheet.cells[cellId]);
             } else {
               // Store original value if not already stored
               if (!sheet.cells[cellId].originalValue) {
@@ -216,18 +329,37 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
               sheet.cells[cellId].aiValue = aiValue;
               sheet.cells[cellId].hasAIUpdate = true;
               sheet.cells[cellId].aiUpdateTimestamp = timestamp;
-              console.log('📝 Updated existing cell with AI update:', cellId, sheet.cells[cellId]);
             }
           });
           
-          draft.hasAIUpdates = true;
-          console.log('✅ Created', action.updates.length, 'AI updates. Total cells with updates:', Object.keys(sheet.cells).filter(cellId => sheet.cells[cellId]?.hasAIUpdate).length);
-          console.log('📋 AI Updates created:', action.updates.map(update => ({
-            cellId: update.cellId,
-            originalValue: update.originalValue,
-            aiValue: update.aiValue,
-            reasoning: update.reasoning
+          draft.hasAIUpdates = limitedUpdates.length > 0;
+          console.log('✅ Created', limitedUpdates.length, 'AI updates. Total cells with updates:', Object.keys(sheet.cells).filter(cellId => sheet.cells[cellId]?.hasAIUpdate).length);
+          
+          // Debug: Check if cells are properly marked with AI updates
+          const cellsWithUpdates = Object.entries(sheet.cells).filter(([cellId, cell]) => cell.hasAIUpdate);
+          console.log('🔍 Cells with AI updates:', cellsWithUpdates.slice(0, 3).map(([cellId, cell]) => ({
+            cellId,
+            hasAIUpdate: cell.hasAIUpdate,
+            originalValue: cell.originalValue,
+            aiValue: cell.aiValue
           })));
+          
+          // Only log sample updates if there are many
+          if (limitedUpdates.length > 10) {
+            console.log('📋 Sample AI Updates (first 5):', limitedUpdates.slice(0, 5).map(update => ({
+              cellId: update.cellId,
+              originalValue: update.originalValue,
+              aiValue: update.aiValue,
+              reasoning: update.reasoning
+            })));
+          } else {
+            console.log('📋 AI Updates created:', limitedUpdates.map(update => ({
+              cellId: update.cellId,
+              originalValue: update.originalValue,
+              aiValue: update.aiValue,
+              reasoning: update.reasoning
+            })));
+          }
         }
         break;
       }
@@ -404,6 +536,9 @@ export const useSpreadsheet = () => {
     originalSheets: undefined,
   });
 
+  // Ensure we only apply manual updates from localStorage once on initial load
+  const appliedManualOnLoad = useRef<boolean>(false);
+
   // Undo/redo state
   const [history, setHistory] = useState([state]);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -534,43 +669,626 @@ export const useSpreadsheet = () => {
     dispatchWithHistory({ type: 'UPDATE_EXISTING_SHEET', sheetId, ...updates });
   }, [dispatchWithHistory]);
 
-  // AI Update handlers
-  const createAIUpdates = useCallback((updates: AIUpdate[]) => {
-    dispatchWithHistory({ type: 'CREATE_AI_UPDATES', updates });
-  }, [dispatchWithHistory]);
+  // Background sync: every 45s push manualUpdate_<SheetName> to IndexedDB and clear the key after successful sync
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const sheets = state.sheets; // capture latest via state dependency; interval remains stable
+        if (!sheets || sheets.length === 0) return;
 
-  const acceptAIUpdate = useCallback((cellId: string) => {
+        // Build a normalized-name -> in-memory sheet map (consistent with manualUpdate key & IndexedDB cleaning)
+        const normalize = (n: string) => n.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_');
+        const nameToInMemorySheet = new Map<string, typeof state.sheets[number]>();
+        sheets.forEach(s => nameToInMemorySheet.set(normalize(s.name), s));
+
+        // Iterate localStorage keys and find manualUpdate_*
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key || !key.startsWith('manualUpdate_')) continue;
+          const sheetName = key.substring('manualUpdate_'.length);
+          const inMemorySheet = nameToInMemorySheet.get(sheetName);
+          // We still allow syncing to IndexedDB even if the in-memory sheet isn't mounted yet.
+
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          let updatesObj: any;
+          try { updatesObj = JSON.parse(raw); } catch { continue; }
+          const entries = Object.entries(updatesObj) as Array<[string, any]>;
+          if (entries.length === 0) continue;
+
+          // Prepare changes list for IndexedDB simplified structure
+          const changes = entries.map(([cellId, upd]) => ({
+            cellId,
+            previousValue: inMemorySheet?.cells[cellId]?.value || upd?.previousValue,
+            newValue: upd?.value
+          }));
+
+          // Resolve the correct IndexedDB sheet record by cleaned name
+          const allSheets = await indexedDBService.getAllSheets();
+          const matchByName = allSheets.find(s => s.name === sheetName);
+          let targetSheetRecordId: string;
+          if (matchByName) {
+            targetSheetRecordId = matchByName.id;
+          } else {
+            // Create a new sheet record with cleaned name; keep csvData intact (empty if unknown)
+            targetSheetRecordId = await indexedDBService.saveSheet({
+              name: inMemorySheet ? inMemorySheet.name : sheetName,
+              csvData: '',
+              isActive: false,
+              metadata: {
+                rowCount: inMemorySheet?.rowCount || 0,
+                colCount: inMemorySheet?.colCount || 0,
+                fileSize: 0,
+                uploadDate: Date.now()
+              }
+            });
+          }
+
+        // Track manual changes in sync manager
+        changes.forEach(change => {
+          const sheetId = inMemorySheet?.id || targetSheetRecordId;
+          const displayName = inMemorySheet?.name || sheetName;
+          backblazeSyncManager.recordManualChange(
+            sheetId,
+            displayName,
+            change.cellId,
+            change.previousValue,
+            change.newValue
+          );
+        });
+        
+        // Persist to IndexedDB: append changes only (keeps entire sheet intact)
+        await indexedDBService.addChangesToSheet(targetSheetRecordId, changes);
+
+        // Verify DB write before clearing localStorage
+        try {
+          const verify = await indexedDBService.getSheet(targetSheetRecordId);
+          const verifyOk = Array.isArray(verify?.changes) && changes.every(ch =>
+            verify!.changes!.some(v => v.cellId === ch.cellId && v.newValue === ch.newValue)
+          );
+          if (!verifyOk) {
+            console.warn('[manual-sync] DB verify failed, skipping clear for', key);
+            continue;
+          }
+        } catch (e) {
+          console.warn('[manual-sync] DB verify error, skipping clear for', key, e);
+          continue;
+        }
+
+          // Apply to CSV the same way "Accept All Changes" does so reload shows updated data
+          try {
+            const { csvChangeManager } = await import('@/lib/csvChangeManager');
+            const currentCSV = csvChangeManager.getCurrentCSV?.();
+            if (currentCSV) {
+              await csvChangeManager.applyChangesToCSV();
+            }
+          } catch (e) {
+            console.warn('⚠️ CSV apply during background sync skipped:', e);
+          }
+
+          // Also update current UI state so values are consistent (if not already)
+          if (inMemorySheet) {
+            const nextCells: Record<string, any> = { ...inMemorySheet.cells };
+            changes.forEach(c => {
+              const prev = nextCells[c.cellId];
+              nextCells[c.cellId] = prev ? { ...prev, value: c.newValue } : { value: c.newValue };
+            });
+            updateExistingSheet(inMemorySheet.id, { cells: nextCells });
+          }
+
+        // Clear the manual key after successful sync & verify
+        localStorage.removeItem(key);
+        }
+      } catch (e) {
+        console.error('❌ Background manualUpdate sync failed:', e);
+      }
+    };
+
+    // Run every 45s (call reference only, do not invoke here)
+    const interval = setInterval(tick, 45000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [state.sheets, updateExistingSheet]);
+
+  // One-time: apply persisted changes from IndexedDB (so reload reflects prior manual syncs)
+  const appliedDBChangesOnLoad = useRef<boolean>(false);
+  const hasAnyCells = useMemo(() => {
+    return (state.sheets || []).some(s => s && s.cells && Object.keys(s.cells).length > 0);
+  }, [state.sheets]);
+  useEffect(() => {
+    if (appliedDBChangesOnLoad.current) return;
+    if (!state.sheets || state.sheets.length === 0) return;
+    if (!hasAnyCells) return; // wait until cells are populated so overlay takes effect in UI
+    (async () => {
+      try {
+        const records = await indexedDBService.getAllSheets();
+        if (!records || records.length === 0) return;
+        const normalize = (n: string) => n.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_');
+        const inMemoryByName = new Map<string, typeof state.sheets[number]>();
+        state.sheets.forEach(s => inMemoryByName.set(normalize(s.name), s));
+        let appliedCount = 0;
+        records.forEach(rec => {
+          if (!rec.changes || rec.changes.length === 0) return;
+          const target = inMemoryByName.get(rec.name);
+          if (!target) return;
+          const nextCells: Record<string, any> = { ...target.cells };
+          rec.changes.forEach(ch => {
+            const prev = nextCells[ch.cellId];
+            nextCells[ch.cellId] = prev ? { ...prev, value: ch.newValue } : { value: ch.newValue };
+          });
+          updateExistingSheet(target.id, { cells: nextCells });
+          appliedCount++;
+        });
+        if (appliedCount > 0) {
+          appliedDBChangesOnLoad.current = true;
+        }
+      } catch (e) {
+        console.error('❌ Failed to apply persisted DB changes on load:', e);
+      }
+    })();
+  }, [state.sheets.length, hasAnyCells, updateExistingSheet]);
+
+  // Apply manual updates from localStorage for all sheets on load/when sheets list changes
+  useEffect(() => {
+    if (appliedManualOnLoad.current) return;
+    try {
+      const allUpdatesBySheet = manualUpdateStorage.getAllSheetsManualUpdates();
+      const sheetNameToSheet = new Map<string, typeof state.sheets[number]>();
+      const normalize = (n: string) => n.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_');
+      state.sheets.forEach(s => sheetNameToSheet.set(normalize(s.name), s));
+
+      Object.keys(allUpdatesBySheet).forEach((sheetName) => {
+        const targetSheet = sheetNameToSheet.get(sheetName);
+        if (!targetSheet) return;
+
+        const updatesForSheet = allUpdatesBySheet[sheetName];
+        const currentCells = targetSheet.cells || {};
+        const nextCells: Record<string, any> = { ...currentCells };
+
+        Object.entries(updatesForSheet).forEach(([cellId, update]) => {
+          const prev = nextCells[cellId];
+          nextCells[cellId] = prev ? { ...prev, value: update.value } : { value: update.value };
+        });
+
+        updateExistingSheet(targetSheet.id, { cells: nextCells });
+      });
+
+      // Mark as applied; do NOT clear localStorage keys (user requested persistence)
+      appliedManualOnLoad.current = true;
+    } catch (e) {
+      console.error('❌ Failed to apply manual updates from localStorage:', e);
+    }
+    // Only once after initial sheets list is available
+  }, [state.sheets, updateExistingSheet]);
+
+  // AI Update handlers
+  // Rate limiting for AI updates
+  const lastAIUpdateTime = useRef<number>(0);
+  const AI_UPDATE_COOLDOWN = 2000; // 2 seconds
+  
+  // Track attempted changes to prevent repeated attempts
+  const attemptedChanges = useRef<Set<string>>(new Set());
+
+  const createAIUpdates = useCallback((updates: AIUpdate[]) => {
+    const now = Date.now();
+    
+    console.log('🔄 createAIUpdates called with', updates.length, 'updates');
+    
+    // Check if this is from localStorage (by checking reasoning)
+    const isFromLocalStorage = updates.some(u => u.reasoning === 'Pending change from previous session');
+    
+    if (isFromLocalStorage) {
+      console.log('🔄 This is from localStorage, bypassing rate limits');
+      console.log('🔍 Dispatching CREATE_AI_UPDATES with localStorage updates:', updates.length);
+      console.log('🔍 Sample localStorage updates:', updates.slice(0, 3));
+      // For localStorage changes, bypass rate limiting
+      dispatchWithHistory({ type: 'CREATE_AI_UPDATES', updates });
+      return;
+    }
+    
+    // Check if we're in cooldown period
+    if (now - lastAIUpdateTime.current < AI_UPDATE_COOLDOWN) {
+      console.log('⏳ AI update cooldown active, skipping batch');
+      return;
+    }
+    
+    // Check if there are already many pending AI updates
+    const currentPendingUpdates = Object.values(state.sheets.find(s => s.id === state.activeSheetId)?.cells || {})
+      .filter(cell => cell.hasAIUpdate).length;
+    
+    if (currentPendingUpdates > 20) {
+      console.log('⏳ Too many pending AI updates, skipping batch to prevent overload');
+      return;
+    }
+    
+    // Check if we've already attempted similar changes recently
+    const changeSignature = updates.map(u => `${u.cellId}:${u.originalValue}->${u.aiValue}`).join('|');
+    if (attemptedChanges.current.has(changeSignature)) {
+      console.log('⏳ Similar changes already attempted, skipping batch');
+      return;
+    }
+    
+    // Track this attempt
+    attemptedChanges.current.add(changeSignature);
+    
+    // Clear old attempts after 30 seconds
+    setTimeout(() => {
+      attemptedChanges.current.delete(changeSignature);
+    }, 30000);
+    
+    lastAIUpdateTime.current = now;
+    console.log('✅ Dispatching CREATE_AI_UPDATES with', updates.length, 'updates');
+    dispatchWithHistory({ type: 'CREATE_AI_UPDATES', updates });
+  }, [dispatchWithHistory]); // Remove state dependencies to prevent infinite loops
+
+  const acceptAIUpdate = useCallback(async (cellId: string) => {
+    // Get current sheet and cell values before accepting
+    const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+    const cell = currentSheet?.cells[cellId];
+    
+    if (currentSheet && cell && cell.hasAIUpdate) {
+      // Track AI change in sync manager
+      backblazeSyncManager.recordAIChange(
+        currentSheet.id,
+        currentSheet.name,
+        cellId,
+        cell.value, // previous value
+        cell.aiValue // new value
+      );
+    }
+    
     dispatchWithHistory({ type: 'ACCEPT_AI_UPDATE', cellId });
-  }, [dispatchWithHistory]);
+    
+    // Also apply this change to IndexedDB CSV if available
+    try {
+      const { csvChangeManager } = await import('@/lib/csvChangeManager');
+      const currentCSV = csvChangeManager.getCurrentCSV();
+      if (currentCSV) {
+        // Apply all pending changes to IndexedDB (including this one)
+        await csvChangeManager.applyChangesToCSV();
+      }
+    } catch (error) {
+      console.error('❌ Error applying change to IndexedDB:', error);
+    }
+  }, [dispatchWithHistory, state.sheets, state.activeSheetId]);
 
   const rejectAIUpdate = useCallback((cellId: string) => {
     dispatchWithHistory({ type: 'REJECT_AI_UPDATE', cellId });
   }, [dispatchWithHistory]);
 
-  const acceptAllAIUpdates = useCallback(() => {
+  const acceptAllAIUpdates = useCallback(async () => {
+    console.log('🔄 acceptAllAIUpdates called');
+    
+    // Track all AI changes before accepting
+    const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+    if (currentSheet) {
+      Object.entries(currentSheet.cells).forEach(([cellId, cell]) => {
+        if (cell.hasAIUpdate && cell.aiValue !== undefined) {
+          backblazeSyncManager.recordAIChange(
+            currentSheet.id,
+            currentSheet.name,
+            cellId,
+            cell.value,
+            cell.aiValue
+          );
+        }
+      });
+    }
+    
     dispatchWithHistory({ type: 'ACCEPT_ALL_AI_UPDATES' });
+    
+    // Clear localStorage changes since they've been accepted
+    try {
+      console.log('🧹 Clearing localStorage changes after accepting AI updates...');
+      const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+      if (currentSheet) {
+        const fileName = currentSheet.name || `sheet-${currentSheet.id}`;
+        const cleanName = fileName.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_').toLowerCase();
+        
+        // Clear new filename-based storage
+        const newAIDiffData = localStorage.getItem('sheet_ai_diff_by_filename');
+        if (newAIDiffData) {
+          const parsed = JSON.parse(newAIDiffData);
+          if (parsed[cleanName]) {
+            console.log(`🗑️ Removing accepted changes for sheet "${fileName}" (key: ${cleanName})`);
+            delete parsed[cleanName];
+            localStorage.setItem('sheet_ai_diff_by_filename', JSON.stringify(parsed));
+          }
+        }
+        
+        // Also clear sheet-name-based storage (current method)
+        const sheetNameAIDiffData = localStorage.getItem('sheet_specific_ai_diff');
+        if (sheetNameAIDiffData) {
+          const parsed = JSON.parse(sheetNameAIDiffData);
+          
+          // Try to clear by sheet name (new method)
+          if (parsed[fileName]) {
+            console.log(`🗑️ Removing accepted changes for sheet name "${fileName}"`);
+            delete parsed[fileName];
+            localStorage.setItem('sheet_specific_ai_diff', JSON.stringify(parsed));
+          }
+          
+          // Also try to clear by sheet ID (fallback for old data)
+          if (parsed[state.activeSheetId]) {
+            console.log(`🗑️ Removing accepted changes for sheet ID ${state.activeSheetId} (legacy)`);
+            delete parsed[state.activeSheetId];
+            localStorage.setItem('sheet_specific_ai_diff', JSON.stringify(parsed));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error clearing localStorage:', error);
+    }
+    
+    // Update IndexedDB with the accepted changes
+    try {
+      console.log('🔄 === STARTING INDEXEDDB UPDATE AFTER ACCEPTING CHANGES ===');
+      console.log('📊 Current state info:', {
+        activeSheetId: state.activeSheetId,
+        totalSheets: state.sheets.length,
+        hasAIUpdates: state.hasAIUpdates
+      });
+      
+      const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+      if (!currentSheet) {
+        console.log('❌ No active sheet found for ID:', state.activeSheetId);
+        console.log('📋 Available sheets:', state.sheets.map(s => ({id: s.id, name: s.name})));
+        return;
+      }
+      
+      console.log('✅ Found active sheet:', {
+        id: currentSheet.id,
+        name: currentSheet.name,
+        rowCount: currentSheet.rowCount,
+        colCount: currentSheet.colCount,
+        cellCount: Object.keys(currentSheet.cells).length
+      });
+      
+      const fileName = currentSheet.name || `sheet-${currentSheet.id}`;
+      console.log('📋 Using fileName for IndexedDB:', fileName);
+      
+      // Show current cell values (including any accepted AI changes)
+      const cellsWithValues = Object.entries(currentSheet.cells)
+        .filter(([_, cell]) => cell.value && cell.value.toString().trim() !== '')
+        .slice(0, 10); // Show first 10 non-empty cells
+      
+      console.log('📊 Current sheet cells (sample):', cellsWithValues.map(([cellId, cell]) => ({
+        cellId,
+        value: cell.value,
+        hadAIUpdate: cell.aiUpdateTimestamp ? 'Yes' : 'No'
+      })));
+      
+      // Get the current sheet data and save it to IndexedDB
+      console.log('📦 Importing indexedDBService...');
+      const { indexedDBService } = await import('../lib/indexedDBService');
+      console.log('✅ IndexedDBService imported successfully');
+      
+      // Initialize IndexedDB service
+      console.log('🔧 Initializing IndexedDB service...');
+      await indexedDBService.init();
+      console.log('✅ IndexedDB service initialized');
+      
+      // Convert sheet cells to CSV format for IndexedDB storage
+      console.log('📊 Converting sheet cells to CSV format...');
+      const csvData: string[][] = [];
+      const maxRow = currentSheet.rowCount;
+      const maxCol = currentSheet.colCount;
+      
+      console.log('📊 Sheet dimensions:', { maxRow, maxCol });
+      
+      // Build header row from first row values; fallback to A..Z for empty headers
+      const headerRow: string[] = [];
+      for (let col = 0; col < maxCol; col++) {
+        const colLetter = String.fromCharCode(65 + col);
+        const headerCellId = `${colLetter}1`;
+        const headerCell = currentSheet.cells[headerCellId];
+        const headerValue = (headerCell?.value !== undefined && headerCell?.value !== null && String(headerCell?.value).trim() !== '')
+          ? String(headerCell?.value)
+          : colLetter;
+        headerRow.push(headerValue);
+      }
+      csvData.push(headerRow);
+      
+      // Add data rows (rows 2..maxRow). Use final value = aiValue (if present) else value
+      for (let row = 2; row <= maxRow; row++) {
+        const rowData: string[] = [];
+        for (let col = 0; col < maxCol; col++) {
+          const colLetter = String.fromCharCode(65 + col);
+          const cellId = `${colLetter}${row}`;
+          const cell = currentSheet.cells[cellId];
+          const finalValue = (cell && cell.hasAIUpdate && cell.aiValue !== undefined) ? cell.aiValue : cell?.value;
+          rowData.push(finalValue !== undefined && finalValue !== null ? String(finalValue) : '');
+        }
+        // Only add non-empty rows
+        if (rowData.some(cell => cell.trim() !== '')) {
+          csvData.push(rowData);
+        }
+      }
+      
+      console.log('📊 Generated CSV data with', csvData.length, 'rows for IndexedDB');
+      console.log('📋 Sample CSV data (first 3 rows):', csvData.slice(0, 3));
+      
+      // Convert CSV data to string format
+      const csvString = csvData.map(row => row.join(',')).join('\n');
+      console.log('📊 CSV string generated:', {
+        length: csvString.length,
+        lines: csvString.split('\n').length,
+        preview: csvString.substring(0, 200)
+      });
+      
+      // Save to IndexedDB
+      console.log('💾 Saving sheet to IndexedDB...');
+      const sheetRecord = {
+        name: fileName,
+        csvData: csvString,
+        isActive: true,
+        processedData: {
+          totalRows: csvData.length - 1,
+          totalColumns: csvData[0]?.length || 0
+        }
+      };
+      
+      console.log('📋 Sheet record to save:', {
+        name: sheetRecord.name,
+        csvDataLength: sheetRecord.csvData.length,
+        isActive: sheetRecord.isActive,
+        processedData: sheetRecord.processedData
+      });
+      
+      const saveResult = await indexedDBService.saveSheet(sheetRecord);
+      console.log('💾 IndexedDB save result:', saveResult);
+      
+      // Verify the save by reading it back
+      console.log('🔍 Verifying IndexedDB save by reading back...');
+      const allSheets = await indexedDBService.getAllSheets();
+      console.log('📊 getAllSheets returned:', {
+        type: typeof allSheets,
+        isArray: Array.isArray(allSheets),
+        length: allSheets.length,
+        firstItem: allSheets[0] ? { name: allSheets[0].name, csvDataType: typeof allSheets[0].csvData } : null
+      });
+      
+      // allSheets is directly an array of SheetRecord, not wrapped in .sheets
+      const savedSheet = allSheets.find(s => s.name === fileName);
+      
+      if (savedSheet) {
+        console.log('✅ Verification successful - Sheet found in IndexedDB:', {
+          id: savedSheet.id,
+          name: savedSheet.name,
+          csvDataLength: savedSheet.csvData?.length || 0,
+          lastModified: savedSheet.lastModified
+        });
+        
+        // Show a sample of the saved data
+        if (savedSheet.csvData) {
+          // Handle different data formats (be liberal in reading back)
+          let csvStringAny: any = savedSheet.csvData as any;
+          if (typeof csvStringAny !== 'string') {
+            console.log('⚠️ csvData is not a string, type:', typeof csvStringAny, 'value:', csvStringAny);
+            if (Array.isArray(csvStringAny)) {
+              csvStringAny = csvStringAny.map((row: any) => Array.isArray(row) ? row.join(',') : row).join('\n');
+              console.log('🔄 Converted array to CSV string');
+            } else {
+              csvStringAny = JSON.stringify(csvStringAny);
+              console.log('🔄 Converted object to JSON string');
+            }
+          }
+          const savedLines = (csvStringAny as string).split('\n').slice(0, 3);
+          console.log('📋 Saved CSV sample (first 3 lines):', savedLines);
+        }
+      } else {
+        console.log('❌ Verification failed - Sheet not found in IndexedDB after save!');
+        console.log('📋 Available sheets after save:', allSheets.map(s => s.name));
+      }
+      
+      console.log('✅ === INDEXEDDB UPDATE PROCESS COMPLETED ===');
+      
+    } catch (error) {
+      console.error('❌ Error updating IndexedDB with accepted changes:', error);
+    }
+    
     toast({
       title: "AI Updates Accepted",
-      description: "All AI suggestions have been applied to the spreadsheet.",
+      description: "All AI suggestions have been applied to the spreadsheet and saved to IndexedDB.",
       duration: 3000,
     });
-  }, [dispatchWithHistory]);
+  }, [dispatchWithHistory, state.activeSheetId]);
 
-  const rejectAllAIUpdates = useCallback(() => {
+  const rejectAllAIUpdates = useCallback(async () => {
     dispatchWithHistory({ type: 'REJECT_ALL_AI_UPDATES' });
+    
+    // Clear localStorage changes since they've been rejected
+    try {
+      console.log('🧹 Clearing localStorage changes after rejecting AI updates...');
+      const currentSheet = state.sheets.find(s => s.id === state.activeSheetId);
+      if (currentSheet) {
+        const fileName = currentSheet.name || `sheet-${currentSheet.id}`;
+        const cleanName = fileName.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_').toLowerCase();
+        
+        // Clear new filename-based storage
+        const newAIDiffData = localStorage.getItem('sheet_ai_diff_by_filename');
+        if (newAIDiffData) {
+          const parsed = JSON.parse(newAIDiffData);
+          if (parsed[cleanName]) {
+            console.log(`🗑️ Removing rejected changes for sheet "${fileName}" (key: ${cleanName})`);
+            delete parsed[cleanName];
+            localStorage.setItem('sheet_ai_diff_by_filename', JSON.stringify(parsed));
+          }
+        }
+        
+        // Also clear old sheet-ID-based storage for backward compatibility
+        const oldAIDiffData = localStorage.getItem('sheet_specific_ai_diff');
+        if (oldAIDiffData) {
+          const parsed = JSON.parse(oldAIDiffData);
+          if (parsed[state.activeSheetId]) {
+            console.log(`🗑️ Removing rejected changes for sheet ID ${state.activeSheetId} (legacy)`);
+            delete parsed[state.activeSheetId];
+            localStorage.setItem('sheet_specific_ai_diff', JSON.stringify(parsed));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error clearing localStorage:', error);
+    }
+    
+    // Use unified change manager to clear rejected changes
+    try {
+      console.log('🔄 Using unified change manager to clear rejected changes...');
+      const { unifiedChangeManager } = await import('@/lib/unifiedChangeManager');
+      
+      // Get the current sheet ID
+      const currentSheetId = state.activeSheetId;
+      if (!currentSheetId) {
+        console.log('⚠️ No active sheet ID found');
+        return;
+      }
+      
+      // Clear all changes since they've been rejected
+      await unifiedChangeManager.clearAllChanges(currentSheetId);
+      console.log('✅ All changes cleared after rejection');
+      
+    } catch (error) {
+      console.error('❌ Error clearing rejected changes with unified manager:', error);
+      
+      // Fallback to old method if unified manager fails
+      try {
+        console.log('🔄 Falling back to old change clearing method...');
+        const { clearLocalStorageChanges } = await import('@/lib/localStorageToAIUpdates');
+        const { clearPersistentAIDiffLog } = await import('@/lib/aiChangeLogger');
+        clearLocalStorageChanges();
+        const activeSheet = state.sheets.find(s => s.id === state.activeSheetId);
+        clearPersistentAIDiffLog(activeSheet?.name || state.activeSheetId);
+        console.log('🧹 Cleared all AI change logs after rejection (fallback)');
+      } catch (fallbackError) {
+        console.error('❌ Fallback method also failed:', fallbackError);
+      }
+    }
+    
     toast({
       title: "AI Updates Rejected",
       description: "All AI suggestions have been discarded.",
       duration: 3000,
     });
-  }, [dispatchWithHistory]);
+  }, [dispatchWithHistory, state.activeSheetId]);
 
   // Column-level AI update functions
-  const acceptColumnAIUpdates = useCallback((columnLetter: string) => {
+  const acceptColumnAIUpdates = useCallback(async (columnLetter: string) => {
     dispatchWithHistory({ type: 'ACCEPT_COLUMN_AI_UPDATES', columnLetter });
+    
+    // Also apply changes to IndexedDB CSV if available
+    try {
+      const { csvChangeManager } = await import('@/lib/csvChangeManager');
+      const currentCSV = csvChangeManager.getCurrentCSV();
+      if (currentCSV) {
+        await csvChangeManager.applyChangesToCSV();
+      }
+    } catch (error) {
+      console.error('❌ Error applying column changes to IndexedDB:', error);
+    }
+    
     toast({
       title: `Column ${columnLetter} Updates Accepted`,
-      description: `All AI suggestions in column ${columnLetter} have been applied.`,
+      description: `All AI suggestions in column ${columnLetter} have been applied to the spreadsheet and CSV file.`,
       duration: 3000,
     });
   }, [dispatchWithHistory]);
@@ -585,11 +1303,23 @@ export const useSpreadsheet = () => {
   }, [dispatchWithHistory]);
 
   // Row-level AI update functions
-  const acceptRowAIUpdates = useCallback((rowNumber: number) => {
+  const acceptRowAIUpdates = useCallback(async (rowNumber: number) => {
     dispatchWithHistory({ type: 'ACCEPT_ROW_AI_UPDATES', rowNumber });
+    
+    // Also apply changes to IndexedDB CSV if available
+    try {
+      const { csvChangeManager } = await import('@/lib/csvChangeManager');
+      const currentCSV = csvChangeManager.getCurrentCSV();
+      if (currentCSV) {
+        await csvChangeManager.applyChangesToCSV();
+      }
+    } catch (error) {
+      console.error('❌ Error applying row changes to IndexedDB:', error);
+    }
+    
     toast({
       title: `Row ${rowNumber} Updates Accepted`,
-      description: `All AI suggestions in row ${rowNumber} have been applied.`,
+      description: `All AI suggestions in row ${rowNumber} have been applied to the spreadsheet and CSV file.`,
       duration: 3000,
     });
   }, [dispatchWithHistory]);
@@ -656,3 +1386,5 @@ export const useSpreadsheet = () => {
     canRedo: historyIndex < history.length - 1,
   };
 };
+
+export default useSpreadsheet;

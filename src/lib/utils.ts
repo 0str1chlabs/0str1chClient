@@ -42,7 +42,7 @@ export async function queryDuckDB(sql: string) {
   
   // Try to silence logging on this connection
   try {
-    await conn.query('SET logging_level = 0');
+    await conn.query('SET logging_level = "ERROR"');
     await conn.query('SET enable_progress_bar = false');
   } catch (logError) {
     // Ignore errors if these settings don't exist
@@ -51,6 +51,170 @@ export async function queryDuckDB(sql: string) {
   const result = await conn.query(sql);
   await conn.close();
   return result.toArray();
+}
+
+// Debug function to inspect DuckDB tables
+export async function debugDuckDBTables() {
+  try {
+    if (!window.duckDB) {
+      console.log('❌ DuckDB not initialized');
+      return;
+    }
+
+    const conn = await window.duckDB.connect();
+    
+    // List all tables
+    const tablesResult = await conn.query("SHOW TABLES");
+    const tables = tablesResult.toArray();
+    console.log('📊 DuckDB Tables:', tables);
+    
+    // For each table, show schema and sample data
+    for (const table of tables) {
+      const tableName = table.name;
+      console.log(`\n🔍 Table: ${tableName}`);
+      
+      // Show schema
+      try {
+        const schemaResult = await conn.query(`DESCRIBE "${tableName}"`);
+        console.log(`📋 Schema for ${tableName}:`, schemaResult.toArray());
+      } catch (error) {
+        console.log(`❌ Could not get schema for ${tableName}:`, error);
+      }
+      
+      // Show sample data
+      try {
+        const dataResult = await conn.query(`SELECT * FROM "${tableName}" LIMIT 5`);
+        console.log(`📄 Sample data from ${tableName}:`, dataResult.toArray());
+      } catch (error) {
+        console.log(`❌ Could not get data from ${tableName}:`, error);
+      }
+    }
+    
+    await conn.close();
+  } catch (error) {
+    console.error('❌ Error debugging DuckDB:', error);
+  }
+}
+
+// Debug function to check specific table
+export async function debugDuckDBTable(tableName: string) {
+  try {
+    if (!window.duckDB) {
+      console.log('❌ DuckDB not initialized');
+      return;
+    }
+
+    const conn = await window.duckDB.connect();
+    
+    console.log(`🔍 Debugging table: ${tableName}`);
+    
+    // Show schema
+    try {
+      const schemaResult = await conn.query(`DESCRIBE "${tableName}"`);
+      console.log(`📋 Schema for ${tableName}:`, schemaResult.toArray());
+    } catch (error) {
+      console.log(`❌ Could not get schema for ${tableName}:`, error);
+    }
+    
+    // Show row count
+    try {
+      const countResult = await conn.query(`SELECT COUNT(*) as row_count FROM "${tableName}"`);
+      console.log(`📊 Row count for ${tableName}:`, countResult.toArray());
+    } catch (error) {
+      console.log(`❌ Could not get row count for ${tableName}:`, error);
+    }
+    
+    // Show sample data
+    try {
+      const dataResult = await conn.query(`SELECT * FROM "${tableName}" LIMIT 10`);
+      console.log(`📄 Sample data from ${tableName}:`, dataResult.toArray());
+    } catch (error) {
+      console.log(`❌ Could not get data from ${tableName}:`, error);
+    }
+    
+    await conn.close();
+  } catch (error) {
+    console.error(`❌ Error debugging table ${tableName}:`, error);
+  }
+}
+
+// Debug function to check IndexedDB
+export async function debugIndexedDB() {
+  try {
+    console.log('🔍 Debugging IndexedDB...');
+    
+    // Check if IndexedDB is available
+    if (!window.indexedDB) {
+      console.log('❌ IndexedDB not available');
+      return;
+    }
+    
+    // Open the database (no version specified to open current version)
+    const request = window.indexedDB.open('AISheetsDB');
+    
+    request.onsuccess = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      console.log('✅ IndexedDB opened successfully');
+      
+      // List all object stores
+      const objectStoreNames = Array.from(db.objectStoreNames);
+      console.log('📊 Object stores:', objectStoreNames);
+      
+      // Check sheets store (current schema)
+      if (objectStoreNames.includes('sheets')) {
+        const transaction = db.transaction(['sheets'], 'readonly');
+        const store = transaction.objectStore('sheets');
+        const countRequest = store.count();
+        
+        countRequest.onsuccess = () => {
+          console.log(`📄 Sheets in IndexedDB: ${countRequest.result} sheets`);
+          
+          // Get all sheets
+          const getAllRequest = store.getAll();
+          getAllRequest.onsuccess = () => {
+            console.log('📋 Sheets:', getAllRequest.result.map(sheet => ({
+              id: sheet.id,
+              name: sheet.name,
+              csvDataSize: sheet.csvData?.length || 0,
+              lastModified: new Date(sheet.lastModified).toISOString(),
+              isActive: sheet.isActive
+            })));
+          };
+        };
+      }
+      
+      // Also check legacy csvFiles store if it exists
+      if (objectStoreNames.includes('csvFiles')) {
+        const transaction = db.transaction(['csvFiles'], 'readonly');
+        const store = transaction.objectStore('csvFiles');
+        const countRequest = store.count();
+        
+        countRequest.onsuccess = () => {
+          console.log(`📄 Legacy CSV files in IndexedDB: ${countRequest.result} files`);
+          
+          if (countRequest.result > 0) {
+            const getAllRequest = store.getAll();
+            getAllRequest.onsuccess = () => {
+              console.log('📋 Legacy CSV files:', getAllRequest.result.map(file => ({
+                id: file.id,
+                name: file.name,
+                size: file.data?.length || 0,
+                lastModified: new Date(file.lastModified)
+              })));
+            };
+          }
+        };
+      }
+      
+      db.close();
+    };
+    
+    request.onerror = (event) => {
+      console.error('❌ Error opening IndexedDB:', event);
+    };
+  } catch (error) {
+    console.error('❌ Error debugging IndexedDB:', error);
+  }
 }
 
 /**
@@ -249,7 +413,7 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
       const testConn = await window.duckDB.connect();
       try {
         // Execute SQL to disable logging if possible
-        await testConn.query('SET logging_level = 0');
+        await testConn.query('SET logging_level = "ERROR"');
         await testConn.query('SET enable_progress_bar = false');
         console.log('DuckDB connection test successful');
       } catch (logError) {
@@ -368,7 +532,7 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
           console.log(`Attempting to create table with unique name: "${uniqueTableName}"`);
           
           try {
-            const uniqueCreateSQL = `CREATE TABLE "${uniqueTableName}" (${columns});`;
+            const uniqueCreateSQL = `CREATE TABLE "${uniqueTableName}" (${schema.columns.map(col => `"${col.name}" ${col.type}`).join(', ')});`;
             await conn.query(uniqueCreateSQL);
             console.log(`Table created with unique name: "${uniqueTableName}"`);
             
@@ -597,6 +761,12 @@ DATA TYPE INFORMATION:
 - VARCHAR columns: Store text values
 - For aggregations (SUM, AVG, MAX, MIN) on INTEGER/DOUBLE columns, use the column directly
 - The data is already cleaned and stored with proper types in DuckDB
+
+HEADER ROW INFORMATION:
+- Row 1 contains the column headers (${aiSchema.columns.length} columns)
+- Headers are clearly defined and should be used in SQL queries
+- Column names are: ${aiSchema.columns.map(col => `"${col.name}"`).join(', ')}
+- These are the actual column names to use in SQL queries, NOT generic names like "Column A"
 
 Sample Data:
 `;

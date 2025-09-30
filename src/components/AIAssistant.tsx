@@ -510,21 +510,120 @@ ${sampleRows.join('\n')}`;
   // Schema updates are now handled by parent component
 
   // Helper function to get current sheet's table name
-  const getCurrentTableName = () => {
+  const getCurrentTableName = async () => {
     if (!activeSheet) return 'sheet_data';
-    const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
-    return cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
+    
+    try {
+      // First, try to find the actual table name in DuckDB
+      const { queryDuckDB } = await import('../lib/utils');
+      const tablesResult = await queryDuckDB('SHOW TABLES');
+      console.log('🔍 Raw SHOW TABLES result:', tablesResult);
+      
+      const existingTables = tablesResult
+        .filter(row => {
+          console.log('🔍 Filtering table row:', row, 'Type:', typeof row, 'IsArray:', Array.isArray(row));
+          if (row && typeof row === 'object' && !Array.isArray(row)) {
+            // Handle Proxy(StructRow) objects
+            const keys = Object.keys(row);
+            console.log('🔍 StructRow keys:', keys);
+            if (keys.length > 0) {
+              const tableName = row[keys[0]];
+              console.log('🔍 Extracted table name from StructRow:', tableName);
+              return tableName && typeof tableName === 'string';
+            }
+          }
+          return row && Array.isArray(row) && row.length > 0;
+        })
+        .map(row => {
+          if (row && typeof row === 'object' && !Array.isArray(row)) {
+            // Handle Proxy(StructRow) objects
+            const keys = Object.keys(row);
+            return keys.length > 0 ? row[keys[0]] : null;
+          }
+          return Array.isArray(row) ? row[0] : null;
+        })
+        .filter(tableName => tableName && typeof tableName === 'string');
+      
+      console.log('🔍 Available tables in DuckDB:', existingTables);
+      console.log('🔍 Looking for table for sheet:', activeSheet.name, '(ID:', activeSheet.id, ')');
+      
+      // Look for tables that match the sheet name or any sheet ID pattern
+      const sheetNamePattern = activeSheet.name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+      const currentIdPattern = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+      
+      // Try to find a table that matches this sheet
+      for (const table of existingTables) {
+        // Skip undefined or null tables
+        if (!table || typeof table !== 'string') {
+          console.log('⚠️ Skipping invalid table entry:', table);
+          continue;
+        }
+        
+        // Check if table name contains sheet name or matches any sheet pattern
+        if (table.toLowerCase().includes(sheetNamePattern) || 
+            (table.includes('sheet_') && table.includes(activeSheet.id.split('-')[1]))) {
+          console.log(`✅ Found matching table: ${table} for sheet: ${activeSheet.name}`);
+          return table;
+        }
+      }
+      
+      // If no match found, look for any sheet table (fallback)
+      const sheetTables = existingTables.filter(table => table && typeof table === 'string' && table.startsWith('sheet_'));
+      if (sheetTables.length > 0) {
+        console.log(`⚠️ No exact match found, using first available sheet table: ${sheetTables[0]}`);
+        return sheetTables[0];
+      }
+      
+      // Last resort: generate new table name
+      const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+      const tableName = cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
+      console.log(`⚠️ No existing tables found, generating new table name: ${tableName}`);
+      return tableName;
+      
+    } catch (error) {
+      console.error('❌ Error finding table name, falling back to ID-based name:', error);
+      // Fallback to old method
+      const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
+      const tableName = cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
+      return tableName;
+    }
   };
 
   // Refresh spreadsheet data from DuckDB after SQL updates
   const refreshSpreadsheetFromDuckDB = async () => {
     try {
-  
+      console.log('🔄 refreshSpreadsheetFromDuckDB called');
       
       // Query all data from DuckDB
       const { queryDuckDB } = await import('../lib/utils');
-      const tableName = getCurrentTableName();
+      const tableName = await getCurrentTableName();
+      console.log('🔍 Querying table:', tableName);
+      console.log('🔍 Active sheet info:', {
+        id: activeSheet?.id,
+        name: activeSheet?.name,
+        tableName: tableName
+      });
+      
+      // First check if table exists
+      try {
+        const tablesResult = await queryDuckDB('SHOW TABLES');
+        const existingTables = tablesResult.map(row => row[0]);
+        console.log('🔍 Existing tables in DuckDB:', existingTables);
+        console.log('🔍 Looking for table:', tableName);
+        console.log('🔍 Table exists?', existingTables.includes(tableName));
+        
+        if (!existingTables.includes(tableName)) {
+          console.error(`❌ Table ${tableName} does not exist in DuckDB`);
+          console.log('💡 Available tables:', existingTables);
+          return;
+        }
+      } catch (error) {
+        console.error('❌ Error checking tables:', error);
+        return;
+      }
+
       const result = await queryDuckDB(`SELECT * FROM "${tableName}"`);
+      console.log('📊 DuckDB query result:', result.length, 'rows');
       
       if (result && result.length > 0) {
         // Convert DuckDB result to spreadsheet format
@@ -551,23 +650,31 @@ ${sampleRows.join('\n')}`;
         
         // Update the spreadsheet with new data
         if (activeSheet) {
+          console.log('📝 Updating spreadsheet with', Object.keys(updatedCells).length, 'cells');
+          
           // Use bulkUpdateCells to update all cells at once
           const updates = Object.entries(updatedCells).map(([cellId, cell]) => ({
             cellId,
             value: cell.value
           }));
           
+          console.log('🔍 Sample updates:', updates.slice(0, 3));
+          
           // Update the spreadsheet state
           if (bulkUpdateCells) {
+            console.log('✅ Using bulkUpdateCells');
             bulkUpdateCells(updates);
             addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
           } else {
+            console.log('⚠️ Using fallback updateCell method');
             // Fallback: update cells one by one
             Object.entries(updatedCells).forEach(([cellId, cell]) => {
               updateCell(cellId, cell.value);
             });
             addMessage('ai', `🔄 Spreadsheet refreshed with updated data from database.`);
           }
+        } else {
+          console.log('⚠️ No active sheet found for refresh');
         }
       }
     } catch (error) {
@@ -645,15 +752,28 @@ ${sampleRows.join('\n')}`;
 
       // First, get AI1 reasoning and simplified question
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
+      
+      // Create enhanced selection context with explicit column name instructions
+      let enhancedSelectionContext = null;
+      if (selectionContext) {
+        console.log('🎯 Selection context detected:', selectionContext);
+        const formattedContext = formatSelectionContextForAI(selectionContext);
+        console.log('📝 Formatted selection context for AI:', formattedContext);
+        enhancedSelectionContext = `${formattedContext}\n\n🚨 IMPORTANT: When generating SQL queries, use the ACTUAL column names from the selection context above, NOT generic schema names like "Column A", "Column B", etc. The user has selected specific cells with real column names - use those names in your SQL queries.`;
+        console.log('🚨 Enhanced selection context:', enhancedSelectionContext);
+      } else {
+        console.log('⚠️ No selection context - AI will use generic schema column names');
+      }
+      
       const ai1Response = await axios.post(`${backendUrl}/api/ai/ai1`, {
           message: userMessage,
         schema,
         userEmail: user?.email || '',
-        selectionContext: selectionContext ? formatSelectionContextForAI(selectionContext) : null,
+        selectionContext: enhancedSelectionContext,
         sheetInfo: {
           sheetName: activeSheet.name,
           sheetId: activeSheet.id,
-          tableName: getCurrentTableName(),
+          tableName: await getCurrentTableName(),
           totalRows: activeSheet.rowCount - 1,
           totalColumns: activeSheet.colCount,
           columnAnalysis: [], // Will be derived from schema
@@ -666,6 +786,15 @@ ${sampleRows.join('\n')}`;
 
       if (ai1Response.data.error) {
         addMessage('ai', `❌ Error: ${ai1Response.data.error}`);
+        return;
+      }
+
+      // Check if AI couldn't derive context
+      if (ai1Response.data.response_to_user && 
+          (ai1Response.data.response_to_user.includes('Unable to fulfill the request') ||
+           ai1Response.data.response_to_user.includes('context lacks the information'))) {
+        addMessage('ai', `⚠️ I'm having trouble understanding your data structure. Please ensure your headers are clearly defined in row 1 and try asking me to "show me the data" or "what columns do we have?" first.`);
+        setIsLoading(false);
         return;
       }
 
@@ -700,7 +829,7 @@ ${sampleRows.join('\n')}`;
         sheetInfo: {
           sheetName: activeSheet.name,
           sheetId: activeSheet.id,
-          tableName: getCurrentTableName(),
+          tableName: await getCurrentTableName(),
           totalRows: activeSheet.rowCount - 1,
           totalColumns: activeSheet.colCount,
           columnAnalysis: [], // Will be derived from schema
@@ -713,6 +842,15 @@ ${sampleRows.join('\n')}`;
 
       if (ai2Response.data.error) {
         addMessage('ai', `❌ Error: ${ai2Response.data.error}`);
+        return;
+      }
+
+      // Check if AI2 couldn't derive context
+      if (ai2Response.data.ai2_generated_code && 
+          (ai2Response.data.ai2_generated_code.includes('Unable to fulfill the request') ||
+           ai2Response.data.ai2_generated_code.includes('context lacks the information'))) {
+        addMessage('ai', `⚠️ I'm having trouble understanding your data structure. Please ensure your headers are clearly defined in row 1 and try asking me to "show me the data" or "what columns do we have?" first.`);
+        setIsLoading(false);
         return;
       }
 
@@ -857,8 +995,30 @@ ${sampleRows.join('\n')}`;
         });
 
         if (createAIUpdates) {
+          // Import and use the AI diff logger
+          import('@/lib/aiChangeLogger').then(({ logAIDiff }) => {
+            // Convert aiUpdates to the format expected by logAIDiff
+            const diffUpdates = aiUpdates.map(update => ({
+              cellId: update.cellId,
+              value: update.aiValue
+            }));
+            
+            logAIDiff(diffUpdates, (cellId) => {
+              // Get previous value from the current sheet
+              const cell = activeSheet?.cells[cellId];
+              return cell?.value;
+            }, activeSheet?.name || activeSheet?.id || 'unknown');
+          });
+          
           createAIUpdates(aiUpdates);
           addMessage('ai', `Updated ${aiUpdates.length} cell${aiUpdates.length !== 1 ? 's' : ''}. Hover over colored cells to see the changes.`);
+          
+          // Refresh spreadsheet data from DuckDB to sync UI with database
+          try {
+            await refreshSpreadsheetFromDuckDB();
+          } catch (error) {
+            console.error('Error refreshing spreadsheet after AI update:', error);
+          }
         } else {
           // Fallback to direct updates if AI update system is not available
           let applied = 0;
@@ -940,86 +1100,103 @@ ${sampleRows.join('\n')}`;
         const result = await queryDuckDB(sqlQuery);
         
         if (result && result.length > 0) {
-          addMessage('ai', `✅ SQL executed successfully! Modified ${result.length} rows.`);
-          
-          // Create AI updates for the cells that were modified by SQL
+          addMessage('ai', `✅ SQL executed successfully! Modified ${result.length} row${result.length !== 1 ? 's' : ''}.`);
+
+          // Create AI updates for only the cells actually affected by this SQL
           if (createAIUpdates && activeSheet) {
-            // For SQL updates, we need to identify which cells actually changed
-            // We'll refresh the data first, then compare to find the changed cells
             try {
-              // Refresh spreadsheet data from DuckDB to get the updated values
-              const { queryDuckDB } = await import('../lib/utils');
-              const tableName = getCurrentTableName();
-              const updatedData = await queryDuckDB(`SELECT * FROM "${tableName}"`);
-              
-              if (updatedData && updatedData.length > 0) {
-                // Convert DuckDB result to spreadsheet format to compare
-                const updatedCells: Record<string, { value: string | number }> = {};
-                
-                // Get headers from the first row
-                const headers = Object.keys(updatedData[0]);
-                
-                // First, preserve the header row (row 1)
-                headers.forEach((header: string, colIndex: number) => {
-                  const colLetter = String.fromCharCode(65 + colIndex);
-                  const cellId = `${colLetter}1`;
-                  updatedCells[cellId] = { value: header };
-                });
-                
-                // Then process data rows (starting from row 2)
-                updatedData.forEach((row: any, rowIndex: number) => {
-                  headers.forEach((header: string, colIndex: number) => {
-                    const colLetter = String.fromCharCode(65 + colIndex);
-                    const cellId = `${colLetter}${rowIndex + 2}`; // Start from row 2 to preserve headers
-                    updatedCells[cellId] = { value: row[header] || '' };
-                  });
-                });
-                
-                // Now compare current cells with updated cells to find changes
-                const currentCells = activeSheet.cells;
-                const changedCells: any[] = [];
-                
-                console.log('🔍 Comparing SQL changes...');
-                console.log('Current cells count:', Object.keys(currentCells).length);
-                console.log('Updated cells count:', Object.keys(updatedCells).length);
-                
-                Object.keys(updatedCells).forEach(cellId => {
-                  const currentCell = currentCells[cellId];
-                  const updatedCell = updatedCells[cellId];
-                  
-                  if (currentCell && updatedCell) {
-                    const currentValue = currentCell.value;
-                    const updatedValue = updatedCell.value;
-                    
-                    // Check if the value actually changed
-                    if (currentValue !== updatedValue) {
-                      console.log('🔄 Found changed cell:', cellId, 'from:', currentValue, 'to:', updatedValue);
-                      changedCells.push({
-                        cellId,
-                        originalValue: currentValue,
-                        aiValue: updatedValue,
-                        timestamp: Date.now(),
-                        reasoning: `SQL update - ${result.length} rows modified`
-                      });
+              const currentCells = activeSheet.cells;
+              const changedCells: any[] = [];
+
+              // Build headers from row 1 of the spreadsheet
+              const headers: string[] = [];
+              for (let col = 0; col < activeSheet.colCount; col++) {
+                const colLetter = String.fromCharCode(65 + col);
+                const headerCellId = `${colLetter}1`;
+                const headerValue = currentCells[headerCellId]?.value;
+                headers.push(headerValue !== undefined && headerValue !== null ? String(headerValue) : colLetter);
+              }
+
+              // Parse SQL parts
+              const setMatch = sqlQuery.match(/SET\s+"([^"]+)"\s*=\s*'([^']*)'/i);
+              const whereMatch = sqlQuery.match(/WHERE\s+"([^"]+)"\s*=\s*'([^']*)'/i);
+              const updatedColumn = setMatch?.[1];
+              const newValue = setMatch?.[2] ?? '';
+              const whereColumn = whereMatch?.[1];
+              const whereValue = whereMatch?.[2] ?? '';
+
+              console.log('🔍 Parsed SQL:', { updatedColumn, newValue, whereColumn, whereValue });
+
+              if (updatedColumn && whereColumn) {
+                const updatedColIndex = headers.indexOf(updatedColumn);
+                const whereColIndex = headers.indexOf(whereColumn);
+
+                if (updatedColIndex !== -1 && whereColIndex !== -1) {
+                  const updatedColLetter = String.fromCharCode(65 + updatedColIndex);
+                  const whereColLetter = String.fromCharCode(65 + whereColIndex);
+
+                  // Find all target rows that match the WHERE condition in the sheet
+                  for (let row = 2; row <= activeSheet.rowCount; row++) {
+                    const whereCellId = `${whereColLetter}${row}`;
+                    const whereCell = currentCells[whereCellId];
+                    const whereCellVal = whereCell?.value;
+
+                    if (String(whereCellVal) === String(whereValue)) {
+                      const targetCellId = `${updatedColLetter}${row}`;
+                      const originalValue = currentCells[targetCellId]?.value;
+
+                      if (String(originalValue) !== String(newValue)) {
+                        changedCells.push({
+                          cellId: targetCellId,
+                          originalValue,
+                          aiValue: newValue,
+                          timestamp: Date.now(),
+                          reasoning: 'SQL update'
+                        });
+                      }
                     }
                   }
-                });
-                
-                console.log('📊 Total changed cells found:', changedCells.length);
-                
-                if (changedCells.length > 0) {
-                  createAIUpdates(changedCells);
-                  addMessage('ai', `Created ${changedCells.length} AI updates for cells that actually changed. Hover over colored cells to see the changes.`);
+
+                  console.log('📊 Total changed cells (precomputed):', changedCells.length);
+
+                  if (changedCells.length > 0) {
+                    // Log diffs
+                    import('@/lib/aiChangeLogger').then(({ logAIDiff }) => {
+                      const diffUpdates = changedCells.map(update => ({
+                        cellId: update.cellId,
+                        value: update.aiValue
+                      }));
+                      logAIDiff(diffUpdates, (cellId) => {
+                        const cell = activeSheet?.cells[cellId];
+                        return cell?.value;
+                      }, activeSheet?.name || activeSheet?.id || 'unknown');
+                    });
+
+                    // Create AI updates
+                    createAIUpdates(changedCells);
+                    addMessage('ai', `Created ${changedCells.length} AI update${changedCells.length !== 1 ? 's' : ''} for cells that actually changed.`);
+                    
+                    // Refresh spreadsheet data from DuckDB to sync UI with database
+                    try {
+                      await refreshSpreadsheetFromDuckDB();
+                    } catch (error) {
+                      console.error('Error refreshing spreadsheet after SQL update:', error);
+                    }
+                  } else {
+                    addMessage('ai', 'SQL executed, but no actual cell values needed changing.');
+                  }
                 } else {
-                  addMessage('ai', `SQL executed successfully, but no visible changes were detected in the spreadsheet.`);
+                  console.warn('⚠️ Column not found in headers for SQL change mapping');
                 }
+              } else {
+                console.warn('⚠️ Failed to parse SET/WHERE from SQL for targeted diff');
               }
             } catch (error) {
-              console.error('Error comparing SQL changes:', error);
-              addMessage('ai', `SQL executed successfully, but couldn't identify specific cell changes.`);
+              console.error('Error computing SQL diffs:', error);
+              addMessage('ai', 'SQL executed, but failed to compute precise diffs.');
             }
           }
-          
+
           // Schema updates are now handled by parent component
         } else {
           addMessage('ai', `✅ SQL executed successfully, but no rows were modified.`);
@@ -1208,23 +1385,32 @@ ${sampleRows.join('\n')}`;
       console.log(`🎯 Executing query for ACTIVE SHEET: ${activeSheet?.name} (${activeSheet?.id})`);
 
       const { queryDuckDB } = await import('../lib/utils');
+      console.log('🔍 About to execute SQL query:', sql);
+      console.log('🔍 Table name from getCurrentTableName():', getCurrentTableName());
+      
       const result = await queryDuckDB(sql);
+      console.log('🔍 SQL query result:', result);
+      console.log('🔍 Result type:', typeof result);
+      console.log('🔍 Result length:', result?.length);
 
       if (requiresUpdate) {
-        // Update the sheet data with the modified data
-        if (result && result.length > 0) {
-          // Update the active sheet with the new data
-          // This would need to be implemented based on your sheet update logic
-          console.log('Sheet updated with new data:', result);
-          
-          // Schema updates are now handled by parent component
-          
-          if (!options?.suppressOutput) {
+        // For UPDATE queries, result might be empty but the update still succeeded
+        console.log('🔄 SQL UPDATE query executed, refreshing spreadsheet...');
+        
+        // Always refresh the spreadsheet after an UPDATE query
+        try {
+          console.log('🔄 Refreshing spreadsheet after SQL update...');
+          await refreshSpreadsheetFromDuckDB();
+          console.log('✅ Spreadsheet refreshed successfully');
+        } catch (error) {
+          console.error('❌ Error refreshing spreadsheet after SQL update:', error);
+        }
+        
+        if (!options?.suppressOutput) {
+          if (result && result.length > 0) {
             addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);
-          }
-        } else {
-          if (!options?.suppressOutput) {
-            addMessage('ai', `✅ Query executed successfully, but no rows were modified.`);
+          } else {
+            addMessage('ai', `✅ Sheet updated successfully! Changes have been applied.`);
           }
         }
       } else {

@@ -20,10 +20,10 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
       throw new Error('No active sheet data available');
     }
 
-    // Don't process if we've already failed for this sheet
+    // Reset processing failed state when switching to a new sheet
     if (hasProcessingFailed) {
-      console.log('⚠️ Skipping DuckDB processing - previous attempt failed');
-      return;
+      console.log('🔄 Resetting processing failed state for new sheet');
+      setHasProcessingFailed(false);
     }
 
     console.log('=== ENSURING SHEET LOADED IN DUCKDB ===');
@@ -41,7 +41,12 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
     // Create sheet-specific table name (avoid double "sheet_" prefix)
     const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
     const tableName = cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
-    console.log(`Using table name: ${tableName} for sheet: ${activeSheet.name} (original ID: ${activeSheet.id})`);
+    console.log(`🔍 Table name generation:`, {
+      originalId: activeSheet.id,
+      cleanId: cleanId,
+      finalTableName: tableName,
+      sheetName: activeSheet.name
+    });
 
     // Check if this sheet's table already exists in DuckDB
     if (window.duckDB) {
@@ -137,6 +142,12 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
 
   // Auto-load sheet into DuckDB when activeSheet changes or CSV is uploaded
   useEffect(() => {
+    // Reset processing failed state when activeSheet changes
+    if (hasProcessingFailed) {
+      console.log('🔄 Resetting processing failed state for new sheet');
+      setHasProcessingFailed(false);
+    }
+    
     // Prevent multiple simultaneous processing
     if (processingRef.current) {
       console.log('DuckDB already processing, skipping...');
@@ -242,6 +253,10 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
               console.error('Error loading sheet into DuckDB:', error);
               setHasProcessingFailed(true);
               
+              // Set processing states to false to prevent infinite loops
+              setIsDuckDBProcessing(false);
+              setIsSchemaReady(false);
+              
               // Still reset the CSV processing state even if DuckDB failed
               if (csvUploaded) {
                 setTimeout(() => {
@@ -279,6 +294,16 @@ export const useDuckDBMapping = ({ activeSheet, csvUploaded, resetCsvUploadFlag 
       setIsSchemaReady(false);
     }
   }, [activeSheet?.id, activeSheet?.name, csvUploaded, resetCsvUploadFlag]);
+
+  // Reset schema and processing state when activeSheet changes
+  useEffect(() => {
+    if (activeSheet) {
+      console.log('🔄 Active sheet changed, resetting schema and processing state');
+      setCurrentSchema(null);
+      setIsSchemaReady(false);
+      setHasProcessingFailed(false);
+    }
+  }, [activeSheet?.id]);
 
   return {
     isDuckDBProcessing,

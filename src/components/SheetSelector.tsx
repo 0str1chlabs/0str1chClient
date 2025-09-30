@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { FileSpreadsheet, FileText, Plus, X, Calendar, HardDrive, FolderOpen } from '@/lib/icons';
 
 interface SheetInfo {
   fileName: string;
+  originalFileName?: string;
   lastModified: string;
   size?: number;
   fileId?: string;
@@ -42,128 +44,157 @@ export const SheetSelector: React.FC<SheetSelectorProps> = ({
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        return 'Unknown date';
+      }
+      return date.toLocaleDateString();
+    } catch (error) {
+      return 'Unknown date';
+    }
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden">
-        <div className="p-6 border-b">
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[85vh] overflow-hidden">
+        {/* Header */}
+        <div className="p-6 border-b bg-gray-50">
           <div className="flex justify-between items-center">
-            <h2 className="text-xl font-semibold text-gray-900">
-              Add New Sheet
-            </h2>
+            <div className="flex items-center space-x-3">
+              <FolderOpen className="h-6 w-6 text-blue-600" />
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Sheet Library
+                </h2>
+                <p className="text-sm text-gray-600">
+                  {sheets.length > 0 
+                    ? `${sheets.length} sheet${sheets.length !== 1 ? 's' : ''} available in cloud storage`
+                    : 'No sheets found in cloud storage'
+                  }
+                </p>
+              </div>
+            </div>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-2xl"
+              className="text-gray-400 hover:text-gray-600 transition-colors"
             >
-              ×
+              <X className="h-6 w-6" />
             </button>
           </div>
-          <p className="text-gray-600 mt-2">
-            {sheets.length > 0 
-              ? `Found ${sheets.length} sheet${sheets.length !== 1 ? 's' : ''} in your cloud storage. Choose which one to load or create a blank sheet.`
-              : 'Create a new blank sheet to get started.'
-            }
-          </p>
         </div>
 
+        {/* File System List - Vertical Layout */}
         <div className="p-6 max-h-96 overflow-y-auto">
           <div className="space-y-3">
-            {/* Blank Sheet Option */}
+            {/* Create New Sheet Option */}
             <div
-              className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+              className={`group relative flex items-center p-4 border-2 border-dashed rounded-lg cursor-pointer transition-all duration-200 ${
                 selectedSheet === 'blank'
-                  ? 'border-green-500 bg-green-50'
-                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  ? 'border-green-500 bg-green-50 shadow-md'
+                  : 'border-gray-300 hover:border-green-400 hover:bg-green-50'
               }`}
               onClick={() => setSelectedSheet('blank')}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                    <span className="text-green-600 text-lg">📄</span>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-medium text-gray-900">
-                      Create Blank Sheet
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                      Start with a new empty spreadsheet
-                    </p>
-                  </div>
-                </div>
-                <div className="ml-4">
-                  <input
-                    type="radio"
-                    checked={selectedSheet === 'blank'}
-                    onChange={() => setSelectedSheet('blank')}
-                    className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300"
-                  />
-                </div>
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mr-4 group-hover:bg-green-200 transition-colors">
+                <Plus className="h-6 w-6 text-green-600" />
               </div>
+              <div className="flex-1">
+                <h3 className="font-medium text-gray-900 text-base mb-1">
+                  Create New Sheet
+                </h3>
+                <p className="text-sm text-gray-500">
+                  Start with a blank spreadsheet
+                </p>
+              </div>
+              {selectedSheet === 'blank' && (
+                <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+                  <div className="w-2 h-2 bg-white rounded-full"></div>
+                </div>
+              )}
             </div>
 
             {/* Existing Sheets */}
             {sheets.map((sheet, index) => (
               <div
                 key={index}
-                className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                className={`group relative flex items-center p-4 border rounded-lg cursor-pointer transition-all duration-200 ${
                   selectedSheet === sheet.fileName
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    ? 'border-blue-500 bg-blue-50 shadow-md'
+                    : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
                 }`}
                 onClick={() => setSelectedSheet(sheet.fileName)}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <span className="text-blue-600 text-lg">📊</span>
+                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mr-4 group-hover:bg-blue-200 transition-colors">
+                  <FileSpreadsheet className="h-6 w-6 text-blue-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-gray-900 text-base mb-1 truncate" title={sheet.fileName.replace('.csv.gz', '').replace('.csv', '')}>
+                    {sheet.fileName.replace('.csv.gz', '').replace('.csv', '')}
+                  </h3>
+                  <div className="flex items-center space-x-4 text-sm text-gray-500">
+                    <div className="flex items-center space-x-1">
+                      <Calendar className="h-4 w-4" />
+                      <span>{formatDate(sheet.lastModified)}</span>
                     </div>
-                    <div className="flex-1">
-                      <h3 className="font-medium text-gray-900 truncate">
-                        {sheet.fileName.replace('.csv.gz', '').replace('.csv', '')}
-                      </h3>
-                      <div className="flex items-center space-x-4 mt-1 text-sm text-gray-500">
-                        <span>📅 {formatDate(sheet.lastModified)}</span>
-                        {sheet.size && (
-                          <span>📊 {formatFileSize(sheet.size)}</span>
-                        )}
+                    {sheet.size && (
+                      <div className="flex items-center space-x-1">
+                        <HardDrive className="h-4 w-4" />
+                        <span>{formatFileSize(sheet.size)}</span>
                       </div>
-                    </div>
-                  </div>
-                  <div className="ml-4">
-                    <input
-                      type="radio"
-                      checked={selectedSheet === sheet.fileName}
-                      onChange={() => setSelectedSheet(sheet.fileName)}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    />
+                    )}
                   </div>
                 </div>
+                {selectedSheet === sheet.fileName && (
+                  <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                    <div className="w-2 h-2 bg-white rounded-full"></div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
+
+          {/* Empty State */}
+          {sheets.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                <FileText className="h-8 w-8 text-gray-400" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No Sheets Found</h3>
+              <p className="text-gray-500 mb-4">Create a new blank sheet to get started</p>
+            </div>
+          )}
         </div>
 
-        <div className="p-6 border-t bg-gray-50 flex justify-end space-x-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSelect}
-            disabled={!selectedSheet}
-            className={`px-4 py-2 text-white rounded-md focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-              selectedSheet === 'blank'
-                ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
-                : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
-            }`}
-          >
-            {selectedSheet === 'blank' ? 'Create Blank Sheet' : 'Load Selected Sheet'}
-          </button>
+        {/* Footer Actions */}
+        <div className="p-6 border-t bg-gray-50 flex justify-between items-center">
+          <div className="text-sm text-gray-500">
+            {selectedSheet === 'blank' 
+              ? 'Ready to create a new blank sheet'
+              : selectedSheet 
+                ? `Selected: ${selectedSheet.replace('.csv.gz', '').replace('.csv', '')}`
+                : 'Select a sheet to continue'
+            }
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSelect}
+              disabled={!selectedSheet}
+              className={`px-6 py-2 text-white rounded-md focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+                selectedSheet === 'blank'
+                  ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                  : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
+              }`}
+            >
+              {selectedSheet === 'blank' ? 'Create Sheet' : 'Load Sheet'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -62,8 +62,32 @@ function generateFallbackSchema(
   columnSamples: { [key: string]: any[] },
   totalRows: number
 ): AISchemaResponse {
-  const columns: ColumnSchema[] = headers.map(header => {
-    const samples = columnSamples[header] || [];
+  // Clean and validate header names
+  const cleanedHeaders = headers.map((header, index) => {
+    // If header is empty, undefined, or just whitespace, create a meaningful name
+    if (!header || header.trim() === '' || header === 'undefined') {
+      return `Column_${String.fromCharCode(65 + index)}`;
+    }
+    
+    // Clean the header name for SQL compatibility
+    const cleaned = header.toString().trim();
+    
+    // If the cleaned name is still empty or just whitespace, use fallback
+    if (cleaned === '') {
+      return `Column_${String.fromCharCode(65 + index)}`;
+    }
+    
+    return cleaned;
+  });
+
+  console.log('🧹 Header cleaning results:', {
+    original: headers,
+    cleaned: cleanedHeaders
+  });
+
+  const columns: ColumnSchema[] = cleanedHeaders.map((header, index) => {
+    const originalHeader = headers[index];
+    const samples = columnSamples[originalHeader] || [];
     const type = inferDataTypeFallback(samples);
     
     return {

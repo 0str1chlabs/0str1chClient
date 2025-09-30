@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authService, User } from './AuthService';
+import { backblazeSyncManager } from '@/lib/backblazeSyncManager';
 
 interface AuthContextType {
   user: User | null;
@@ -23,6 +24,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = (userData: User) => {
     setUser(userData);
+    
+    // Notify sync manager that user logged in
+    // This will check for pending changes and schedule sync if needed
+    setTimeout(() => {
+      backblazeSyncManager.onUserLogin();
+    }, 1000); // Small delay to ensure auth token is set
   };
 
   const logout = async () => {
@@ -75,6 +82,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const verification = await authService.verifyToken();
           if (verification.valid && verification.user) {
             setUser(verification.user);
+            // Notify sync manager about successful auth restoration
+            setTimeout(() => {
+              backblazeSyncManager.onUserLogin();
+            }, 1000);
           } else {
             // Token is invalid, try to refresh
             const refreshed = await authService.refreshToken();
