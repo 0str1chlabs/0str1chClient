@@ -27,6 +27,10 @@ export default defineConfig(({ mode }) => ({
     // Expose all VITE_ prefixed environment variables
     'process.env': process.env
   },
+  // Optionally strip console/debugger in production builds via env flag
+  esbuild: (mode === 'production' && process.env.VITE_STRIP_CONSOLE === 'true') 
+    ? { drop: ['console', 'debugger'] } 
+    : undefined,
   // Environment variable handling
   envPrefix: 'VITE_'
 }));

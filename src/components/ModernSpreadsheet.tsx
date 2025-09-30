@@ -986,10 +986,13 @@ export const ModernSpreadsheet = ({
 
   // Calculate visible rows for virtual scrolling with performance optimization
   const visibleRange = useMemo(() => {
+    const MAX_COLUMNS = Number(import.meta.env.VITE_MAX_COLUMNS || 512);
     const viewportHeight = 800; // Approximate viewport height
     const viewportWidth = dimensions.width;
     const rowHeight = ROW_HEIGHT;
     const colWidth = 128; // w-32 = 128px
+    // Clamp colCount for rendering only; data integrity preserved in DuckDB
+    const effectiveColCount = Math.min(sheet.colCount, MAX_COLUMNS);
     
     const range = getVisibleRange(
       scrollTop,
@@ -999,7 +1002,7 @@ export const ModernSpreadsheet = ({
       rowHeight,
       colWidth,
       sheet.rowCount,
-      sheet.colCount,
+      effectiveColCount,
       VISIBLE_ROWS_BUFFER
     );
     

@@ -463,7 +463,19 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
     }
     
     // Prepare SQL table with AI-generated schema
-    const header = data[0];
+    const MAX_COLUMNS = Number(import.meta.env.VITE_MAX_COLUMNS || 512);
+    let header = data[0];
+    // Cap excessive columns to avoid performance and engine limits
+    if (header.length > MAX_COLUMNS) {
+      header = header.slice(0, MAX_COLUMNS);
+      // Also cap data rows to the same number of columns
+      data = data.map((row, idx) => {
+        if (!Array.isArray(row)) return row;
+        // Ensure row has at least header length to slice safely
+        return row.slice(0, header.length);
+      });
+      console.warn(`Capped columns to ${MAX_COLUMNS} for performance`);
+    }
     console.log('Original header:', header);
     
     // Clean and validate header names
@@ -500,7 +512,7 @@ export async function loadSheetToDuckDB(tableName: string, data: string[][]) {
       console.warn('AI schema generation failed, using fallback:', error);
       // Fallback to VARCHAR for all columns
       schema = {
-        columns: cleanHeader.map(name => ({
+        columns: cleanHeader.map((name, idx) => ({
           name,
           type: 'VARCHAR' as const,
           nullable: true,

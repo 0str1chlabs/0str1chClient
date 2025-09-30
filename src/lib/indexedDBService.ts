@@ -51,7 +51,7 @@ interface SheetChanges {
 
 class IndexedDBService {
   private dbName = 'AISheetsDB';
-  private version = 3; // Increment version to trigger schema update to simplified structure
+  private version = 4; // Increment version to trigger schema update and ensure required stores exist
   private db: IDBDatabase | null = null;
 
   async init(): Promise<void> {
@@ -71,28 +71,39 @@ class IndexedDBService {
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
-        
-        // Delete old complex structure if it exists
-        const oldStores = ['csvFiles', 'sheetData', 'sheetChanges'];
-        oldStores.forEach(storeName => {
-          if (db.objectStoreNames.contains(storeName)) {
-            console.log(`🗑️ Deleting old object store: ${storeName}`);
-            db.deleteObjectStore(storeName);
-          }
-        });
-        
-        // Create simplified single object store for all sheet data
+
+        // Ensure simplified single object store exists
         if (!db.objectStoreNames.contains('sheets')) {
           console.log('📁 Creating simplified single object store: sheets');
           const sheetsStore = db.createObjectStore('sheets', { keyPath: 'id' });
-          
-          // Create indexes for efficient querying
           sheetsStore.createIndex('name', 'name', { unique: false });
           sheetsStore.createIndex('isActive', 'isActive', { unique: false });
           sheetsStore.createIndex('lastModified', 'lastModified', { unique: false });
           sheetsStore.createIndex('uploadDate', 'metadata.uploadDate', { unique: false });
-          
-          console.log('✅ Simplified IndexedDB structure created successfully');
+          console.log('✅ Simplified IndexedDB structure ensured');
+        }
+
+        // Ensure legacy stores exist for backward compatibility with existing code paths
+        if (!db.objectStoreNames.contains('csvFiles')) {
+          console.log('📁 Creating legacy object store: csvFiles');
+          const csvFiles = db.createObjectStore('csvFiles', { keyPath: 'id' });
+          csvFiles.createIndex('name', 'name', { unique: false });
+          csvFiles.createIndex('uploadedAt', 'uploadedAt', { unique: false });
+          csvFiles.createIndex('lastModified', 'lastModified', { unique: false });
+        }
+
+        if (!db.objectStoreNames.contains('sheetData')) {
+          console.log('📁 Creating legacy object store: sheetData');
+          const sheetData = db.createObjectStore('sheetData', { keyPath: 'sheetId' });
+          sheetData.createIndex('sheetName', 'sheetName', { unique: false });
+          sheetData.createIndex('isActive', 'isActive', { unique: false });
+          sheetData.createIndex('lastModified', 'lastModified', { unique: false });
+        }
+
+        if (!db.objectStoreNames.contains('sheetChanges')) {
+          console.log('📁 Creating legacy object store: sheetChanges');
+          const sheetChanges = db.createObjectStore('sheetChanges', { keyPath: 'sheetId' });
+          sheetChanges.createIndex('lastUpdated', 'lastUpdated', { unique: false });
         }
       };
     });

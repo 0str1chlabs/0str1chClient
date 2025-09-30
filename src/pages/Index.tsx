@@ -39,7 +39,7 @@ import { ResearchModal } from '@/components/ResearchModal';
 import { NotificationManager, NotificationProps } from '@/components/NotificationToast';
 import { useAuth } from '@/components/auth/AuthContext';
 import { SheetData } from '@/types/spreadsheet';
-import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain, Search } from '@/lib/icons';
+import { Upload, Plus, X, BarChart3, MessageCircle, ZoomIn, ZoomOut, RotateCcw, LayoutGrid, LoaderCircle, Database, Brain, Search, Download } from '@/lib/icons';
 import { TourButton } from '@/components/TourButton';
 import { useTour } from '@/components/TourProvider';
 import { TourDebug } from '@/components/TourDebug';
@@ -116,6 +116,66 @@ const Index: React.FC = () => {
   const [forceUpdate, setForceUpdate] = useState(0);
   const [currentSheetFileName, setCurrentSheetFileName] = useState<string>('');
 
+  // Export active sheet to CSV and download
+  const handleExportCSV = useCallback(() => {
+    try {
+      if (!activeSheet) {
+        toast({ title: 'No sheet to export', description: 'Please load or create a sheet first.' });
+        return;
+      }
+
+      const { rowCount, colCount, cells, name } = activeSheet as SheetData;
+
+      const rows: string[][] = [];
+      // Header row from row 1, fallback to A..Z letters when empty
+      const headerRow: string[] = [];
+      for (let col = 0; col < colCount; col++) {
+        const colLetter = String.fromCharCode(65 + col);
+        const headerCellId = `${colLetter}1`;
+        const headerCell = cells[headerCellId];
+        const headerValue = (headerCell?.value !== undefined && headerCell?.value !== null && String(headerCell?.value).trim() !== '')
+          ? String(headerCell.value)
+          : colLetter;
+        headerRow.push(headerValue);
+      }
+      rows.push(headerRow);
+
+      // Data rows (2..rowCount). Use AI value when present
+      for (let row = 2; row <= rowCount; row++) {
+        const rowData: string[] = [];
+        for (let col = 0; col < colCount; col++) {
+          const colLetter = String.fromCharCode(65 + col);
+          const cellId = `${colLetter}${row}`;
+          const cell = cells[cellId];
+          const finalValue = (cell && cell.hasAIUpdate && cell.aiValue !== undefined) ? cell.aiValue : cell?.value;
+          const text = finalValue !== undefined && finalValue !== null ? String(finalValue) : '';
+          // Escape CSV field: wrap in quotes and escape existing quotes
+          const escaped = '"' + text.replace(/"/g, '""') + '"';
+          rowData.push(escaped);
+        }
+        // include row if any non-empty cell
+        if (rowData.some(v => v.replace(/^"|"$/g, '').trim() !== '')) {
+          rows.push(rowData);
+        }
+      }
+
+      const csvString = rows.map(r => r.join(',')).join('\n');
+      const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeName = (name || 'sheet').replace(/[^a-z0-9-_]+/gi, '_');
+      a.download = `${safeName}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      toast({ title: 'Exported CSV', description: `Downloaded ${safeName}.csv` });
+    } catch (error) {
+      console.error('Error exporting CSV', error);
+      toast({ title: 'Export failed', description: 'There was a problem exporting the sheet.' });
+    }
+  }, [activeSheet, toast]);
+
   // Notification helper functions
   const addNotification = useCallback((notification: Omit<NotificationProps, 'id'>) => {
     const id = Date.now().toString();
@@ -163,6 +223,44 @@ const Index: React.FC = () => {
   const [hasCheckedBackblazeData, setHasCheckedBackblazeData] = useState(false);
   const [isLoadingSheets, setIsLoadingSheets] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+
+  // Watchdog to auto-clear stuck loaders in dev/prod after a timeout
+  useEffect(() => {
+    const DISABLE_LOADERS = import.meta.env.VITE_DISABLE_LOADERS === 'true';
+    if (DISABLE_LOADERS) {
+      setIsLoadingSheets(false);
+      setIsCheckingBackblazeData(false);
+      setIsProcessingSchema(false);
+      setIsProcessingCSV(false);
+      return;
+    }
+
+    const timeoutMs = Number(import.meta.env.VITE_LOADER_TIMEOUT_MS || 15000);
+    const timer = setTimeout(() => {
+      const anyStuck = isLoadingSheets || isCheckingBackblazeData || isProcessingSchema || isProcessingCSV;
+      if (anyStuck) {
+        setIsLoadingSheets(false);
+        setIsCheckingBackblazeData(false);
+        setIsProcessingSchema(false);
+        setIsProcessingCSV(false);
+      }
+    }, timeoutMs);
+
+    return () => clearTimeout(timer);
+  }, [isLoadingSheets, isCheckingBackblazeData, isProcessingSchema, isProcessingCSV]);
+
+  // Manual global for emergency clearing while debugging
+  useEffect(() => {
+    (window as any).__forceStopLoaders = () => {
+      setIsLoadingSheets(false);
+      setIsCheckingBackblazeData(false);
+      setIsProcessingSchema(false);
+      setIsProcessingCSV(false);
+    };
+    return () => {
+      delete (window as any).__forceStopLoaders;
+    };
+  }, []);
 
   // Sheet cache management (max 3 sheets on client side)
   const [sheetCache, setSheetCache] = useState<Map<string, any>>(new Map());
@@ -4072,6 +4170,18 @@ const Index: React.FC = () => {
               <span className="hidden sm:inline">Upload CSV</span>
               <span className="sm:hidden">CSV</span>
             </Button>
+
+            {/* Export CSV Button */}
+            <Button
+              onClick={handleExportCSV}
+              size="sm"
+              variant="outline"
+              className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"
+            >
+              <Download className="h-3 w-3 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">Export CSV</span>
+              <span className="sm:hidden">Export</span>
+            </Button>
             
             
             {/* Research Button */}
@@ -4381,7 +4491,7 @@ const Index: React.FC = () => {
 
       {/* Professional Loaders - Smart Loading System */}
       <SheetLoader 
-        isLoading={isLoadingSheets || isCheckingBackblazeData} 
+        isLoading={(import.meta.env.VITE_DISABLE_LOADERS !== 'true') && (isLoadingSheets || isCheckingBackblazeData)} 
         message={
           isCheckingBackblazeData 
             ? 'Connecting to cloud storage...' 
@@ -4392,19 +4502,19 @@ const Index: React.FC = () => {
       />
       
       <AILoader 
-        isLoading={isProcessingSchema} 
+        isLoading={(import.meta.env.VITE_DISABLE_LOADERS !== 'true') && isProcessingSchema} 
         showThinking={true}
         message="AI is analyzing your data structure..."
       />
       
       <DataLoader 
-        isLoading={isProcessingCSV} 
+        isLoading={(import.meta.env.VITE_DISABLE_LOADERS !== 'true') && isProcessingCSV} 
         operation="upload" 
         message="Processing and uploading your data..." 
       />
       
       <ResearchLoader 
-        isLoading={showResearchModal} 
+        isLoading={(import.meta.env.VITE_DISABLE_LOADERS !== 'true') && showResearchModal} 
         stage="searching"
         message="Researching data sources..."
       />

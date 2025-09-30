@@ -40,7 +40,8 @@ class BackblazeSyncManager {
   private syncMetadataKey = 'backblaze_sync_metadata';
   private changeTrackingKey = 'backblaze_pending_changes';
   private syncTimeoutId: NodeJS.Timeout | null = null;
-  private syncDelayMs = 8 * 1000; // 8 seconds (for testing, change to 5 * 60 * 1000 for production)
+  // Debounce delay before performing a sync (default 180s); configurable via env
+  private syncDelayMs = Number(import.meta.env.VITE_BACKBLAZE_SYNC_DELAY_MS || 180 * 1000);
   private isSyncing = false;
 
   constructor() {
