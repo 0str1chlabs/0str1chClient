@@ -11,6 +11,7 @@ console.log('PROD:', import.meta.env.PROD);
 console.log('DEV:', import.meta.env.DEV);
 console.log('================================');
 
+
 // Test URL resolution
 const testUrls = () => {
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
