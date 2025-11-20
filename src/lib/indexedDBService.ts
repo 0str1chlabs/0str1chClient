@@ -411,8 +411,42 @@ class IndexedDBService {
       console.log('➕ Creating new sheet with ID:', id);
     }
     
+    // Ensure csvData is stored as a string for reliable reloads
+    let csvDataToStore: any = sheetData.csvData;
+    if (typeof csvDataToStore !== 'string') {
+      try {
+        const obj = csvDataToStore as any;
+        if (obj && obj.cells && obj.rowCount && obj.colCount) {
+          const { cells, rowCount, colCount } = obj;
+          const rows: string[][] = [];
+          const header: string[] = [];
+          for (let c = 0; c < colCount; c++) {
+            const colLabel = String.fromCharCode(65 + c);
+            const v = cells[`${colLabel}1`]?.value || colLabel;
+            header.push(String(v));
+          }
+          rows.push(header);
+          for (let r = 2; r <= rowCount; r++) {
+            const dataRow: string[] = [];
+            for (let c = 0; c < colCount; c++) {
+              const colLabel = String.fromCharCode(65 + c);
+              const v = cells[`${colLabel}${r}`]?.value;
+              dataRow.push(v !== undefined && v !== null ? String(v) : '');
+            }
+            rows.push(dataRow);
+          }
+          csvDataToStore = rows.map(row => row.join(',')).join('\n');
+        } else {
+          csvDataToStore = JSON.stringify(csvDataToStore);
+        }
+      } catch {
+        csvDataToStore = String(csvDataToStore ?? '');
+      }
+    }
+
     const record: SheetRecord = {
       ...sheetData,
+      csvData: csvDataToStore,
       name: cleanSheetName, // Use cleaned sheet name
       id,
       lastModified: Date.now()
@@ -651,6 +685,40 @@ class IndexedDBService {
     } catch (error) {
       console.error('❌ Error cleaning filenames:', error);
     }
+  }
+
+  // Upsert cell styles into simplified sheet record (processedData.styles)
+  async upsertCellStyles(sheetId: string, cellIdToStyle: Record<string, any>): Promise<void> {
+    if (!this.db) await this.init();
+
+    const sheet = await this.getSheet(sheetId);
+    if (!sheet) {
+      throw new Error('Sheet not found');
+    }
+
+    const processedData = { ...(sheet.processedData || {}) };
+    const styles = { ...(processedData.styles || {}) };
+
+    Object.entries(cellIdToStyle).forEach(([cellId, style]) => {
+      styles[cellId] = { ...(styles[cellId] || {}), ...(style || {}) };
+    });
+
+    processedData.styles = styles;
+
+    const updatedSheet: SheetRecord = {
+      ...sheet,
+      processedData,
+      lastModified: Date.now()
+    };
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['sheets'], 'readwrite');
+      const store = transaction.objectStore('sheets');
+      const putRequest = store.put(updatedSheet);
+
+      putRequest.onsuccess = () => resolve();
+      putRequest.onerror = () => reject(putRequest.error);
+    });
   }
 }
 

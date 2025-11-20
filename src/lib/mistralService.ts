@@ -90,13 +90,13 @@ Select 5-15 most business-relevant columns only. [/INST]`;
       const prompt = defaultPrompt.replace('{SCHEMA_JSON}', JSON.stringify(schema, null, 2));
 
       const response = await this.callMistralAPI(prompt);
-      
+
       // Parse the response
       const analysis = this.parseMistralResponse(response);
-      
+
       console.log('✅ Schema analysis completed:', analysis);
       return analysis;
-      
+
     } catch (error) {
       console.error('❌ Error analyzing schema with Mistral:', error);
       throw new Error(`Failed to analyze schema: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -110,7 +110,7 @@ Select 5-15 most business-relevant columns only. [/INST]`;
     try {
       // Use backend endpoint instead of calling OpenRouter directly
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
-      
+
       const response = await fetch(`${backendUrl}/api/ai/ai1`, {
         method: 'POST',
         headers: {
@@ -132,9 +132,15 @@ Select 5-15 most business-relevant columns only. [/INST]`;
 
       const data = await response.json();
       console.log('🔍 Backend API Response Data:', data);
-      
+
+      // Check if the response contains an error
+      if (data.error) {
+        console.error('❌ Backend returned error:', data.error, data.details);
+        throw new Error(data.details || data.error);
+      }
+
       const content = data.response_to_user || data.response || data.message || data.content || data.answer;
-      
+
       if (!content) {
         console.error('❌ No content found in response. Available fields:', Object.keys(data));
         throw new Error(`No content received from backend API. Response structure: ${JSON.stringify(data)}`);
@@ -160,7 +166,7 @@ Select 5-15 most business-relevant columns only. [/INST]`;
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
-      
+
       // Validate the response structure
       if (!parsed.selected_columns || !Array.isArray(parsed.selected_columns)) {
         throw new Error('Invalid response structure: missing selected_columns array');
@@ -187,7 +193,7 @@ Select 5-15 most business-relevant columns only. [/INST]`;
     } catch (error) {
       console.error('❌ Failed to parse Mistral response:', error);
       console.log('Raw response:', response);
-      
+
       // Return a fallback response
       return {
         insights: [],
@@ -213,7 +219,7 @@ Select 5-15 most business-relevant columns only. [/INST]`;
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
-      
+
       // Validate the response structure
       if (!parsed.report_type || !parsed.kpi_cards || !parsed.chart_suggestions) {
         throw new Error('Invalid template response structure: missing required fields');
@@ -246,7 +252,7 @@ Select 5-15 most business-relevant columns only. [/INST]`;
     } catch (error) {
       console.error('❌ Failed to parse report template response:', error);
       console.log('Raw template response:', response);
-      
+
       // Return a fallback response
       return {
         focus_areas: [],
@@ -260,8 +266,8 @@ Select 5-15 most business-relevant columns only. [/INST]`;
         chart_suggestions: [],
         report_sections: ['executive_summary']
       };
-      }
     }
+  }
 
   /**
    * Generate a comprehensive report prompt based on the analyzed schema
@@ -269,7 +275,7 @@ Select 5-15 most business-relevant columns only. [/INST]`;
   async generateReportPrompt(schemaAnalysis: SchemaAnalysisResponse, category?: string): Promise<string> {
     try {
       const categoryContext = category ? `Focus on ${category.toLowerCase()} analysis and metrics.` : '';
-      
+
       const prompt = `[INST] Based on the following schema analysis, generate a comprehensive business report:
 
 ${categoryContext}
@@ -334,14 +340,14 @@ Return JSON format:
 [/INST]`;
 
       console.log('🔍 Generating report template with prompt:', reportTemplatePrompt);
-      
+
       const response = await this.callMistralAPI(reportTemplatePrompt);
       console.log('✅ Report template generated:', response);
-      
+
       // Parse and validate the response
       const parsedTemplate = this.parseReportTemplateResponse(response);
       console.log('✅ Parsed report template:', parsedTemplate);
-      
+
       return parsedTemplate;
 
     } catch (error) {
@@ -351,52 +357,43 @@ Return JSON format:
   }
 
   /**
-   * Test the OpenRouter API connection
+   * Test the backend API connection (NOT OpenRouter directly - security)
+   * This tests the backend proxy, which is the secure way to access AI services
    */
   async testConnection(): Promise<boolean> {
     try {
-      const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
-      
-      if (!OPENROUTER_API_KEY) {
-        console.log('❌ OpenRouter API key not configured');
-        return false;
-      }
+      // SECURITY: Always go through backend, never expose API keys to frontend
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
 
-      // Test with a simple API call
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
+      // Test backend health endpoint
+      const response = await fetch(`${backendUrl}/health`, {
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'HTTP-Referer': 'https://aisheets.app',
-          'X-Title': 'AI Sheets'
-        },
-        body: JSON.stringify({
-          model: 'mistralai/mistral-7b-instruct:free',
-          messages: [{ role: 'user', content: 'Test connection' }],
-          max_tokens: 10
-        })
+        }
       });
-      
+
       if (response.ok) {
-        console.log('✅ OpenRouter API is accessible');
+        console.log('✅ Backend API is accessible');
         return true;
       } else {
-        console.log('❌ OpenRouter API is not responding');
+        console.log('❌ Backend API is not responding');
         return false;
       }
     } catch (error) {
-      console.error('❌ OpenRouter API connection test failed:', error);
+      console.error('❌ Backend API connection test failed:', error);
       return false;
     }
   }
 }
 
 // Export a singleton instance
+// SECURITY NOTE: apiKey is not used in production - all calls go through backend
+// This is kept for interface compatibility but should never contain real API keys
 export const mistralService = new MistralService({
-  apiKey: import.meta.env.VITE_OPENROUTER_API_KEY || '',
+  apiKey: '', // Never set VITE_OPENROUTER_API_KEY - all calls go through backend
   model: 'mistralai/mistral-7b-instruct:free',
-  baseUrl: 'https://openrouter.ai/api/v1/chat/completions'
+  baseUrl: 'https://openrouter.ai/api/v1/chat/completions' // Not used - backend handles this
 });
 
 export default MistralService;

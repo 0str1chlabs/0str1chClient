@@ -354,78 +354,123 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                 </div>
                 
                 {/* Embedded Charts */}
-                {embeddedCharts.map((chart) => (
-                                     <div
-                     key={chart.id}
-                     className="absolute chart-block bg-gray-900 dark:bg-gray-950 rounded-xl shadow-2xl border border-gray-700 dark:border-gray-600 cursor-move select-none flex flex-col backdrop-blur-sm"
-                     style={{
-                       left: chart.position.x,
-                       top: chart.position.y,
-                       width: chart.size.width * 1.6,
-                       height: chart.size.height * 1.6,
-                       zIndex: 20,
-                       background: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)',
-                       backgroundColor: '#1f2937',
-                       userSelect: 'none',
-                     }}
-                    onMouseDown={(e) => handleChartMouseDown(e, chart.id)}
-                  >
-                                         <div className="p-3 border-b border-gray-600 dark:border-gray-500 flex items-center justify-between bg-gradient-to-r from-gray-800 to-gray-900 dark:from-gray-800 dark:to-gray-900 rounded-t-xl">
-                       <span className="text-sm font-medium text-gray-200 dark:text-gray-100">
-                         {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
-                       </span>
-                      <div className="flex items-center gap-1">
-                        {/* Expand Button */}
-                        <button
-                          className="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation(); // Prevent chart dragging
-                            if (onExpandChart) {
-                              onExpandChart(chart.id);
-                            }
-                          }}
-                          title="Expand chart by 25%"
-                        >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                          </svg>
-                        </button>
+                {embeddedCharts.map((chart) => {
+                  const chartTypeLabel = chart.type.charAt(0).toUpperCase() + chart.type.slice(1);
+                  const sheetLabel =
+                    chart.chartSpec?.sheetName ||
+                    chart.chartSpec?.sheet ||
+                    chart.chartSpec?.tableName ||
+                    chart.chartSpec?.sheet_name ||
+                    chart.chartSpec?.table_name ||
+                    chart.sheetName ||
+                    'Active Sheet';
+                  const xField =
+                    chart.chartSpec?.x?.field ||
+                    chart.chartSpec?.xField ||
+                    chart.chartSpec?.x_field ||
+                    chart.chartSpec?.xAxis;
+                  const yField =
+                    chart.chartSpec?.y?.field ||
+                    chart.chartSpec?.yField ||
+                    chart.chartSpec?.y_field ||
+                    chart.chartSpec?.yAxis;
 
-                        {/* Shrink Button */}
-                        <button
-                          className="text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 p-1 rounded hover:bg-orange-100 dark:hover:bg-orange-900/30 transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation(); // Prevent chart dragging
-                            if (onShrinkChart) {
-                              onShrinkChart(chart.id);
-                            }
-                          }}
-                          title="Shrink chart by 20%"
-                        >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 16v4m0 0h-4m4 0l-5-5M4 8V4m0 0h4M4 4l5 5m11 1v4m0 0h-4m4 0l-5-5M4 16v-4m0 0h4m-4 0l5 5" />
-                          </svg>
-                        </button>
-                        
-                        {/* Close Button */}
-                        <button
-                          className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation(); // Prevent chart dragging
-                            if (onRemoveChart) {
-                              onRemoveChart(chart.id);
-                            }
-                          }}
-                          title="Remove chart"
-                        >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
+                  return (
+                    <div
+                      key={chart.id}
+                      className="absolute chart-block bg-gray-900 dark:bg-gray-950 rounded-xl shadow-2xl border border-gray-700 dark:border-gray-600 cursor-move select-none flex flex-col backdrop-blur-sm"
+                      style={{
+                        left: chart.position.x,
+                        top: chart.position.y,
+                        width: chart.size.width * 1.6,
+                        height: chart.size.height * 1.6,
+                        zIndex: 20,
+                        background: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)',
+                        backgroundColor: '#1f2937',
+                        userSelect: 'none',
+                      }}
+                      onMouseDown={(e) => handleChartMouseDown(e, chart.id)}
+                    >
+                      <div className="p-3 border-b border-gray-600 dark:border-gray-500 flex flex-col gap-2 md:flex-row md:items-center md:justify-between bg-gradient-to-r from-gray-800 to-gray-900 dark:from-gray-800 dark:to-gray-900 rounded-t-xl">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-gray-100">
+                              {chartTypeLabel} Chart
+                            </span>
+                            {sheetLabel && (
+                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-700/70 text-gray-200">
+                                Sheet: {sheetLabel}
+                              </span>
+                            )}
+                          </div>
+                          {(xField || yField) && (
+                            <div className="text-[11px] text-gray-400">
+                              {xField && (
+                                <span>
+                                  X: <span className="text-gray-200">{xField}</span>
+                                </span>
+                              )}
+                              {xField && yField && <span className="mx-1">•</span>}
+                              {yField && (
+                                <span>
+                                  Y: <span className="text-gray-200">{yField}</span>
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 self-start md:self-auto">
+                          {/* Expand Button */}
+                          <button
+                            className="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent chart dragging
+                              if (onExpandChart) {
+                                onExpandChart(chart.id);
+                              }
+                            }}
+                            title="Expand chart by 25%"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                            </svg>
+                          </button>
+
+                          {/* Shrink Button */}
+                          <button
+                            className="text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 p-1 rounded hover:bg-orange-100 dark:hover:bg-orange-900/30 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent chart dragging
+                              if (onShrinkChart) {
+                                onShrinkChart(chart.id);
+                              }
+                            }}
+                            title="Shrink chart by 20%"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 16v4m0 0h-4m4 0l-5-5M4 8V4m0 0h4M4 4l5 5m11 1v4m0 0h-4m4 0l-5-5M4 16v-4m0 0h4m-4 0l5 5" />
+                            </svg>
+                          </button>
+                          
+                          {/* Close Button */}
+                          <button
+                            className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent chart dragging
+                              if (onRemoveChart) {
+                                onRemoveChart(chart.id);
+                              }
+                            }}
+                            title="Remove chart"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                                         <div className="bg-gray-900 dark:bg-gray-950 flex-1 flex items-center justify-center overflow-hidden" style={{ padding: '12px', minHeight: 0 }}>
-                       <div className="w-full h-full" style={{ minHeight: 0 }}>
+                      <div className="bg-gray-900 dark:bg-gray-950 flex-1 flex items-center justify-center overflow-hidden" style={{ padding: '12px', minHeight: 0 }}>
+                        <div className="w-full h-full" style={{ minHeight: 0 }}>
                          {/* Debug info - only show in development */}
                          {process.env.NODE_ENV === 'development' && (
                            <div className="absolute top-2 left-2 text-xs text-gray-300 bg-gray-800/90 p-2 rounded-lg z-10 border border-gray-600">
@@ -465,8 +510,9 @@ export const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasPro
                         />
                       </div>
                     </div>
-                  </div>
-                ))}
+                    </div>
+                  )
+                })}
                 
                 {/* Placeholder if no children */}
                 {(!children || (Array.isArray(children) && children.length === 0)) && (

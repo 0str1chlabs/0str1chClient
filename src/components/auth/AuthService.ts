@@ -56,6 +56,7 @@ class AuthService {
   private userKey = 'user_data';
   private tokenExpirationKey = 'token_expiration';
   private rememberMeKey = 'remember_me';
+  private previousUserIdKey = 'previous_user_id'; // Track previous user ID
 
   // Store tokens in localStorage
   private setTokens(token: string, refreshToken: string, tokenExpiration?: string, rememberMe?: boolean): void {
@@ -95,6 +96,140 @@ class AuthService {
   // Store user data
   setUser(user: User): void {
     localStorage.setItem(this.userKey, JSON.stringify(user));
+    // Track previous user ID for switching detection
+    localStorage.setItem(this.previousUserIdKey, user.id);
+  }
+  
+  // Get previous user ID
+  private getPreviousUserId(): string | null {
+    return localStorage.getItem(this.previousUserIdKey);
+  }
+  
+  // Clear all user data (IndexedDB and localStorage) when switching users
+  private async clearAllUserData(): Promise<void> {
+    try {
+      console.log('🧹 Clearing all user data for new user...');
+      
+      // 0. Clear conversation context first
+      console.log('💬 Step 0: Clearing conversation context...');
+      try {
+        const { resetMessageContextManager } = await import('@/lib/messageContextManager');
+        resetMessageContextManager();
+        // Also clear from localStorage
+        localStorage.removeItem('ai_conversation_context');
+        localStorage.removeItem('ai_conversation_summary');
+        console.log('✅ Conversation context cleared');
+      } catch (error) {
+        console.error('❌ Error clearing conversation context:', error);
+      }
+      
+      // 1. Clear localStorage FIRST (fast, non-blocking)
+      console.log('📦 Step 1: Clearing localStorage (except auth data)...');
+      const keysToPreserve = [
+        this.tokenKey,
+        this.refreshTokenKey,
+        this.userKey,
+        this.tokenExpirationKey,
+        this.rememberMeKey,
+        this.previousUserIdKey
+      ];
+      
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && !keysToPreserve.includes(key)) {
+          keysToRemove.push(key);
+        }
+      }
+      
+      keysToRemove.forEach(key => {
+        localStorage.removeItem(key);
+        console.log(`🗑️ Removed localStorage key: ${key}`);
+      });
+      
+      console.log(`✅ Cleared ${keysToRemove.length} localStorage items`);
+      
+      // 2. Clear IndexedDB (async, non-blocking - don't wait for it)
+      console.log('📊 Step 2: Clearing IndexedDB (async, non-blocking)...');
+      
+      // Start IndexedDB clearing in background (don't await)
+      this.clearIndexedDBAsync().catch(error => {
+        console.error('❌ Error clearing IndexedDB (background):', error);
+      });
+      
+      console.log('✅ All user data clearing initiated - login can proceed');
+    } catch (error) {
+      console.error('❌ Error clearing user data:', error);
+      // Don't throw - continue with login even if clearing fails
+    }
+  }
+  
+  // Clear IndexedDB asynchronously (non-blocking)
+  private async clearIndexedDBAsync(): Promise<void> {
+    try {
+      // First, try to close any open connections
+      try {
+        const indexedDBModule = await import('@/lib/indexedDBService').catch(() => null);
+        if (indexedDBModule?.indexedDBService) {
+          const service = indexedDBModule.indexedDBService as any;
+          if (service.db) {
+            service.db.close();
+            service.db = null;
+            console.log('✅ Closed existing IndexedDB connection');
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        }
+      } catch (error) {
+        console.log('⚠️ Could not close IndexedDB connection:', error);
+      }
+      
+      // Delete the database with timeout
+      const deleteRequest = indexedDB.deleteDatabase('AISheetsDB');
+      
+      // Handle all possible events
+      deleteRequest.onsuccess = () => {
+        console.log('✅ IndexedDB cleared successfully');
+      };
+      
+      deleteRequest.onerror = () => {
+        console.error('❌ Error clearing IndexedDB:', deleteRequest.error);
+      };
+      
+      deleteRequest.onblocked = () => {
+        console.warn('⚠️ IndexedDB deletion blocked - will retry after connections close');
+        // The deletion will proceed once connections are closed
+      };
+      
+      // Don't wait - just start the deletion
+      // If it times out or gets blocked, we'll continue anyway
+      setTimeout(() => {
+        if (deleteRequest.readyState === 'pending') {
+          console.warn('⚠️ IndexedDB deletion still pending after 3 seconds, continuing...');
+        }
+      }, 3000);
+      
+    } catch (error) {
+      console.error('❌ Error in IndexedDB clearing:', error);
+    }
+  }
+  
+  // Check if user has changed and clear data if needed (public for AuthContext)
+  async checkAndHandleUserSwitch(newUserId: string): Promise<void> {
+    const previousUserId = this.getPreviousUserId();
+    
+    if (previousUserId && previousUserId !== newUserId) {
+      console.log('🔄 User switch detected:', {
+        previous: previousUserId,
+        current: newUserId
+      });
+      
+      // Clear all user data for the new user
+      await this.clearAllUserData();
+    } else if (!previousUserId) {
+      console.log('👋 First-time login detected');
+    } else {
+      console.log('✅ Same user, no data clearing needed');
+    }
   }
 
   // Get stored user data
@@ -110,6 +245,7 @@ class AuthService {
     localStorage.removeItem(this.userKey);
     localStorage.removeItem(this.tokenExpirationKey);
     localStorage.removeItem(this.rememberMeKey);
+    // Note: We keep previousUserIdKey to track user switches even after logout
   }
 
   // Check if token is expired
@@ -140,6 +276,7 @@ class AuthService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Send cookies
         body: JSON.stringify({ token }),
       });
 
@@ -167,18 +304,20 @@ class AuthService {
     }
   }
 
-  // Make authenticated request
+  // Make authenticated request with session cookies
   private async makeRequest(url: string, options: RequestInit = {}): Promise<Response> {
-    const token = this.getToken();
+    const token = this.getToken(); // Keep for backward compatibility
     const headers = {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      ...(token && { Authorization: `Bearer ${token}` }), // Fallback for backward compatibility
       ...options.headers,
     };
 
+    // Use credentials: 'include' to send HTTP-only cookies
     const response = await fetch(url, {
       ...options,
       headers,
+      credentials: 'include', // Important: sends HTTP-only session cookies
     });
 
     if (response.status === 401) {
@@ -196,6 +335,7 @@ class AuthService {
         return fetch(url, {
           ...options,
           headers: newHeaders,
+          credentials: 'include', // Send cookies
         });
       }
     }
@@ -213,6 +353,7 @@ class AuthService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Send cookies
         body: JSON.stringify({
           email: encryptedEmail,
           password,
@@ -226,6 +367,10 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
+      
+      // Check if user has changed (for signup, always treat as new user)
+      await this.checkAndHandleUserSwitch(data.user.id);
+      
       this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       
@@ -249,6 +394,7 @@ class AuthService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Send cookies
         body: JSON.stringify({
           email: encryptedEmail,
           password,
@@ -262,6 +408,10 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
+      
+      // Check if user has changed before storing tokens
+      await this.checkAndHandleUserSwitch(data.user.id);
+      
       this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       return data;
@@ -279,6 +429,7 @@ class AuthService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Send cookies
         body: JSON.stringify({
           token,
           rememberMe,
@@ -291,6 +442,10 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
+      
+      // Check if user has changed before storing tokens
+      await this.checkAndHandleUserSwitch(data.user.id);
+      
       this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       return data;
@@ -305,13 +460,15 @@ class AuthService {
     try {
       const encryptedEmail = await EmailEncryption.encrypt(email);
       console.log("bseurlll", this.baseURL)
-      debugger
+      
+      
       
       const response = await fetch(`${this.baseURL}/hardcoded-login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Send cookies
         body: JSON.stringify({
           email: encryptedEmail,
           rememberMe,
@@ -324,6 +481,10 @@ class AuthService {
       }
 
       const data: AuthResponse = await response.json();
+      
+      // Check if user has changed before storing tokens
+      await this.checkAndHandleUserSwitch(data.user.id);
+      
       this.setTokens(data.token, data.refreshToken, data.tokenExpiration, data.rememberMe);
       this.setUser(data.user);
       return data;
@@ -346,6 +507,7 @@ class AuthService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Send cookies
         body: JSON.stringify({
           refreshToken,
         }),
@@ -389,6 +551,10 @@ class AuthService {
       }
 
       const data = await response.json();
+      
+      // Check if user has changed (might happen if token was used by different user)
+      await this.checkAndHandleUserSwitch(data.user.id);
+      
       this.setUser(data.user);
       return data.user;
     } catch (error) {

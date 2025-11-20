@@ -16,6 +16,12 @@ interface LoadedSheet {
   isActive?: boolean;
   rowCount?: number;
   colCount?: number;
+  changes?: Array<{
+    cellId: string;
+    previousValue: any;
+    newValue: any;
+    timestamp: number;
+  }>;
 }
 
 class IndexedDBFirstLoaderService {
@@ -49,7 +55,8 @@ class IndexedDBFirstLoaderService {
           lastModified: sheet.lastModified,
           isActive: sheet.isActive,
           rowCount: (sheet as any).rowCount || 0,
-          colCount: (sheet as any).colCount || 0
+          colCount: (sheet as any).colCount || 0,
+          changes: (sheet as any).changes || [] // Include changes from IndexedDB
         }));
       } else {
         console.log('📭 IndexedDB is empty - will fetch from Backblaze');
@@ -237,6 +244,7 @@ class IndexedDBFirstLoaderService {
       }
       
       // Convert simplified structure back to expected format for backward compatibility
+      // IMPORTANT: Include changes so they can be applied after loading
       const convertedSheets: SheetData[] = sheets.map(sheet => ({
         sheetId: sheet.id,
         sheetName: sheet.name,
@@ -244,7 +252,8 @@ class IndexedDBFirstLoaderService {
         lastModified: sheet.lastModified,
         isActive: sheet.isActive,
         rowCount: sheet.metadata?.rowCount || 0,
-        colCount: sheet.metadata?.colCount || 0
+        colCount: sheet.metadata?.colCount || 0,
+        changes: sheet.changes || [] // Include changes for later application
       }));
       
       console.log('✅ Successfully converted', convertedSheets.length, 'sheets from IndexedDB');
@@ -374,25 +383,26 @@ class IndexedDBFirstLoaderService {
     }
 
     try {
-      // Clean the filename by removing user prefix
-      let cleanFileName = file.fileName;
-      const userPrefix = `user_${userEmail}/`;
-      if (cleanFileName.startsWith(userPrefix)) {
-        cleanFileName = cleanFileName.replace(userPrefix, '');
-      }
-      // Also remove any other user prefix patterns
-      cleanFileName = cleanFileName.replace(/^user_[^/]+\//, '');
-      
-      console.log('🔄 Downloading file from Backblaze:', {
-        originalFileName: file.fileName,
-        cleanFileName: cleanFileName,
+      // The backend already strips folder prefix and .gz when listing; use provided name directly
+      const baseFileName = file.fileName;
+      console.log('🔄 Downloading file from Backblaze (using API-provided name):', {
+        fileName: baseFileName,
         userEmail: userEmail
       });
       
-      // Download file from Backblaze
-      const downloadResult = await this.backblazeService.downloadFile(userEmail, cleanFileName);
+      // Prefer retrieving by fileId to avoid any path/encoding ambiguity
+      let downloadResult = null as any;
+      if ((file as any).fileId) {
+        downloadResult = await this.backblazeService.downloadFileById(userEmail, (file as any).fileId);
+        if (!downloadResult.success) {
+          // Fallback to name-based download if needed
+          downloadResult = await this.backblazeService.downloadFile(userEmail, baseFileName);
+        }
+      } else {
+        downloadResult = await this.backblazeService.downloadFile(userEmail, baseFileName);
+      }
       if (!downloadResult.success || !downloadResult.data) {
-        console.error('❌ Failed to download file from Backblaze:', cleanFileName);
+        console.error('❌ Failed to download file from Backblaze:', baseFileName);
         return null;
       }
 
@@ -434,7 +444,7 @@ class IndexedDBFirstLoaderService {
       }
       
       const sheetId = `sheet_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const sheetName = file.fileName.replace('.csv.gz', '').replace('.csv', '');
+      const sheetName = baseFileName.replace('.csv.gz', '').replace('.csv', '');
 
       return {
         sheetId,

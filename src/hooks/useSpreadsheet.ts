@@ -258,12 +258,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
         if (sheet) {
           console.log('📊 Found active sheet:', sheet.name);
           console.log('🔍 Sheet cells count before updates:', Object.keys(sheet.cells).length);
-          // Backup original state if not already backed up
-          if (!draft.originalSheets) {
-            draft.originalSheets = JSON.parse(JSON.stringify(draft.sheets));
-            console.log('💾 Backed up original sheets state');
-          }
-          
           // Filter out updates where originalValue === aiValue (no actual change)
           // Also filter out updates for cells that already have AI updates
           const filteredUpdates = action.updates.filter((update: AIUpdate) => {
@@ -376,7 +370,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
           if (!hasRemainingAIUpdates) {
             draft.hasAIUpdates = false;
-            draft.originalSheets = undefined; // Clear backup
           }
         }
         break;
@@ -393,7 +386,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
           if (!hasRemainingAIUpdates) {
             draft.hasAIUpdates = false;
-            draft.originalSheets = undefined; // Clear backup
           }
         }
         break;
@@ -410,7 +402,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
             }
           });
           draft.hasAIUpdates = false;
-          draft.originalSheets = undefined; // Clear backup
         }
         break;
       }
@@ -425,7 +416,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
             }
           });
           draft.hasAIUpdates = false;
-          draft.originalSheets = undefined; // Clear backup
         }
         break;
       }
@@ -445,7 +435,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
           if (!hasRemainingAIUpdates) {
             draft.hasAIUpdates = false;
-            draft.originalSheets = undefined; // Clear backup
           }
         }
         break;
@@ -465,7 +454,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
           if (!hasRemainingAIUpdates) {
             draft.hasAIUpdates = false;
-            draft.originalSheets = undefined; // Clear backup
           }
         }
         break;
@@ -486,7 +474,6 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
           if (!hasRemainingAIUpdates) {
             draft.hasAIUpdates = false;
-            draft.originalSheets = undefined; // Clear backup
           }
         }
         break;
@@ -506,17 +493,8 @@ const spreadsheetReducer = (state: SpreadsheetState, action: any): SpreadsheetSt
           const hasRemainingAIUpdates = Object.values(sheet.cells).some(c => c.hasAIUpdate);
           if (!hasRemainingAIUpdates) {
             draft.hasAIUpdates = false;
-              draft.originalSheets = undefined; // Clear backup
             }
           }
-        break;
-      }
-      case 'RESTORE_ORIGINAL_STATE': {
-        if (draft.originalSheets) {
-          draft.sheets = JSON.parse(JSON.stringify(draft.originalSheets));
-          draft.hasAIUpdates = false;
-          draft.originalSheets = undefined;
-        }
         break;
       }
       default:
@@ -533,7 +511,6 @@ export const useSpreadsheet = () => {
     isAIMode: false,
     isDarkMode: false,
     hasAIUpdates: false,
-    originalSheets: undefined,
   });
 
   // Ensure we only apply manual updates from localStorage once on initial load
@@ -738,8 +715,78 @@ export const useSpreadsheet = () => {
           );
         });
         
-        // Persist to IndexedDB: append changes only (keeps entire sheet intact)
+        // Persist to IndexedDB: append changes AND update csvData if we have sheet data
         await indexedDBService.addChangesToSheet(targetSheetRecordId, changes);
+        
+        // Also update csvData from current sheet cells so reload works correctly
+        if (inMemorySheet && inMemorySheet.cells && Object.keys(inMemorySheet.cells).length > 0) {
+          // Use sheet dimensions if available, otherwise calculate from cells
+          const rowCount = inMemorySheet.rowCount || 1000;
+          const colCount = inMemorySheet.colCount || 26;
+          
+          // Helper to convert column index (1-based) to letter(s)
+          const colIndexToLetter = (col: number): string => {
+            let result = '';
+            while (col > 0) {
+              col--;
+              result = String.fromCharCode(65 + (col % 26)) + result;
+              col = Math.floor(col / 26);
+            }
+            return result;
+          };
+          
+          // Build CSV from cells
+          const csvRows: string[][] = [];
+          // Build header row from first row
+          const headerRow: string[] = [];
+          for (let col = 0; col < colCount; col++) {
+            const colLetter = colIndexToLetter(col + 1);
+            const cellId = `${colLetter}1`;
+            const cell = inMemorySheet.cells[cellId];
+            headerRow.push(cell?.value !== undefined && cell?.value !== null ? String(cell.value) : colLetter);
+          }
+          if (headerRow.some(v => v !== '')) {
+            csvRows.push(headerRow);
+          }
+          
+          // Build data rows
+          for (let row = 2; row <= Math.min(rowCount, 1000); row++) {
+            const csvRow: string[] = [];
+            let hasData = false;
+            for (let col = 0; col < colCount; col++) {
+              const colLetter = colIndexToLetter(col + 1);
+              const cellId = `${colLetter}${row}`;
+              const cell = inMemorySheet.cells[cellId];
+              const value = cell?.value !== undefined && cell?.value !== null ? String(cell.value) : '';
+              csvRow.push(value);
+              if (value !== '') hasData = true;
+            }
+            if (hasData) {
+              csvRows.push(csvRow);
+            }
+          }
+          
+          // Convert to CSV string with proper escaping (use CRLF line endings)
+          const csvString = csvRows.map(row => row.map(val => {
+            if (val.includes(',') || val.includes('"') || val.includes('\n') || val.includes('\r')) {
+              return `"${val.replace(/"/g, '""')}"`;
+            }
+            return val;
+          }).join(',')).join('\r\n');
+          
+          // Update the sheet with csvData
+          if (csvString && csvRows.length > 0) {
+            const existingSheet = await indexedDBService.getSheet(targetSheetRecordId);
+            if (existingSheet) {
+              await indexedDBService.saveSheet({
+                ...existingSheet,
+                csvData: csvString,
+                isActive: existingSheet.isActive
+              });
+              console.log(`✅ Updated csvData for sheet ${sheetName} (${csvRows.length} rows, ${csvString.length} chars)`);
+            }
+          }
+        }
 
         // Verify DB write before clearing localStorage
         try {
@@ -785,8 +832,8 @@ export const useSpreadsheet = () => {
       }
     };
 
-    // Run every 45s (call reference only, do not invoke here)
-    const interval = setInterval(tick, 45000);
+    // Run every 5s to sync localStorage changes to IndexedDB quickly
+    const interval = setInterval(tick, 5000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [state.sheets, updateExistingSheet]);
 
@@ -1204,26 +1251,129 @@ export const useSpreadsheet = () => {
       if (currentSheet) {
         const fileName = currentSheet.name || `sheet-${currentSheet.id}`;
         const cleanName = fileName.replace(/[^a-zA-Z0-9\-_.]/g, '_').replace(/_{2,}/g, '_').toLowerCase();
+        const sheetId = state.activeSheetId;
         
         // Clear new filename-based storage
         const newAIDiffData = localStorage.getItem('sheet_ai_diff_by_filename');
         if (newAIDiffData) {
-          const parsed = JSON.parse(newAIDiffData);
-          if (parsed[cleanName]) {
-            console.log(`🗑️ Removing rejected changes for sheet "${fileName}" (key: ${cleanName})`);
-            delete parsed[cleanName];
-            localStorage.setItem('sheet_ai_diff_by_filename', JSON.stringify(parsed));
+          try {
+            const parsed = JSON.parse(newAIDiffData);
+            let updated = false;
+            
+            // Try to match by cleanName
+            if (parsed[cleanName]) {
+              console.log(`🗑️ Removing rejected changes for sheet "${fileName}" (key: ${cleanName})`);
+              delete parsed[cleanName];
+              updated = true;
+            }
+            
+            // Also try to match by original fileName (in case it wasn't cleaned)
+            if (parsed[fileName]) {
+              console.log(`🗑️ Removing rejected changes for sheet "${fileName}" (original key)`);
+              delete parsed[fileName];
+              updated = true;
+            }
+            
+            if (updated) {
+              // If object is empty, remove the entire key, otherwise save it
+              if (Object.keys(parsed).length === 0) {
+                localStorage.removeItem('sheet_ai_diff_by_filename');
+                console.log('🗑️ Removed empty sheet_ai_diff_by_filename key');
+              } else {
+                localStorage.setItem('sheet_ai_diff_by_filename', JSON.stringify(parsed));
+              }
+            }
+          } catch (parseError) {
+            console.error('❌ Error parsing sheet_ai_diff_by_filename:', parseError);
+            // If parsing fails, remove the entire key
+            localStorage.removeItem('sheet_ai_diff_by_filename');
+            console.log('🗑️ Removed corrupted sheet_ai_diff_by_filename key');
           }
         }
         
-        // Also clear old sheet-ID-based storage for backward compatibility
+        // Clear old sheet-ID-based storage for backward compatibility
         const oldAIDiffData = localStorage.getItem('sheet_specific_ai_diff');
         if (oldAIDiffData) {
-          const parsed = JSON.parse(oldAIDiffData);
-          if (parsed[state.activeSheetId]) {
-            console.log(`🗑️ Removing rejected changes for sheet ID ${state.activeSheetId} (legacy)`);
-            delete parsed[state.activeSheetId];
-            localStorage.setItem('sheet_specific_ai_diff', JSON.stringify(parsed));
+          try {
+            const parsed = JSON.parse(oldAIDiffData);
+            let updated = false;
+            
+            // Try to match by sheet ID
+            if (parsed[sheetId]) {
+              console.log(`🗑️ Removing rejected changes for sheet ID ${sheetId} (legacy)`);
+              delete parsed[sheetId];
+              updated = true;
+            }
+            
+            // Also try to match by sheet name (in case it was stored by name)
+            if (parsed[fileName]) {
+              console.log(`🗑️ Removing rejected changes for sheet name "${fileName}" (legacy)`);
+              delete parsed[fileName];
+              updated = true;
+            }
+            
+            // Try to match by cleanName
+            if (parsed[cleanName]) {
+              console.log(`🗑️ Removing rejected changes for clean name "${cleanName}" (legacy)`);
+              delete parsed[cleanName];
+              updated = true;
+            }
+            
+            if (updated) {
+              // If object is empty, remove the entire key, otherwise save it
+              if (Object.keys(parsed).length === 0) {
+                localStorage.removeItem('sheet_specific_ai_diff');
+                console.log('🗑️ Removed empty sheet_specific_ai_diff key');
+              } else {
+                localStorage.setItem('sheet_specific_ai_diff', JSON.stringify(parsed));
+              }
+            } else {
+              // If no match found, check if we should remove the entire key anyway
+              // (in case the structure is different than expected)
+              console.log('⚠️ No matching entries found in sheet_specific_ai_diff, but key exists');
+              console.log('🔍 Available keys:', Object.keys(parsed));
+              console.log('🔍 Looking for:', { sheetId, fileName, cleanName });
+              
+              // If there's only one key and it doesn't match, it's likely for this sheet
+              // Remove the entire key to be safe (user wants it cleared)
+              const availableKeys = Object.keys(parsed);
+              if (availableKeys.length === 1) {
+                console.log('🗑️ Only one key found, removing entire sheet_specific_ai_diff key');
+                localStorage.removeItem('sheet_specific_ai_diff');
+              } else if (availableKeys.length === 0) {
+                // Empty object, remove the key
+                localStorage.removeItem('sheet_specific_ai_diff');
+                console.log('🗑️ Empty object, removed sheet_specific_ai_diff key');
+              } else {
+                // Multiple keys - try to find any that might match (fuzzy match)
+                const possibleMatch = availableKeys.find(key => 
+                  key.includes(sheetId) || 
+                  key.includes(fileName) || 
+                  key.includes(cleanName) ||
+                  fileName.includes(key) ||
+                  sheetId.includes(key)
+                );
+                
+                if (possibleMatch) {
+                  console.log(`🗑️ Found fuzzy match "${possibleMatch}", removing it`);
+                  delete parsed[possibleMatch];
+                  if (Object.keys(parsed).length === 0) {
+                    localStorage.removeItem('sheet_specific_ai_diff');
+                  } else {
+                    localStorage.setItem('sheet_specific_ai_diff', JSON.stringify(parsed));
+                  }
+                } else {
+                  // No match found - user wants it cleared, so remove the entire key
+                  console.log('🗑️ No match found, removing entire sheet_specific_ai_diff key as requested');
+                  localStorage.removeItem('sheet_specific_ai_diff');
+                }
+              }
+            }
+          } catch (parseError) {
+            console.error('❌ Error parsing sheet_specific_ai_diff:', parseError);
+            // If parsing fails, remove the entire key
+            localStorage.removeItem('sheet_specific_ai_diff');
+            console.log('🗑️ Removed corrupted sheet_specific_ai_diff key');
           }
         }
       }
@@ -1254,13 +1404,35 @@ export const useSpreadsheet = () => {
       try {
         console.log('🔄 Falling back to old change clearing method...');
         const { clearLocalStorageChanges } = await import('@/lib/localStorageToAIUpdates');
-        const { clearPersistentAIDiffLog } = await import('@/lib/aiChangeLogger');
+        const { clearPersistentAIDiffLog, clearAllPersistentAIDiffLogs } = await import('@/lib/aiChangeLogger');
         clearLocalStorageChanges();
         const activeSheet = state.sheets.find(s => s.id === state.activeSheetId);
-        clearPersistentAIDiffLog(activeSheet?.name || state.activeSheetId);
+        
+        // Try to clear by sheet name
+        if (activeSheet?.name) {
+          clearPersistentAIDiffLog(activeSheet.name);
+        }
+        // Try to clear by sheet ID
+        clearPersistentAIDiffLog(state.activeSheetId);
+        
+        // As a last resort, if the key still exists, remove it entirely
+        const stillExists = localStorage.getItem('sheet_specific_ai_diff');
+        if (stillExists) {
+          console.log('⚠️ sheet_specific_ai_diff still exists after clearing, removing entire key');
+          localStorage.removeItem('sheet_specific_ai_diff');
+        }
+        
         console.log('🧹 Cleared all AI change logs after rejection (fallback)');
       } catch (fallbackError) {
         console.error('❌ Fallback method also failed:', fallbackError);
+        // Last resort: just remove the key entirely
+        try {
+          localStorage.removeItem('sheet_specific_ai_diff');
+          localStorage.removeItem('sheet_ai_diff_by_filename');
+          console.log('🗑️ Removed localStorage keys as last resort');
+        } catch (removeError) {
+          console.error('❌ Even last resort removal failed:', removeError);
+        }
       }
     }
     
@@ -1333,14 +1505,6 @@ export const useSpreadsheet = () => {
     });
   }, [dispatchWithHistory]);
 
-  const restoreOriginalState = useCallback(() => {
-    dispatchWithHistory({ type: 'RESTORE_ORIGINAL_STATE' });
-    toast({
-      title: "State Restored",
-      description: "Spreadsheet has been restored to its original state.",
-      duration: 3000,
-    });
-  }, [dispatchWithHistory]);
 
   const activeSheet = useMemo(() => {
     // Find the active sheet by ID
@@ -1379,7 +1543,6 @@ export const useSpreadsheet = () => {
     rejectColumnAIUpdates,
     acceptRowAIUpdates,
     rejectRowAIUpdates,
-    restoreOriginalState,
     undo,
     redo,
     canUndo: historyIndex > 0,

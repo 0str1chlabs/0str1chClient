@@ -45,8 +45,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
     try {
       const response = await authService.login(loginEmail, loginPassword, rememberMe);
       setSuccess('Login successful!');
-      setTimeout(() => {
-        onLoginSuccess(response.user);
+      setTimeout(async () => {
+        await onLoginSuccess(response.user);
       }, 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
@@ -69,8 +69,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
     try {
       const response = await authService.signup(signupEmail, signupPassword, signupName);
       setSuccess('Account created successfully!');
-      setTimeout(() => {
-        onLoginSuccess(response.user);
+      setTimeout(async () => {
+        await onLoginSuccess(response.user);
       }, 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Signup failed');
@@ -87,8 +87,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
     try {
       const authResponse = await authService.googleLogin(credentialResponse.credential, rememberMe);
       setSuccess('Google login successful!');
-      setTimeout(() => {
-        onLoginSuccess(authResponse.user);
+      setTimeout(async () => {
+        await onLoginSuccess(authResponse.user);
       }, 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google login failed');

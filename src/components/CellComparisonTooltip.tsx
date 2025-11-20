@@ -256,7 +256,6 @@ interface SheetAIControlProps {
   totalUpdates: number;
   onAcceptAll: () => void;
   onRejectAll: () => void;
-  onRestoreOriginal: () => void;
   className?: string;
 }
 
@@ -264,7 +263,6 @@ export const SheetAIControl: React.FC<SheetAIControlProps> = ({
   totalUpdates,
   onAcceptAll,
   onRejectAll,
-  onRestoreOriginal,
   className = ""
 }) => {
   if (totalUpdates === 0) {
@@ -290,35 +288,24 @@ export const SheetAIControl: React.FC<SheetAIControlProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-1 gap-2">
-          <div className="flex space-x-2">
-            <button
-              onClick={onAcceptAll}
-              className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              <span>Accept All Updates</span>
-            </button>
-            <button
-              onClick={onRejectAll}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              <span>Reject All Updates</span>
-            </button>
-          </div>
+        <div className="flex space-x-2">
           <button
-            onClick={onRestoreOriginal}
-            className="w-full bg-gray-600 hover:bg-gray-700 text-white text-xs py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
+            onClick={onAcceptAll}
+            className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            <span>Restore Original State</span>
+            <span>Accept All Updates</span>
+          </button>
+          <button
+            onClick={onRejectAll}
+            className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            <span>Reject All Updates</span>
           </button>
         </div>
 

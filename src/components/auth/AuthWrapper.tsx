@@ -1,6 +1,8 @@
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { LoginModal } from './LoginModal';
+import { InviteCodeModal } from './InviteCodeModal';
+import { InviteRequestQueue } from './InviteRequestQueue';
 import { Loader2 } from '@/lib/icons';
 
 interface AuthWrapperProps {
@@ -8,7 +10,8 @@ interface AuthWrapperProps {
 }
 
 export const AuthWrapper: React.FC<AuthWrapperProps> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, login } = useAuth();
+  const { user, isAuthenticated, isLoading, inviteVerified, checkInviteStatus, login, logout } = useAuth();
+  const [showRequestQueue, setShowRequestQueue] = useState(false);
 
   if (isLoading) {
     return (
@@ -33,5 +36,32 @@ export const AuthWrapper: React.FC<AuthWrapperProps> = ({ children }) => {
     );
   }
 
+  // If authenticated but invite not verified, show invite code modal
+  if (isAuthenticated && user && !inviteVerified) {
+    if (showRequestQueue) {
+      return (
+        <InviteRequestQueue
+          onBack={() => setShowRequestQueue(false)}
+          userEmail={user.email}
+          userName={user.name}
+        />
+      );
+    }
+
+    return (
+      <InviteCodeModal
+        onVerifySuccess={async () => {
+          await checkInviteStatus();
+        }}
+        onRequestInvite={() => setShowRequestQueue(true)}
+        onChangeEmail={() => {
+          logout();
+        }}
+        userEmail={user.email}
+      />
+    );
+  }
+
+  // Only show children if authenticated AND invite verified
   return <>{children}</>;
 }; 

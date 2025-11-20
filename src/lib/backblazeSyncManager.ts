@@ -14,6 +14,7 @@
 
 import { indexedDBService, SheetRecord } from './indexedDBService';
 import pako from 'pako';
+import BackblazeApiService from '@/services/backblazeApiService';
 
 interface SyncMetadata {
   lastSyncTimestamp: number;
@@ -341,107 +342,26 @@ class BackblazeSyncManager {
         sheetIds: Array.from(changesBySheet.keys()),
       });
 
-      // Prepare data for upload
-      const dataToUpload = {
-        sheets: sheets.map(sheet => ({
-          id: sheet.id,
-          name: sheet.name,
-          csvData: sheet.csvData,
-          isActive: sheet.isActive,
-          lastModified: sheet.lastModified,
-          changes: sheet.changes || [],
-          metadata: sheet.metadata,
-        })),
-        syncMetadata: {
-          syncTimestamp: Date.now(),
-          pendingChanges: metadata.pendingChanges,
-          aiChanges: metadata.aiChanges,
-          manualChanges: metadata.manualChanges,
-          changesBySheet: Array.from(changesBySheet.entries()).map(([sheetId, changes]) => ({
-            sheetId,
-            changes: changes.map(c => ({
-              cellId: c.cellId,
-              previousValue: c.previousValue,
-              newValue: c.newValue,
-              timestamp: c.timestamp,
-              type: c.type,
-            })),
-          })),
-        },
-      };
-
-      console.log('📦 Prepared data for upload:', {
-        sheetsCount: dataToUpload.sheets.length,
-        totalChanges: metadata.pendingChanges,
-      });
-
-      // Compress data
-      const jsonData = JSON.stringify(dataToUpload);
-      const compressed = pako.gzip(jsonData);
-      
-      // Convert Uint8Array to base64 without stack overflow
-      // Process in chunks to avoid "Maximum call stack size exceeded"
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < compressed.length; i += chunkSize) {
-        const chunk = compressed.subarray(i, Math.min(i + chunkSize, compressed.length));
-        binary += String.fromCharCode.apply(null, Array.from(chunk) as any);
-      }
-      const compressedBase64 = btoa(binary);
-
-      const originalSize = jsonData.length;
-      const compressedSize = compressed.length;
-      const compressionRatio = ((originalSize - compressedSize) / originalSize) * 100;
-
-      console.log('🗜️ Data compressed:', {
-        originalSize: `${(originalSize / 1024).toFixed(2)} KB`,
-        compressedSize: `${(compressedSize / 1024).toFixed(2)} KB`,
-        compressionRatio: `${compressionRatio.toFixed(1)}%`,
-      });
-
-      // Get auth token (already checked above, but double-check)
-      // Try both 'token' and 'auth_token' for compatibility
-      const token = localStorage.getItem('token') || localStorage.getItem('auth_token');
-      if (!token) {
-        console.warn('⚠️ Token was removed during sync, aborting');
-        throw new Error('Authentication token was removed during sync');
-      }
-
-      // Upload to Backblaze via backend
-      const fileName = `sheets_sync_${Date.now()}.json.gz`;
-      const uploadMetadata = {
-        totalSize: originalSize,
-        compressionRatio,
-        sheetCount: sheets.length,
-        changeCount: metadata.pendingChanges,
-        aiChanges: metadata.aiChanges,
-        manualChanges: metadata.manualChanges,
-        syncTimestamp: Date.now(),
-      };
-
-      console.log('🌐 Uploading to Backblaze...', { fileName });
-
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8090'}/api/backblaze/upload`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          userEmail: localStorage.getItem('userEmail') || 'anonymous',
+      // Instead of a single bundle, upload each sheet to its original CSV path (overwrite)
+      const b2 = BackblazeApiService.getInstance();
+      let uploadedCount = 0;
+      for (const sheet of sheets) {
+        const sheetName = sheet.name || `sheet_${sheet.id}`;
+        const fileName = `${sheetName}.csv`;
+        const csvString = typeof sheet.csvData === 'string' ? sheet.csvData : JSON.stringify(sheet.csvData ?? '');
+        console.log('🌐 Uploading sheet CSV to Backblaze...', { fileName, length: csvString.length });
+        const up = await b2.uploadFile(
+          userEmail || localStorage.getItem('userEmail') || 'anonymous',
           fileName,
-          compressedData: compressedBase64,
-          metadata: uploadMetadata,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: response.statusText }));
-        throw new Error(`Upload failed: ${errorData.message || response.statusText}`);
+          csvString,
+          { contentType: 'text/csv', source: 'indexeddb-sync', sheetId: sheet.id }
+        );
+        if (!up.success) {
+          throw new Error(`Upload failed for ${fileName}: ${up.message}`);
+        }
+        uploadedCount++;
       }
-
-      const result = await response.json();
-      console.log('✅ Backblaze sync successful:', result);
+      console.log('✅ Backblaze sync successful - uploaded sheets:', uploadedCount);
 
       // Update metadata
       metadata.lastSyncTimestamp = Date.now();

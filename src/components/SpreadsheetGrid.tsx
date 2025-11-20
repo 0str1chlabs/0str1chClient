@@ -276,6 +276,7 @@ export const SpreadsheetGrid = ({ sheet, updateCell, onSelectionChange, selected
               const isInRange = selectedRangeSet.has(cellId);
               const isEditing = editingCell === cellId;
               const isHeaderRow = row === 0; // First row (row 0) is the header row
+              const customBg = cell?.style?.backgroundColor;
 
               return (
                 <div
@@ -285,18 +286,22 @@ export const SpreadsheetGrid = ({ sheet, updateCell, onSelectionChange, selected
                     ${isHeaderRow 
                       ? 'bg-gradient-to-b from-blue-50 to-blue-100 dark:from-blue-900/50 dark:to-blue-800/50 border-blue-300 dark:border-blue-600' 
                       : isSelected 
-                      ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/50 z-10' 
+                      ? `ring-2 ring-blue-500 ${customBg ? '' : 'bg-blue-50 dark:bg-blue-900/50'} z-10` 
                       : isInRange
-                      ? 'bg-blue-100/70 dark:bg-blue-900/30'
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                      ? (customBg ? '' : 'bg-blue-100/70 dark:bg-blue-900/30')
+                      : (customBg ? '' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50')
                     }
-                    ${cell?.value && !isHeaderRow ? 'bg-white dark:bg-slate-900' : ''}
+                    ${cell?.value && !isHeaderRow && !customBg ? 'bg-white dark:bg-slate-900' : ''}
                   `}
                   onClick={(e) => handleCellClick(cellId, e)}
                   onDoubleClick={(e) => handleCellDoubleClick(cellId, e)}
                   onMouseDown={(e) => handleCellMouseDown(cellId, e)}
                   onMouseEnter={() => handleCellMouseEnter(cellId)}
-                  style={{ userSelect: 'none' }}
+                  style={{
+                    userSelect: 'none',
+                    // pass CSS variable; stylesheet applies with !important
+                    ['--cell-bg' as any]: customBg || undefined
+                  }}
                   tabIndex={0}
                 >
                   {isEditing ? (
@@ -323,7 +328,7 @@ export const SpreadsheetGrid = ({ sheet, updateCell, onSelectionChange, selected
                       style={{
                         textDecoration: cell?.style?.underline ? 'underline' : 'none',
                         color: cell?.style?.textColor || undefined,
-                        backgroundColor: cell?.style?.backgroundColor || undefined,
+                        // inner div should not override outer bg; leave transparent by default
                         fontSize: cell?.style?.fontSize ? `${cell.style.fontSize}px` : undefined,
                         fontFamily: cell?.style?.fontFamily || undefined,
                         textAlign: cell?.style?.textAlign || 'left',

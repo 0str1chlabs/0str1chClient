@@ -28,9 +28,22 @@ export default defineConfig(({ mode }) => ({
     'process.env': process.env
   },
   // Optionally strip console/debugger in production builds via env flag
-  esbuild: (mode === 'production' && process.env.VITE_STRIP_CONSOLE === 'true') 
-    ? { drop: ['console', 'debugger'] } 
-    : undefined,
+  // Production build configuration for maximum obfuscation
+  build: {
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true, // Remove all console.log calls
+        drop_debugger: true, // Remove debugger statements
+      },
+      mangle: {
+        toplevel: true, // Mangle top-level variable names
+      },
+      format: {
+        comments: false, // Remove all comments
+      },
+    },
+  },
   // Environment variable handling
   envPrefix: 'VITE_'
 }));

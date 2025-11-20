@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Send, BarChart3, Lightbulb, Calculator, TrendingUp, ChevronRight, ChevronLeft, Upload, Sparkles, Move, X, Wand2, FileUp, Pin, PinOff, Target } from '@/lib/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,14 +8,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LoaderCircle } from '@/lib/icons';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+// Select component removed - no longer needed
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Resizable } from './Resizable';
 import { useAuth } from '@/components/auth/AuthContext';
+import { TokenUsageCompact } from '@/components/TokenUsageCompact';
 import { Chart } from '@/components/ui/chart';
 import { createCellSelectionContext, formatSelectionContextForAI, CellSelectionContext } from '@/lib/cellSelectionUtils';
 import { getResponsivePosition, getResponsiveSize, constrainToViewport, getViewportBounds } from '@/lib/viewportUtils';
-import axios from 'axios'; // Added axios import
+import { getMessageContextManager, resetMessageContextManager } from '@/lib/messageContextManager';
+import api from '@/lib/api'; // Replaced axios with api client
 
 interface Message {
   type: 'ai' | 'user';
@@ -55,12 +57,12 @@ interface AIAssistantProps {
 }
 
 // 🔒 Chatbot integration — do not modify. Has access to sheet data for AI actions and summaries.
-export const AIAssistant = ({ 
-  onGenerateChart, 
-  onCalculate, 
-  activeSheet, 
-  selectedCells, 
-  isMinimized, 
+export const AIAssistant = ({
+  onGenerateChart,
+  onCalculate,
+  activeSheet,
+  selectedCells,
+  isMinimized,
   onToggleMinimize,
   onUploadCSV,
   onCreateCustom,
@@ -81,12 +83,28 @@ export const AIAssistant = ({
   isProcessingCSV
 }: AIAssistantProps) => {
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<Message[]>([
-    {
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('ai_conversation_context');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map((msg: any) => ({
+              type: msg.role === 'user' ? 'user' : 'ai',
+              content: msg.content
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Error loading chat history from localStorage:', error);
+      }
+    }
+    return [{
       type: 'ai',
       content: "✨ Welcome to your AI-powered infinite canvas! Upload some data and I'll help you analyze it, create stunning visualizations, and perform complex calculations."
-    }
-  ]);
+    }];
+  });
   const [isLoading, setIsLoading] = useState(false);
   // Use DuckDB state from parent instead of managing internally
   const isDuckDBProcessing = parentIsDuckDBProcessing || false;
@@ -107,6 +125,39 @@ export const AIAssistant = ({
   const [pendingAction, setPendingAction] = useState<any>(null);
   const [pendingReasoning, setPendingReasoning] = useState<string[]>([]);
 
+  // Message context manager for conversation history
+  const contextManager = useMemo(() => getMessageContextManager(), []);
+  const syncMessagesFromContext = useCallback(() => {
+    const context = contextManager.getContext();
+    if (context.recentMessages && context.recentMessages.length > 0) {
+      setMessages(context.recentMessages.map(msg => ({
+        type: msg.role === 'user' ? 'user' : 'ai',
+        content: msg.content
+      })));
+    }
+  }, [contextManager]);
+
+  // Set user credentials and load from DB on mount/user change
+  useEffect(() => {
+    syncMessagesFromContext();
+  }, [syncMessagesFromContext]);
+
+  useEffect(() => {
+    if (user?.email) {
+      const token = localStorage.getItem('auth_token');
+      contextManager.setUserCredentials(user.email, token);
+
+      // Load from database if localStorage is empty
+      contextManager.loadFromDatabase()
+        .then(() => {
+          syncMessagesFromContext();
+        })
+        .catch(error => {
+          console.error('Error loading messages from database:', error);
+        });
+    }
+  }, [user?.email, contextManager, syncMessagesFromContext]);
+
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     const scrollToBottom = () => {
@@ -117,7 +168,7 @@ export const AIAssistant = ({
 
     // Small delay to ensure DOM is updated
     const timeoutId = setTimeout(scrollToBottom, 100);
-    
+
     return () => clearTimeout(timeoutId);
   }, [messages]);
   const [pendingType, setPendingType] = useState<'function' | 'sql' | null>(null);
@@ -137,7 +188,7 @@ export const AIAssistant = ({
     // This would typically scroll to the cell and highlight it
     // For now, we'll just log it - you can implement the actual navigation logic
     console.log(`Navigating to cell: ${cellId}`);
-    
+
     // You could emit an event or call a parent function to navigate to the cell
     // Example: onNavigateToCell?.(cellId);
   };
@@ -162,16 +213,16 @@ export const AIAssistant = ({
 
     // Count similar values across the entire sheet
     const valueCounts = new Map<any, { count: number; cells: string[] }>();
-    
+
     // Iterate through all cells in the sheet
     Object.entries(activeSheet.cells).forEach(([cellId, cell]: [string, any]) => {
       const value = cell?.value;
       if (value !== undefined && value !== null && value !== '') {
         // Check if this value matches any of the selected values
-        const matchingSelectedValue = selectedValues.find(selectedValue => 
+        const matchingSelectedValue = selectedValues.find(selectedValue =>
           String(value) === String(selectedValue)
         );
-        
+
         if (matchingSelectedValue !== undefined) {
           if (!valueCounts.has(matchingSelectedValue)) {
             valueCounts.set(matchingSelectedValue, { count: 0, cells: [] });
@@ -197,10 +248,10 @@ export const AIAssistant = ({
     if (selectedCells.length > 0 && activeSheet) {
       const context = createCellSelectionContext(selectedCells, activeSheet);
       setSelectionContext(context);
-      
+
       // Analyze similar cells
       analyzeSimilarCells(selectedCells, activeSheet);
-      
+
       // Disabled automatic selection message to reduce chat clutter
       // Show helpful message when cells are first selected (only if schema is ready)
       // if (isSchemaReady && !isDuckDBProcessing && context && messages.length > 0) {
@@ -312,20 +363,12 @@ export const AIAssistant = ({
       addMessage('ai', `⏳ Calculating ${operation === 'sum-selected' ? 'sum' : 'average'} of selected cells...`);
       try {
         const token = localStorage.getItem('auth_token');
-        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
-        console.log('🔧 AIAssistant using backend URL:', backendUrl);
-        const response = await fetch(`${backendUrl}/api/ai`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({ 
-            message: operation === 'sum-selected' ? 'Calculate the sum of the selected cells' : 'Calculate the average of the selected cells',
-            userEmail: user?.email || ''
-          }),
+        console.log('🔧 AIAssistant using api client');
+        const response = await api.post('/ai', {
+          message: operation === 'sum-selected' ? 'Calculate the sum of the selected cells' : 'Calculate the average of the selected cells',
+          userEmail: user?.email || ''
         });
-        const data = await response.json();
+        const data = response.data;
         const fnString = data.function;
         let fn, result;
         try {
@@ -380,7 +423,7 @@ export const AIAssistant = ({
 
   const addMessage = (type: 'ai' | 'user', content: string, chartData?: { data: any[]; chartSpec: any }) => {
     setMessages(prev => [...prev, { type, content, chartData }]);
-    
+
     // Auto-scroll to bottom after adding message
     setTimeout(() => {
       if (scrollAreaRef.current) {
@@ -417,20 +460,20 @@ export const AIAssistant = ({
       return 'No data found in sheet';
     }
 
-    
+
 
     try {
       // Ensure sheet is loaded in DuckDB and get schema
       const { schema } = await ensureSheetLoadedInDuckDB();
-      
+
       if (schema) {
 
         return schema;
       }
-      
+
       // Fallback to manual schema generation if DuckDB schema fails
       return createSheetSummaryFallback();
-      
+
     } catch (error) {
       console.error('Error in createSheetSummary:', error);
       return createSheetSummaryFallback();
@@ -442,12 +485,12 @@ export const AIAssistant = ({
 
     const { colCount, rowCount } = activeSheet;
     const columnAnalysis: { [key: string]: any } = {};
-    
+
     // Analyze each column
     for (let col = 0; col < colCount; col++) {
       const colLetter = String.fromCharCode(65 + col);
       const columnData: any[] = [];
-      
+
       // Collect data for this column
       for (let row = 2; row <= Math.min(rowCount, 10); row++) {
         const cellId = `${colLetter}${row}`;
@@ -456,12 +499,12 @@ export const AIAssistant = ({
           columnData.push(cell.value);
         }
       }
-      
+
       // Determine column type and sample values
       const hasNumbers = columnData.some(val => typeof val === 'number' || !isNaN(Number(val)));
       const hasStrings = columnData.some(val => typeof val === 'string' && isNaN(Number(val)));
       const dataType = hasNumbers && !hasStrings ? 'DOUBLE' : 'VARCHAR';
-      
+
       columnAnalysis[colLetter] = {
         dataType,
         sampleValues: columnData.slice(0, 3),
@@ -490,14 +533,14 @@ Table: data
 Rows: ${rowCount - 1}
 Columns:
 ${Object.entries(columnAnalysis).map(([colLetter, analysis]) => {
-  const sampleText = analysis.sampleValues.map((v: any) => JSON.stringify(v)).join(', ');
-  return `- ${colLetter} (${analysis.dataType}) e.g. ${sampleText}`;
-}).join('\n')}
+      const sampleText = analysis.sampleValues.map((v: any) => JSON.stringify(v)).join(', ');
+      return `- ${colLetter} (${analysis.dataType}) e.g. ${sampleText}`;
+    }).join('\n')}
 
 Column Mapping (Excel Letter → Actual Column Name):
 ${Object.entries(columnAnalysis).map(([colLetter, analysis]) => {
-  return `-- ${colLetter} → "${colLetter}"`;
-}).join('\n')}
+      return `-- ${colLetter} → "${colLetter}"`;
+    }).join('\n')}
 
 IMPORTANT: Use exact column names in SQL queries, NOT Excel letters or numeric values.
 
@@ -512,13 +555,13 @@ ${sampleRows.join('\n')}`;
   // Helper function to get current sheet's table name
   const getCurrentTableName = async () => {
     if (!activeSheet) return 'sheet_data';
-    
+
     try {
       // First, try to find the actual table name in DuckDB
       const { queryDuckDB } = await import('../lib/utils');
       const tablesResult = await queryDuckDB('SHOW TABLES');
       console.log('🔍 Raw SHOW TABLES result:', tablesResult);
-      
+
       const existingTables = tablesResult
         .filter(row => {
           console.log('🔍 Filtering table row:', row, 'Type:', typeof row, 'IsArray:', Array.isArray(row));
@@ -543,14 +586,14 @@ ${sampleRows.join('\n')}`;
           return Array.isArray(row) ? row[0] : null;
         })
         .filter(tableName => tableName && typeof tableName === 'string');
-      
+
       console.log('🔍 Available tables in DuckDB:', existingTables);
       console.log('🔍 Looking for table for sheet:', activeSheet.name, '(ID:', activeSheet.id, ')');
-      
+
       // Look for tables that match the sheet name or any sheet ID pattern
       const sheetNamePattern = activeSheet.name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
       const currentIdPattern = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
-      
+
       // Try to find a table that matches this sheet
       for (const table of existingTables) {
         // Skip undefined or null tables
@@ -558,28 +601,28 @@ ${sampleRows.join('\n')}`;
           console.log('⚠️ Skipping invalid table entry:', table);
           continue;
         }
-        
+
         // Check if table name contains sheet name or matches any sheet pattern
-        if (table.toLowerCase().includes(sheetNamePattern) || 
-            (table.includes('sheet_') && table.includes(activeSheet.id.split('-')[1]))) {
+        if (table.toLowerCase().includes(sheetNamePattern) ||
+          (table.includes('sheet_') && table.includes(activeSheet.id.split('-')[1]))) {
           console.log(`✅ Found matching table: ${table} for sheet: ${activeSheet.name}`);
           return table;
         }
       }
-      
+
       // If no match found, look for any sheet table (fallback)
       const sheetTables = existingTables.filter(table => table && typeof table === 'string' && table.startsWith('sheet_'));
       if (sheetTables.length > 0) {
         console.log(`⚠️ No exact match found, using first available sheet table: ${sheetTables[0]}`);
         return sheetTables[0];
       }
-      
+
       // Last resort: generate new table name
       const cleanId = activeSheet.id.replace(/[^a-zA-Z0-9]/g, '_');
       const tableName = cleanId.startsWith('sheet_') ? cleanId : `sheet_${cleanId}`;
       console.log(`⚠️ No existing tables found, generating new table name: ${tableName}`);
       return tableName;
-      
+
     } catch (error) {
       console.error('❌ Error finding table name, falling back to ID-based name:', error);
       // Fallback to old method
@@ -593,7 +636,7 @@ ${sampleRows.join('\n')}`;
   const refreshSpreadsheetFromDuckDB = async () => {
     try {
       console.log('🔄 refreshSpreadsheetFromDuckDB called');
-      
+
       // Query all data from DuckDB
       const { queryDuckDB } = await import('../lib/utils');
       const tableName = await getCurrentTableName();
@@ -603,7 +646,7 @@ ${sampleRows.join('\n')}`;
         name: activeSheet?.name,
         tableName: tableName
       });
-      
+
       // First check if table exists
       try {
         const tablesResult = await queryDuckDB('SHOW TABLES');
@@ -611,7 +654,7 @@ ${sampleRows.join('\n')}`;
         console.log('🔍 Existing tables in DuckDB:', existingTables);
         console.log('🔍 Looking for table:', tableName);
         console.log('🔍 Table exists?', existingTables.includes(tableName));
-        
+
         if (!existingTables.includes(tableName)) {
           console.error(`❌ Table ${tableName} does not exist in DuckDB`);
           console.log('💡 Available tables:', existingTables);
@@ -624,21 +667,21 @@ ${sampleRows.join('\n')}`;
 
       const result = await queryDuckDB(`SELECT * FROM "${tableName}"`);
       console.log('📊 DuckDB query result:', result.length, 'rows');
-      
+
       if (result && result.length > 0) {
         // Convert DuckDB result to spreadsheet format
         const updatedCells: Record<string, { value: string | number }> = {};
-        
+
         // Get headers from the first row
         const headers = Object.keys(result[0]);
-        
+
         // First, preserve the header row (row 1)
         headers.forEach((header: string, colIndex: number) => {
           const colLetter = String.fromCharCode(65 + colIndex);
           const cellId = `${colLetter}1`;
           updatedCells[cellId] = { value: header };
         });
-        
+
         // Then process data rows (starting from row 2)
         result.forEach((row: any, rowIndex: number) => {
           headers.forEach((header: string, colIndex: number) => {
@@ -647,19 +690,19 @@ ${sampleRows.join('\n')}`;
             updatedCells[cellId] = { value: row[header] || '' };
           });
         });
-        
+
         // Update the spreadsheet with new data
         if (activeSheet) {
           console.log('📝 Updating spreadsheet with', Object.keys(updatedCells).length, 'cells');
-          
+
           // Use bulkUpdateCells to update all cells at once
           const updates = Object.entries(updatedCells).map(([cellId, cell]) => ({
             cellId,
             value: cell.value
           }));
-          
+
           console.log('🔍 Sample updates:', updates.slice(0, 3));
-          
+
           // Update the spreadsheet state
           if (bulkUpdateCells) {
             console.log('✅ Using bulkUpdateCells');
@@ -686,7 +729,7 @@ ${sampleRows.join('\n')}`;
   // Function to verify sheet data structure
   const verifySheetData = () => {
     if (!activeSheet) {
-  
+
       return;
     }
 
@@ -701,7 +744,7 @@ ${sampleRows.join('\n')}`;
         const cell = activeSheet.cells[cellId];
         if (cell && cell.value !== undefined && cell.value !== '') {
           hasData = true;
-  
+
         }
       }
     }
@@ -723,6 +766,103 @@ ${sampleRows.join('\n')}`;
 
   // DuckDB mapping is now handled by parent component - no longer needed here
 
+  // Simple token cost estimator (matches backend severity analyzer logic)
+  // Note: This is only used for frontend estimation, actual cost is calculated on backend
+  const estimateTokenCost = (message: string): number => {
+    if (!message || typeof message !== 'string') {
+      return 2000; // Default to max
+    }
+
+    const msg = message.toLowerCase().trim();
+    const msgLength = message.length;
+
+    let severityScore = 0;
+
+    // Message length (0-30 points)
+    if (msgLength < 20) {
+      severityScore += 5;
+    } else if (msgLength < 50) {
+      severityScore += 15;
+    } else if (msgLength < 100) {
+      severityScore += 25;
+    } else {
+      severityScore += 30;
+    }
+
+    // Complexity keywords (0-40 points)
+    const complexityKeywords = {
+      veryHigh: ['attrition', 'retention', 'churn', 'cohort', 'regression', 'statistical', 'machine learning', 'ai', 'predictive'],
+      high: ['analyze', 'trend', 'correlation', 'forecast', 'predict', 'relationship', 'compare multiple', 'complex', 'pivot', 'aggregate'],
+      medium: ['calculate', 'sum', 'average', 'total', 'group', 'sort', 'filter', 'find', 'compare'],
+      simple: ['show', 'display', 'list', 'count', 'what', 'how many', 'hey', 'hi', 'hello']
+    };
+
+    let complexityFound = false;
+    for (const keyword of complexityKeywords.veryHigh) {
+      if (msg.includes(keyword)) {
+        severityScore += 40;
+        complexityFound = true;
+        break;
+      }
+    }
+
+    if (!complexityFound) {
+      for (const keyword of complexityKeywords.high) {
+        if (msg.includes(keyword)) {
+          severityScore += 30;
+          complexityFound = true;
+          break;
+        }
+      }
+    }
+
+    if (!complexityFound) {
+      for (const keyword of complexityKeywords.medium) {
+        if (msg.includes(keyword)) {
+          severityScore += 20;
+          complexityFound = true;
+          break;
+        }
+      }
+    }
+
+    if (!complexityFound) {
+      for (const keyword of complexityKeywords.simple) {
+        if (msg.includes(keyword)) {
+          severityScore += 10;
+          break;
+        }
+      }
+    }
+
+    // SQL/Query indicators (0-20 points)
+    const sqlKeywords = ['select', 'where', 'group by', 'order by', 'join', 'union', 'having', 'aggregate'];
+    for (const keyword of sqlKeywords) {
+      if (msg.includes(keyword)) {
+        severityScore += 20;
+        break;
+      }
+    }
+
+    // Chart requests (0-10 points)
+    const chartKeywords = ['chart', 'graph', 'plot', 'visualize', 'bar', 'line', 'pie', 'scatter'];
+    for (const keyword of chartKeywords) {
+      if (msg.includes(keyword)) {
+        severityScore += 10;
+        break;
+      }
+    }
+
+    // Clamp severity score to 0-100
+    severityScore = Math.min(100, Math.max(0, severityScore));
+
+    // Convert to token cost (100-2000, multiples of 100)
+    const rawCost = 100 + (severityScore / 100) * 1900;
+    const tokenCost = Math.round(rawCost / 100) * 100;
+
+    return Math.min(2000, Math.max(100, tokenCost));
+  };
+
   const handleSendMessage = async () => {
     if (!message.trim() || !activeSheet) return;
 
@@ -742,6 +882,11 @@ ${sampleRows.join('\n')}`;
     setMessage(''); // Clear input immediately
     addMessage('user', userMessage);
 
+    // Add user message to context
+    contextManager.addMessage('user', userMessage);
+
+    // Estimate token cost based on message complexity (simple heuristic)
+    const estimatedTokens = estimateTokenCost(userMessage);
     setIsLoading(true);
 
     try {
@@ -752,37 +897,62 @@ ${sampleRows.join('\n')}`;
 
       // First, get AI1 reasoning and simplified question
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8090';
-      
+
+      // Get conversation context
+      const conversationContext = contextManager.getContext();
+      const formattedContext = contextManager.getFormattedContext();
+      console.log('💬 Conversation context:', {
+        hasSummary: !!conversationContext.summary,
+        recentMessages: conversationContext.recentMessages.length,
+        totalMessages: conversationContext.totalMessages
+      });
+
       // Create enhanced selection context with explicit column name instructions
       let enhancedSelectionContext = null;
       if (selectionContext) {
         console.log('🎯 Selection context detected:', selectionContext);
-        const formattedContext = formatSelectionContextForAI(selectionContext);
-        console.log('📝 Formatted selection context for AI:', formattedContext);
-        enhancedSelectionContext = `${formattedContext}\n\n🚨 IMPORTANT: When generating SQL queries, use the ACTUAL column names from the selection context above, NOT generic schema names like "Column A", "Column B", etc. The user has selected specific cells with real column names - use those names in your SQL queries.`;
+        const formattedSelectionContext = formatSelectionContextForAI(selectionContext);
+        console.log('📝 Formatted selection context for AI:', formattedSelectionContext);
+        enhancedSelectionContext = `${formattedSelectionContext}\n\n🚨 IMPORTANT: When generating SQL queries, use the ACTUAL column names from the selection context above, NOT generic schema names like "Column A", "Column B", etc. The user has selected specific cells with real column names - use those names in your SQL queries.`;
         console.log('🚨 Enhanced selection context:', enhancedSelectionContext);
       } else {
         console.log('⚠️ No selection context - AI will use generic schema column names');
       }
-      
-      const ai1Response = await axios.post(`${backendUrl}/api/ai/ai1`, {
+
+      let ai1Response;
+      try {
+        ai1Response = await api.post('/ai/ai1', {
           message: userMessage,
-        schema,
-        userEmail: user?.email || '',
-        selectionContext: enhancedSelectionContext,
-        sheetInfo: {
-          sheetName: activeSheet.name,
-          sheetId: activeSheet.id,
-          tableName: await getCurrentTableName(),
-          totalRows: activeSheet.rowCount - 1,
-          totalColumns: activeSheet.colCount,
-          columnAnalysis: [], // Will be derived from schema
-          hasSelection: selectionContext !== null,
-          selectionDetails: selectionContext
+          schema,
+          userEmail: user?.email || '',
+          selectionContext: enhancedSelectionContext,
+          conversationContext: formattedContext, // Add conversation context
+          conversationHistory: conversationContext.recentMessages, // Add recent messages
+          conversationSummary: conversationContext.summary, // Add summary if available
+          sheetInfo: {
+            sheetName: activeSheet.name,
+            sheetId: activeSheet.id,
+            tableName: await getCurrentTableName(),
+            totalRows: activeSheet.rowCount - 1,
+            totalColumns: activeSheet.colCount,
+            columnAnalysis: [], // Will be derived from schema
+            hasSelection: selectionContext !== null,
+            selectionDetails: selectionContext
+          }
+        });
+      } catch (error: any) {
+        // Handle 429 Token Limit Exceeded
+        if (error.response?.status === 429) {
+          const errorData = error.response.data;
+          const resetTime = errorData.resetAt ? new Date(errorData.resetAt).toLocaleString() : 'midnight';
+          addMessage('ai', `⛔ Token Limit Reached\n\n${errorData.message || 'You have reached your daily token limit.'}\n\nRemaining: ${errorData.remaining?.toLocaleString() || 0} tokens\nResets: ${resetTime}\n\nPlease try again later or upgrade your plan.`);
+          setIsLoading(false);
+          // Trigger token usage refresh
+          window.dispatchEvent(new CustomEvent('refreshTokenUsage'));
+          return;
         }
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+        throw error;
+      }
 
       if (ai1Response.data.error) {
         addMessage('ai', `❌ Error: ${ai1Response.data.error}`);
@@ -790,55 +960,91 @@ ${sampleRows.join('\n')}`;
       }
 
       // Check if AI couldn't derive context
-      if (ai1Response.data.response_to_user && 
-          (ai1Response.data.response_to_user.includes('Unable to fulfill the request') ||
-           ai1Response.data.response_to_user.includes('context lacks the information'))) {
+      if (ai1Response.data.response_to_user &&
+        (ai1Response.data.response_to_user.includes('Unable to fulfill the request') ||
+          ai1Response.data.response_to_user.includes('context lacks the information'))) {
         addMessage('ai', `⚠️ I'm having trouble understanding your data structure. Please ensure your headers are clearly defined in row 1 and try asking me to "show me the data" or "what columns do we have?" first.`);
         setIsLoading(false);
+        window.dispatchEvent(new CustomEvent('refreshTokenUsage'));
         return;
       }
 
       const ai1Data = ai1Response.data;
-      
+
+
       // Display the response to user from AI1
+      let aiResponseText = '';
       if (ai1Data.response_to_user) {
+        aiResponseText = ai1Data.response_to_user;
         addMessage('ai', ai1Data.response_to_user);
-      }
-      
-      // If the query is not sheet-related, stop here
-      if (!ai1Data.is_sheet_related) {
-        setIsLoading(false);
-        return;
-      }
-      
-      // If sheet-related, show Mistral's reasoning prominently
-      if (ai1Data.explanation) {
+      } else if (ai1Data.explanation && !ai1Data.is_sheet_related) {
+        // For non-sheet-related queries, use explanation as fallback if response_to_user is not available
+        aiResponseText = ai1Data.explanation;
         addMessage('ai', ai1Data.explanation);
       }
 
+      // Add AI response to context
+      if (aiResponseText) {
+        contextManager.addMessage('assistant', aiResponseText);
+      }
+
+      // If the query is not sheet-related, stop here
+      if (!ai1Data.is_sheet_related) {
+        setIsLoading(false);
+        window.dispatchEvent(new CustomEvent('refreshTokenUsage'));
+        return;
+      }
+
+      // If sheet-related, show Mistral's reasoning prominently
+      if (ai1Data.explanation) {
+        addMessage('ai', ai1Data.explanation);
+        // Add explanation to context as well
+        contextManager.addMessage('assistant', ai1Data.explanation);
+      }
+
       // Then, get AI2 code generation (only for sheet-related queries)
-      const ai2Response = await axios.post(`${backendUrl}/api/ai/ai2`, {
-        message: userMessage,
-        schema,
-        userEmail: user?.email || '',
-        simplified_user_question: ai1Data.simplified_user_question,
-        explanation: ai1Data.explanation,
-        isUpdate: ai1Data.isUpdate,
-        isChart: ai1Data.isChart || false,
-        selectionContext: selectionContext ? formatSelectionContextForAI(selectionContext) : null,
-        sheetInfo: {
-          sheetName: activeSheet.name,
-          sheetId: activeSheet.id,
-          tableName: await getCurrentTableName(),
-          totalRows: activeSheet.rowCount - 1,
-          totalColumns: activeSheet.colCount,
-          columnAnalysis: [], // Will be derived from schema
-          hasSelection: selectionContext !== null,
-          selectionDetails: selectionContext
+      let ai2Response;
+      try {
+        // Get updated context (in case it was summarized)
+        const updatedContext = contextManager.getContext();
+        const updatedFormattedContext = contextManager.getFormattedContext();
+
+        ai2Response = await api.post('/ai/ai2', {
+          message: userMessage,
+          schema,
+          userEmail: user?.email || '',
+          simplified_user_question: ai1Data.simplified_user_question,
+          explanation: ai1Data.explanation,
+          isUpdate: ai1Data.isUpdate,
+          isChart: ai1Data.isChart || false,
+          selectionContext: selectionContext ? formatSelectionContextForAI(selectionContext) : null,
+          conversationContext: updatedFormattedContext, // Add conversation context
+          conversationHistory: updatedContext.recentMessages, // Add recent messages
+          conversationSummary: updatedContext.summary, // Add summary if available
+          sheetInfo: {
+            sheetName: activeSheet.name,
+            sheetId: activeSheet.id,
+            tableName: await getCurrentTableName(),
+            totalRows: activeSheet.rowCount - 1,
+            totalColumns: activeSheet.colCount,
+            columnAnalysis: [], // Will be derived from schema
+            hasSelection: selectionContext !== null,
+            selectionDetails: selectionContext
+          }
+        });
+      } catch (error: any) {
+        // Handle 429 Token Limit Exceeded
+        if (error.response?.status === 429) {
+          const errorData = error.response.data;
+          const resetTime = errorData.resetAt ? new Date(errorData.resetAt).toLocaleString() : 'midnight';
+          addMessage('ai', `⛔ Token Limit Reached\n\n${errorData.message || 'You have reached your daily token limit.'}\n\nRemaining: ${errorData.remaining?.toLocaleString() || 0} tokens\nResets: ${resetTime}\n\nPlease try again later or upgrade your plan.`);
+          setIsLoading(false);
+          // Trigger token usage refresh
+          window.dispatchEvent(new CustomEvent('refreshTokenUsage'));
+          return;
         }
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+        throw error;
+      }
 
       if (ai2Response.data.error) {
         addMessage('ai', `❌ Error: ${ai2Response.data.error}`);
@@ -846,35 +1052,44 @@ ${sampleRows.join('\n')}`;
       }
 
       // Check if AI2 couldn't derive context
-      if (ai2Response.data.ai2_generated_code && 
-          (ai2Response.data.ai2_generated_code.includes('Unable to fulfill the request') ||
-           ai2Response.data.ai2_generated_code.includes('context lacks the information'))) {
+      if (ai2Response.data.ai2_generated_code &&
+        (ai2Response.data.ai2_generated_code.includes('Unable to fulfill the request') ||
+          ai2Response.data.ai2_generated_code.includes('context lacks the information'))) {
         addMessage('ai', `⚠️ I'm having trouble understanding your data structure. Please ensure your headers are clearly defined in row 1 and try asking me to "show me the data" or "what columns do we have?" first.`);
         setIsLoading(false);
+        window.dispatchEvent(new CustomEvent('refreshTokenUsage'));
         return;
       }
 
       const ai2Data = ai2Response.data;
       console.log('AI2 response received:', ai2Data);
 
+      // Handle confirmation required for partial matches
+      if (ai2Data.stage === 'confirmation_required' && ai2Data.requires_confirmation) {
+        await handlePartialMatchConfirmation(ai2Data);
+        setIsLoading(false);
+        window.dispatchEvent(new CustomEvent('refreshTokenUsage'));
+        return;
+      }
+
       if (ai2Data.stage === 'complete') {
         const masterResponse = ai2Data.master_response;
         console.log('Master response:', masterResponse);
-        
+
         // Extract column analysis from current schema
         console.log('Current schema for column analysis:', currentSchema);
         let columnAnalysis = extractColumnAnalysisFromSchema(currentSchema || '');
-        
+
         // If schema extraction failed, try fallback method
         if (columnAnalysis.length === 0) {
           console.log('Schema extraction failed, trying fallback method...');
           columnAnalysis = extractColumnAnalysisFromSheet();
         }
-        
+
         console.log('Final column analysis for AI2:', columnAnalysis);
         console.log('Master response for button logic:', masterResponse);
         console.log('requires_update value:', masterResponse.requires_update);
-        
+
         // Check if this is a chart response
         if (masterResponse.is_chart && masterResponse.chart_spec) {
           // Execute the SQL query to get data for the chart
@@ -888,7 +1103,7 @@ ${sampleRows.join('\n')}`;
             if (chartData && chartData.length > 0) {
               console.log('Chart data received from SQL:', chartData);
               console.log('Chart spec:', masterResponse.chart_spec);
-              
+
               // Ensure data is in the correct format for charts
               const processedData = chartData.map((row: any) => {
                 // Convert row to plain object if it's not already
@@ -897,7 +1112,7 @@ ${sampleRows.join('\n')}`;
                 }
                 return row;
               });
-              
+
               console.log('Processed chart data:', processedData);
               console.log('First row structure:', processedData[0]);
               console.log('Available keys in first row:', Object.keys(processedData[0] || {}));
@@ -905,7 +1120,7 @@ ${sampleRows.join('\n')}`;
                 x: masterResponse.chart_spec?.x?.field,
                 y: masterResponse.chart_spec?.y?.field
               });
-              
+
               // Add chart message with data
               addMessage('ai', `📊 Here's your ${masterResponse.chart_spec.type} chart:`, {
                 data: processedData,
@@ -913,10 +1128,12 @@ ${sampleRows.join('\n')}`;
               });
             } else {
               console.log('No chart data received from SQL query');
-              addMessage('ai', '❌ No data found for the chart.');
+              addMessage('ai', `⚠️ No Data Found for Chart\n\nYour query didn't return any data to display in the chart.\n\n**Possible causes:**\n• The filter conditions don't match any rows in your sheet\n• The data you're trying to visualize might not exist\n• Column values might be different than expected\n\n**What you can try:**\n• Check your filter conditions match the actual data values\n• Verify the columns contain the expected data\n• Try asking a broader question to see what data is available`);
             }
           } catch (error) {
-            addMessage('ai', `❌ Error generating chart: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            console.error('Error generating chart:', error);
+            const friendlyMessage = getFriendlyErrorMessage(error);
+            addMessage('ai', friendlyMessage);
           }
         } else if (masterResponse.requires_update) {
           // For update operations, show confirmation buttons instead of executing immediately
@@ -938,6 +1155,9 @@ ${sampleRows.join('\n')}`;
       addMessage('ai', `❌ Error: ${error instanceof Error ? error.message : 'Something went wrong'}`);
     } finally {
       setIsLoading(false);
+      // Refresh token usage after message cycle completes (success or error)
+      // This ensures UI shows updated token count after DB update
+      window.dispatchEvent(new CustomEvent('refreshTokenUsage'));
     }
   };
 
@@ -984,7 +1204,7 @@ ${sampleRows.join('\n')}`;
         const aiUpdates = updates.map((update: { cellId: string, value: string | number }) => {
           const currentCell = activeSheet.cells[update.cellId];
           const originalValue = currentCell?.value || '';
-          
+
           return {
             cellId: update.cellId,
             originalValue,
@@ -1002,17 +1222,17 @@ ${sampleRows.join('\n')}`;
               cellId: update.cellId,
               value: update.aiValue
             }));
-            
+
             logAIDiff(diffUpdates, (cellId) => {
               // Get previous value from the current sheet
               const cell = activeSheet?.cells[cellId];
               return cell?.value;
             }, activeSheet?.name || activeSheet?.id || 'unknown');
           });
-          
+
           createAIUpdates(aiUpdates);
           addMessage('ai', `Updated ${aiUpdates.length} cell${aiUpdates.length !== 1 ? 's' : ''}. Hover over colored cells to see the changes.`);
-          
+
           // Refresh spreadsheet data from DuckDB to sync UI with database
           try {
             await refreshSpreadsheetFromDuckDB();
@@ -1098,7 +1318,7 @@ ${sampleRows.join('\n')}`;
 
         const { queryDuckDB } = await import('../lib/utils');
         const result = await queryDuckDB(sqlQuery);
-        
+
         if (result && result.length > 0) {
           addMessage('ai', `✅ SQL executed successfully! Modified ${result.length} row${result.length !== 1 ? 's' : ''}.`);
 
@@ -1117,9 +1337,29 @@ ${sampleRows.join('\n')}`;
                 headers.push(headerValue !== undefined && headerValue !== null ? String(headerValue) : colLetter);
               }
 
-              // Parse SQL parts
-              const setMatch = sqlQuery.match(/SET\s+"([^"]+)"\s*=\s*'([^']*)'/i);
-              const whereMatch = sqlQuery.match(/WHERE\s+"([^"]+)"\s*=\s*'([^']*)'/i);
+              // Parse SQL parts - handle both simple and UPPER()/LOWER() patterns
+              // Pattern 1: Simple SET "column" = 'value'
+              let setMatch = sqlQuery.match(/SET\s+"([^"]+)"\s*=\s*'([^']*)'/i);
+              // Pattern 2: SET "column" = 'value' (with UPPER/LOWER)
+              if (!setMatch) {
+                setMatch = sqlQuery.match(/SET\s+"([^"]+)"\s*=\s*['"]([^'"]*)['"]/i);
+              }
+
+              // Pattern 1: Simple WHERE "column" = 'value'
+              let whereMatch = sqlQuery.match(/WHERE\s+"([^"]+)"\s*=\s*'([^']*)'/i);
+              // Pattern 2: WHERE UPPER("column") = UPPER('value')
+              if (!whereMatch) {
+                whereMatch = sqlQuery.match(/WHERE\s+UPPER\s*\(\s*"([^"]+)"\s*\)\s*=\s*UPPER\s*\(\s*'([^']*)'\s*\)/i);
+              }
+              // Pattern 3: WHERE LOWER("column") = LOWER('value')
+              if (!whereMatch) {
+                whereMatch = sqlQuery.match(/WHERE\s+LOWER\s*\(\s*"([^"]+)"\s*\)\s*=\s*LOWER\s*\(\s*'([^']*)'\s*\)/i);
+              }
+              // Pattern 4: WHERE "column" ILIKE '%value%'
+              if (!whereMatch) {
+                whereMatch = sqlQuery.match(/WHERE\s+"([^"]+)"\s+ILIKE\s+['"]%([^'"]+)%['"]/i);
+              }
+
               const updatedColumn = setMatch?.[1];
               const newValue = setMatch?.[2] ?? '';
               const whereColumn = whereMatch?.[1];
@@ -1136,12 +1376,20 @@ ${sampleRows.join('\n')}`;
                   const whereColLetter = String.fromCharCode(65 + whereColIndex);
 
                   // Find all target rows that match the WHERE condition in the sheet
+                  // Use case-insensitive matching if WHERE clause uses UPPER/LOWER
+                  const isCaseInsensitive = sqlQuery.includes('UPPER') || sqlQuery.includes('LOWER') || sqlQuery.includes('ILIKE');
+
                   for (let row = 2; row <= activeSheet.rowCount; row++) {
                     const whereCellId = `${whereColLetter}${row}`;
                     const whereCell = currentCells[whereCellId];
                     const whereCellVal = whereCell?.value;
 
-                    if (String(whereCellVal) === String(whereValue)) {
+                    // Match using case-insensitive comparison if needed
+                    const matches = isCaseInsensitive
+                      ? String(whereCellVal).toUpperCase() === String(whereValue).toUpperCase()
+                      : String(whereCellVal) === String(whereValue);
+
+                    if (matches) {
                       const targetCellId = `${updatedColLetter}${row}`;
                       const originalValue = currentCells[targetCellId]?.value;
 
@@ -1175,7 +1423,7 @@ ${sampleRows.join('\n')}`;
                     // Create AI updates
                     createAIUpdates(changedCells);
                     addMessage('ai', `Created ${changedCells.length} AI update${changedCells.length !== 1 ? 's' : ''} for cells that actually changed.`);
-                    
+
                     // Refresh spreadsheet data from DuckDB to sync UI with database
                     try {
                       await refreshSpreadsheetFromDuckDB();
@@ -1190,10 +1438,32 @@ ${sampleRows.join('\n')}`;
                 }
               } else {
                 console.warn('⚠️ Failed to parse SET/WHERE from SQL for targeted diff');
+                // Even if parsing fails, refresh the spreadsheet to show updated data
+                try {
+                  await refreshSpreadsheetFromDuckDB();
+                  console.log('✅ Refreshed spreadsheet after SQL update (parsing failed, but refresh succeeded)');
+                } catch (error) {
+                  console.error('Error refreshing spreadsheet after SQL update:', error);
+                }
               }
             } catch (error) {
               console.error('Error computing SQL diffs:', error);
               addMessage('ai', 'SQL executed, but failed to compute precise diffs.');
+              // Always refresh even if diff computation fails
+              try {
+                await refreshSpreadsheetFromDuckDB();
+                console.log('✅ Refreshed spreadsheet after SQL update (diff computation failed, but refresh succeeded)');
+              } catch (refreshError) {
+                console.error('Error refreshing spreadsheet after SQL update:', refreshError);
+              }
+            }
+          } else {
+            // If createAIUpdates is not available, still refresh the spreadsheet
+            try {
+              await refreshSpreadsheetFromDuckDB();
+              console.log('✅ Refreshed spreadsheet after SQL update');
+            } catch (error) {
+              console.error('Error refreshing spreadsheet after SQL update:', error);
             }
           }
 
@@ -1236,7 +1506,7 @@ ${sampleRows.join('\n')}`;
     }
 
     addMessage('user', suggestion);
-    
+
     // Add context-aware response
     if (selectionContext) {
       addMessage('ai', `🎯 I'll ${suggestion.toLowerCase()} for your selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'} (${selectionContext.selected_range}).`);
@@ -1266,11 +1536,11 @@ ${sampleRows.join('\n')}`;
   };
   const handleDrag = (e: MouseEvent) => {
     if (!dragging || isFixed) return;
-    
+
     // Calculate new position with free movement
     const newX = e.clientX - dragOffset.current.x;
     const newY = e.clientY - dragOffset.current.y;
-    
+
     // Use viewport utility to constrain position
     const aiAssistantSize = getResponsiveSize('ai-assistant', getViewportBounds());
     const constrainedPosition = constrainToViewport(
@@ -1278,7 +1548,7 @@ ${sampleRows.join('\n')}`;
       aiAssistantSize,
       20 // margin
     );
-    
+
     setPosition(constrainedPosition);
   };
   const handleDragEnd = () => {
@@ -1323,7 +1593,7 @@ ${sampleRows.join('\n')}`;
   // Helper function to convert underscore column names back to original names
   const fixUnderscoreColumnNames = (sql: string): string => {
     console.log('Original SQL with underscores:', sql);
-    
+
     // Map of underscore names to original names
     const columnMapping = {
       'Business_Unit': 'Business Unit',
@@ -1334,14 +1604,14 @@ ${sampleRows.join('\n')}`;
       'Bonus_': 'Bonus _',
       'Exit_Date': 'Exit Date'
     };
-    
+
     let fixedSql = sql;
-    
+
     Object.entries(columnMapping).forEach(([underscoreName, originalName]) => {
       const regex = new RegExp(`"${underscoreName}"`, 'g');
       fixedSql = fixedSql.replace(regex, `"${originalName}"`);
     });
-    
+
     console.log('Fixed SQL with original names:', fixedSql);
     return fixedSql;
   };
@@ -1349,29 +1619,120 @@ ${sampleRows.join('\n')}`;
   // Helper function to fix SQL queries with unquoted column names
   const fixSQLColumnQuoting = (sql: string): string => {
     console.log('Original SQL:', sql);
-    
+
     // Check if the SQL already has properly quoted column names
     const hasQuotedColumns = /"[^"]*"/.test(sql);
     if (hasQuotedColumns) {
       console.log('SQL already has quoted columns, skipping quote fixing');
       return sql;
     }
-    
+
     // Only quote specific column names that have spaces or special characters
     const specificColumns = ['Full Name', 'Job Title', 'Business Unit', 'Hire Date', 'Annual Salary', 'Bonus _', 'Exit Date'];
     let fixedSql = sql;
-    
+
     specificColumns.forEach(col => {
       const unquotedPattern = new RegExp(`\\b${col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
       fixedSql = fixedSql.replace(unquotedPattern, `"${col}"`);
     });
-    
+
     console.log('Fixed SQL:', fixedSql);
     return fixedSql;
   };
 
   // Use DuckDB mapping function from parent instead of managing internally
   const ensureSheetLoadedInDuckDB = parentEnsureSheetLoadedInDuckDB;
+
+  // Handle partial match confirmation
+  const handlePartialMatchConfirmation = async (ai2Data: any) => {
+    try {
+      const { queryDuckDB } = await import('../lib/utils');
+      const tableName = await getCurrentTableName();
+      const checkQuery = ai2Data.partial_matches?.checkQuery ||
+        `SELECT DISTINCT "${ai2Data.column_name}" FROM "${tableName}" WHERE "${ai2Data.column_name}" ILIKE '%${ai2Data.search_value?.replace(/'/g, "''")}%' OR UPPER("${ai2Data.column_name}") = UPPER('${ai2Data.search_value?.replace(/'/g, "''")}') LIMIT 10;`;
+
+      console.log('🔍 Checking for partial matches:', checkQuery);
+      const matches = await queryDuckDB(checkQuery);
+      console.log('🔍 Found matches:', matches);
+
+      if (matches && matches.length > 0) {
+        const matchValues = matches.map((row: any) => row[ai2Data.column_name]).filter((v: any) => v);
+        const uniqueMatches = [...new Set(matchValues)];
+
+        if (uniqueMatches.length > 0) {
+          // Show confirmation dialog
+          const matchList = uniqueMatches.map((val: string, idx: number) => `${idx + 1}. "${val}"`).join('\n');
+          const confirmMessage = `🔍 Found ${uniqueMatches.length} partial match(es) for "${ai2Data.search_value}":\n\n${matchList}\n\nDid you mean one of these? (Yes to proceed with update, No to cancel)`;
+
+          const userConfirmed = window.confirm(confirmMessage);
+
+          if (userConfirmed) {
+            // User confirmed, proceed with update
+            addMessage('ai', `✅ Proceeding with update using partial match for "${ai2Data.search_value}"`);
+            const columnAnalysis = extractColumnAnalysisFromSchema(currentSchema || '');
+            await executeAI2Code(ai2Data.ai2_generated_code, 'duckdb', true, columnAnalysis);
+          } else {
+            // User denied, ask for exact value
+            addMessage('ai', `❌ Update cancelled. Please provide the exact value you want to update.`);
+            addMessage('ai', `💡 Tip: Use the exact value as it appears in your sheet, or be more specific in your request.`);
+          }
+        } else {
+          // No matches found, proceed normally
+          const columnAnalysis = extractColumnAnalysisFromSchema(currentSchema || '');
+          await executeAI2Code(ai2Data.ai2_generated_code, 'duckdb', true, columnAnalysis);
+        }
+      } else {
+        // No matches found, proceed normally
+        const columnAnalysis = extractColumnAnalysisFromSchema(currentSchema || '');
+        await executeAI2Code(ai2Data.ai2_generated_code, 'duckdb', true, columnAnalysis);
+      }
+    } catch (error) {
+      console.error('Error checking partial matches:', error);
+      // On error, proceed with update anyway
+      addMessage('ai', `⚠️ Could not verify matches, proceeding with update...`);
+      const columnAnalysis = extractColumnAnalysisFromSchema(currentSchema || '');
+      await executeAI2Code(ai2Data.ai2_generated_code, 'duckdb', true, columnAnalysis);
+    }
+  };
+
+  // Helper function to generate friendly error messages for data issues
+  const getFriendlyErrorMessage = (error: any): string => {
+    const errorMessage = error?.message || error?.toString() || String(error);
+    const errorLower = errorMessage.toLowerCase();
+
+    // DuckDB specific errors - Catalog/Column issues
+    if (errorLower.includes('catalog') || (errorLower.includes('column') && (errorLower.includes('not found') || errorLower.includes('does not exist') || errorLower.includes('invalid') || errorLower.includes('unknown')))) {
+      return `⚠️ Data Issue Detected\n\nThe sheet has an issue - the data you're trying to use is either missing or incomplete.\n\n**Possible causes:**\n• The column name might be incorrect or misspelled\n• The column might not exist in your current data\n• Column names with spaces might need to be quoted differently\n\n**What you can try:**\n• Check that the column names match exactly what's in your sheet\n• Verify the data includes the columns you're querying\n• Try asking "what columns do I have?" to see available data`;
+    }
+
+    // Table not found errors
+    if (errorLower.includes('table') && (errorLower.includes('not found') || errorLower.includes('does not exist'))) {
+      return `⚠️ Data Issue Detected\n\nThe sheet has an issue - the data table cannot be found.\n\n**Possible causes:**\n• The sheet data hasn't been loaded yet\n• The data processing is still in progress\n\n**What you can try:**\n• Wait a moment for data processing to complete\n• Try asking "show me the data" to verify your sheet is loaded`;
+    }
+
+    // No data matched / empty results
+    if (errorLower.includes('no rows') || errorLower.includes('no data') || errorLower.includes('empty result') || (errorLower.includes('result') && errorLower.includes('empty'))) {
+      return `⚠️ No Data Matched\n\nYour query didn't find any matching data.\n\n**Possible causes:**\n• The filter conditions don't match any rows in your sheet\n• The data you're looking for might not exist\n• Column values might be different than expected (check for spelling, case sensitivity, or formatting differences)\n\n**What you can try:**\n• Check your filter conditions match the actual data values\n• Try a broader query to see what data is available\n• Verify the column contains the expected values`;
+    }
+
+    // Data type mismatch errors
+    if (errorLower.includes('type') && (errorLower.includes('mismatch') || errorLower.includes('cannot') || errorLower.includes('incompatible'))) {
+      return `⚠️ Data Type Issue\n\nThe sheet has an issue - there's a mismatch in data types.\n\n**Possible causes:**\n• The column contains mixed data types (text and numbers)\n• Trying to perform calculations on non-numeric data\n• Date formats might be inconsistent\n\n**What you can try:**\n• Check that numeric columns contain only numbers\n• Verify date columns are formatted consistently\n• Ask me to "show me the data" to see what's actually in the columns`;
+    }
+
+    // SQL syntax errors (but make them user-friendly)
+    if (errorLower.includes('syntax error') || errorLower.includes('invalid sql') || errorLower.includes('parse error')) {
+      return `⚠️ Query Issue\n\nThe sheet has an issue - the query couldn't be processed correctly.\n\n**Possible causes:**\n• The data structure might be incomplete or corrupted\n• Column names might be formatted incorrectly\n• The query references data that doesn't exist\n\n**What you can try:**\n• Check that your sheet data is complete and properly formatted\n• Try asking a simpler question first\n• Verify all required columns are present in your data`;
+    }
+
+    // Generic data-related errors
+    if (errorLower.includes('null') || errorLower.includes('missing') || errorLower.includes('incomplete')) {
+      return `⚠️ Data Issue Detected\n\nThe sheet has an issue - the data you're trying to use is either missing or incomplete.\n\n**Possible causes:**\n• Required columns are missing from your data\n• Some data values are empty or null\n• The data structure doesn't match what's expected\n\n**What you can try:**\n• Verify your sheet has all the necessary columns\n• Check for empty cells or missing values\n• Try asking "what columns do I have?" to see what's available`;
+    }
+
+    // Default friendly message
+    return `⚠️ Data Issue Detected\n\nThe sheet has an issue - the data you're trying to map or use is either missing or incomplete.\n\n**What happened:**\nSomething went wrong while processing your request. This usually means the data structure or content doesn't match what's expected.\n\n**What you can try:**\n• Verify your sheet data is complete and properly formatted\n• Check that all required columns exist\n• Try asking "show me the data" or "what columns do I have?" to inspect your data\n• Simplify your query and try again`;
+  };
 
   // Execute SQL query
   const executeSQLQuery = async (
@@ -1387,7 +1748,7 @@ ${sampleRows.join('\n')}`;
       const { queryDuckDB } = await import('../lib/utils');
       console.log('🔍 About to execute SQL query:', sql);
       console.log('🔍 Table name from getCurrentTableName():', getCurrentTableName());
-      
+
       const result = await queryDuckDB(sql);
       console.log('🔍 SQL query result:', result);
       console.log('🔍 Result type:', typeof result);
@@ -1396,7 +1757,7 @@ ${sampleRows.join('\n')}`;
       if (requiresUpdate) {
         // For UPDATE queries, result might be empty but the update still succeeded
         console.log('🔄 SQL UPDATE query executed, refreshing spreadsheet...');
-        
+
         // Always refresh the spreadsheet after an UPDATE query
         try {
           console.log('🔄 Refreshing spreadsheet after SQL update...');
@@ -1405,24 +1766,33 @@ ${sampleRows.join('\n')}`;
         } catch (error) {
           console.error('❌ Error refreshing spreadsheet after SQL update:', error);
         }
-        
+
         if (!options?.suppressOutput) {
           if (result && result.length > 0) {
-            addMessage('ai', `✅ Sheet updated successfully! Modified ${result.length} rows.`);
+            const updateMessage = `✅ Sheet updated successfully! Modified ${result.length} rows.`;
+            addMessage('ai', updateMessage);
+            contextManager.addMessage('assistant', updateMessage);
           } else {
-            addMessage('ai', `✅ Sheet updated successfully! Changes have been applied.`);
+            const updateMessage = `✅ Sheet updated successfully! Changes have been applied.`;
+            addMessage('ai', updateMessage);
+            contextManager.addMessage('assistant', updateMessage);
           }
         }
       } else {
         // Display the query results
         if (!options?.suppressOutput) {
           if (result && result.length > 0) {
-            const resultText = result.map((row: any) => 
+            const resultText = result.map((row: any) =>
               Object.values(row).join(', ')
             ).join('\n');
-            addMessage('ai', `📊 Query Results:\n${resultText}`);
+            const queryMessage = `📊 Query Results:\n${resultText}`;
+            addMessage('ai', queryMessage);
+            contextManager.addMessage('assistant', queryMessage);
           } else {
-            addMessage('ai', `📊 Query executed successfully. No results returned.`);
+            // For SELECT queries with no results, show friendly message
+            const noDataMessage = `⚠️ No Data Matched\n\nYour query didn't find any matching data.\n\n**Possible causes:**\n• The filter conditions don't match any rows in your sheet\n• The data you're looking for might not exist\n• Column values might be different than expected\n\n**What you can try:**\n• Check your filter conditions match the actual data values\n• Try a broader query to see what data is available\n• Verify the column contains the expected values`;
+            addMessage('ai', noDataMessage);
+            contextManager.addMessage('assistant', noDataMessage);
           }
         }
       }
@@ -1430,7 +1800,9 @@ ${sampleRows.join('\n')}`;
     } catch (error) {
       console.error('Error executing SQL query:', error);
       if (!options?.suppressOutput) {
-        addMessage('ai', `❌ Error executing SQL query: ${error}`);
+        const friendlyMessage = getFriendlyErrorMessage(error);
+        addMessage('ai', friendlyMessage);
+        contextManager.addMessage('assistant', friendlyMessage);
       }
       return null;
     }
@@ -1439,21 +1811,21 @@ ${sampleRows.join('\n')}`;
   // Extract column analysis from current schema
   const extractColumnAnalysisFromSchema = (schema: string): any[] => {
     if (!schema) return [];
-    
+
     const columnAnalysis: any[] = [];
     const lines = schema.split('\n');
     let inColumnsSection = false;
-    
+
     for (const line of lines) {
       if (line.includes('Columns:')) {
         inColumnsSection = true;
         continue;
       }
-      
+
       if (inColumnsSection && line.trim() === '') {
         break; // End of columns section
       }
-      
+
       if (inColumnsSection && line.startsWith('- ')) {
         // Parse column line like: "- Column_Name (VARCHAR) e.g. "value1", "value2", "value3""
         // or just "- Column_Name (VARCHAR)" if no samples
@@ -1463,7 +1835,7 @@ ${sampleRows.join('\n')}`;
           const dataType = match[2].trim();
           const sampleValuesStr = match[3] || '';
           const sampleValues = sampleValuesStr ? sampleValuesStr.split(', ').map(v => v.replace(/"/g, '')) : [];
-          
+
           columnAnalysis.push({
             name: columnName,
             type: dataType,
@@ -1473,7 +1845,7 @@ ${sampleRows.join('\n')}`;
         }
       }
     }
-    
+
     console.log('Extracted column analysis from schema:', columnAnalysis);
     return columnAnalysis;
   };
@@ -1481,15 +1853,15 @@ ${sampleRows.join('\n')}`;
   // Fallback method to extract column analysis from active sheet data
   const extractColumnAnalysisFromSheet = (): any[] => {
     if (!activeSheet || !activeSheet.cells) return [];
-    
+
     const columnAnalysis: any[] = [];
     const { colCount, rowCount } = activeSheet;
-    
+
     // Analyze each column
     for (let col = 0; col < colCount; col++) {
       const colLetter = String.fromCharCode(65 + col);
       const columnData: any[] = [];
-      
+
       // Collect data for this column
       for (let row = 2; row <= Math.min(rowCount, 10); row++) {
         const cellId = `${colLetter}${row}`;
@@ -1498,16 +1870,16 @@ ${sampleRows.join('\n')}`;
           columnData.push(cell.value);
         }
       }
-      
+
       // Determine column type and sample values
       const hasNumbers = columnData.some(val => typeof val === 'number' || !isNaN(Number(val)));
       const hasStrings = columnData.some(val => typeof val === 'string' && isNaN(Number(val)));
       const dataType = hasNumbers && !hasStrings ? 'DOUBLE' : 'VARCHAR';
-      
+
       // Use column letter as name if no header found
       const headerCell = activeSheet.cells[`${colLetter}1`];
       const columnName = headerCell && headerCell.value ? String(headerCell.value) : colLetter;
-      
+
       columnAnalysis.push({
         name: columnName,
         type: dataType,
@@ -1515,7 +1887,7 @@ ${sampleRows.join('\n')}`;
         sampleValues: columnData.slice(0, 3)
       });
     }
-    
+
     console.log('Extracted column analysis from sheet:', columnAnalysis);
     return columnAnalysis;
   };
@@ -1525,14 +1897,14 @@ ${sampleRows.join('\n')}`;
   const executeDanfoQuery = async (danfoCode: string, columnAnalysis: any[]): Promise<any> => {
     try {
       console.log('Executing Danfo query:', danfoCode);
-      
+
       // Import Danfo dynamically
       const { DataFrame, Series } = await import('danfojs');
-      
+
       // Convert sheet data to DataFrame format
       const sheetData = await convertSheetToDataFrame(activeSheet);
       console.log('Sheet data converted to DataFrame:', sheetData);
-      
+
       // Create a simple execution environment
       const executeDanfoCode = (code: string, df: any) => {
         // Create a function that has access to the DataFrame
@@ -1540,12 +1912,12 @@ ${sampleRows.join('\n')}`;
         const result = executeFunction(df);
         return result;
       };
-      
+
       // Execute the Danfo code
       const result = executeDanfoCode(danfoCode, sheetData);
-      
+
       console.log('Danfo query result:', result);
-      
+
       // Format the result for display
       let resultText = '';
       if (result && typeof result === 'object') {
@@ -1563,11 +1935,11 @@ ${sampleRows.join('\n')}`;
       } else {
         resultText = `Result: ${result}`;
       }
-      
+
       addMessage('ai', `✅ Danfo Query Result:\n${resultText}`);
-      
+
       return result;
-      
+
     } catch (error) {
       console.error('Danfo execution error:', error);
       addMessage('ai', `❌ Error executing Danfo query: ${error}`);
@@ -1580,11 +1952,11 @@ ${sampleRows.join('\n')}`;
     if (!sheet || !sheet.cells) {
       throw new Error('No sheet data available');
     }
-    
+
     const { colCount, rowCount } = sheet;
     const data: any[] = [];
     const headers: string[] = [];
-    
+
     // Extract headers (first row)
     for (let col = 0; col < colCount; col++) {
       const colLetter = String.fromCharCode(65 + col);
@@ -1593,32 +1965,32 @@ ${sampleRows.join('\n')}`;
       const headerValue = cell && cell.value ? String(cell.value) : colLetter;
       headers.push(headerValue);
     }
-    
+
     // Extract data rows
     for (let row = 2; row <= rowCount; row++) {
       const rowData: any = {};
       let hasData = false;
-      
+
       for (let col = 0; col < colCount; col++) {
         const colLetter = String.fromCharCode(65 + col);
         const cellId = `${colLetter}${row}`;
         const cell = sheet.cells[cellId];
         const value = cell && cell.value !== undefined ? cell.value : '';
-        
+
         if (value !== '') {
           hasData = true;
         }
-        
+
         rowData[headers[col]] = value;
       }
-      
+
       if (hasData) {
         data.push(rowData);
       }
     }
-    
+
     console.log('Converted sheet data:', { headers, dataLength: data.length, sampleData: data.slice(0, 3) });
-    
+
     // Import and create DataFrame
     const { DataFrame } = await import('danfojs');
     return new DataFrame(data);
@@ -1635,22 +2007,22 @@ ${sampleRows.join('\n')}`;
         const excelLetter = String.fromCharCode(65 + index);
         return `${excelLetter} → "${col.name}"`;
       }));
-      
+
       // Handle different tool types
       if (tool === 'danfo') {
         // Execute Danfo query
         await executeDanfoQuery(generatedCode, columnAnalysis);
         return;
       }
-      
+
       // Handle SQL queries (existing logic)
       // Convert Excel-style column references to actual column names
       const convertExcelToColumnNames = (sql: string, columns: any[]): string => {
         let convertedSql = sql;
-        
+
         console.log('Converting SQL:', sql);
         console.log('Available columns:', columns.map(col => `${col.name} -> "${col.name}"`));
-        
+
         // Replace Excel letters (A, B, C, D, etc.) with actual column names
         columns.forEach((col, index) => {
           const excelLetter = String.fromCharCode(65 + index);
@@ -1658,7 +2030,7 @@ ${sampleRows.join('\n')}`;
           const regex = new RegExp(`\\b${excelLetter}\\b`, 'g');
           convertedSql = convertedSql.replace(regex, `"${col.name}"`);
         });
-        
+
         // Also replace any numeric literals that might be column references
         // This handles cases where the AI generates SELECT MIN(3) instead of SELECT MIN("Column_3")
         columns.forEach((col) => {
@@ -1669,18 +2041,18 @@ ${sampleRows.join('\n')}`;
             convertedSql = convertedSql.replace(regex, `"${col.name}"`);
           }
         });
-        
+
         console.log('Original SQL:', sql);
         console.log('Converted SQL:', convertedSql);
         return convertedSql;
       };
-      
+
       const convertedCode = convertExcelToColumnNames(generatedCode, columnAnalysis);
-      
+
       if (convertedCode !== generatedCode) {
         addMessage('ai', `Note: Converted Excel column references to actual column names in SQL query.`);
       }
-      
+
       // Fix SQL column quoting
       const fixedSql = fixSQLColumnQuoting(convertedCode);
       if (fixedSql !== convertedCode) {
@@ -1688,7 +2060,7 @@ ${sampleRows.join('\n')}`;
         console.log('Fixed SQL:', fixedSql);
         addMessage('ai', `Note: Fixed unquoted column names in SQL query.`);
       }
-      
+
       // Fix underscore column names
       const finalSql = fixUnderscoreColumnNames(fixedSql);
       if (finalSql !== fixedSql) {
@@ -1696,14 +2068,15 @@ ${sampleRows.join('\n')}`;
         console.log('SQL with original names:', finalSql);
         addMessage('ai', `Note: Fixed underscore column names to original names.`);
       }
-      
+
       console.log('Final SQL to execute:', finalSql);
-      
+
       // Execute the converted SQL query
       await executeSQLQuery(finalSql, requiresUpdate);
     } catch (error) {
-      addMessage('ai', `❌ Error executing AI2 code: ${error}`);
       console.error('AI2 execution error:', error);
+      const friendlyMessage = getFriendlyErrorMessage(error);
+      addMessage('ai', friendlyMessage);
     }
   };
 
@@ -1757,7 +2130,7 @@ ${sampleRows.join('\n')}`;
         maxWidth={900}
         maxHeight={800}
       >
-        <div className="w-full h-full shadow-2xl flex flex-col overflow-hidden relative z-50 rounded-lg" style={{ 
+        <div className="w-full h-full shadow-2xl flex flex-col overflow-hidden relative z-50 rounded-lg" style={{
           filter: 'drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04))',
           backgroundColor: 'rgba(255, 255, 255, 0.3) !important',
           backdropFilter: 'blur(20px) !important',
@@ -1765,7 +2138,7 @@ ${sampleRows.join('\n')}`;
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25) !important',
           WebkitBackdropFilter: 'blur(20px) !important'
         }}>
-          <div className="flex items-center justify-between p-3 drag-handle cursor-move sticky top-0 z-10" style={{ 
+          <div className="flex items-center justify-between p-3 drag-handle cursor-move sticky top-0 z-10" style={{
             backgroundColor: 'rgba(255, 255, 255, 0.4) !important',
             borderBottom: '1px solid rgba(255, 255, 255, 0.2) !important',
             backdropFilter: 'blur(10px) !important',
@@ -1803,11 +2176,12 @@ ${sampleRows.join('\n')}`;
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-1 relative z-20">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8 no-drag hover:bg-accent" 
+            <div className="flex items-center gap-2 relative z-20">
+              <TokenUsageCompact />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 no-drag hover:bg-accent"
                 onClick={toggleFixedMode}
                 title={isFixed ? "Make Movable" : "Fix Position"}
               >
@@ -1818,9 +2192,9 @@ ${sampleRows.join('\n')}`;
               </Button>
             </div>
           </div>
-          <div 
-            ref={scrollAreaRef} 
-            className="flex-1 p-4 ai-chat-scrollbar overflow-y-auto" 
+          <div
+            ref={scrollAreaRef}
+            className="flex-1 p-4 ai-chat-scrollbar overflow-y-auto"
             style={{ maxHeight: 'calc(100% - 100px)' }}
           >
             <div className="space-y-6">
@@ -1834,11 +2208,10 @@ ${sampleRows.join('\n')}`;
                     <AvatarFallback>{msg.type === 'user' ? 'ME' : 'AI'}</AvatarFallback>
                   </Avatar>
                   <div
-                    className={`max-w-md rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
-                      msg.type === 'user'
-                        ? 'bg-[hsl(205.91,68.04%,61.96%)] text-white'
-                        : 'bg-muted text-foreground'
-                    }`}
+                    className={`max-w-md rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${msg.type === 'user'
+                      ? 'bg-[hsl(205.91,68.04%,61.96%)] text-white'
+                      : 'bg-muted text-foreground'
+                      }`}
                   >
                     {msg.content}
                     {msg.chartData && (
@@ -1847,62 +2220,62 @@ ${sampleRows.join('\n')}`;
                         {msg.chartData.data && msg.chartData.data.length > 0 ? (
                           <div>
                             <div className="text-xs text-muted-foreground mb-2">
-                              Chart Type: {msg.chartData.chartSpec?.type || 'unknown'} | 
-                              X Field: {msg.chartData.chartSpec?.x?.field || 'name'} | 
+                              Chart Type: {msg.chartData.chartSpec?.type || 'unknown'} |
+                              X Field: {msg.chartData.chartSpec?.x?.field || 'name'} |
                               Y Field: {msg.chartData.chartSpec?.y?.field || 'value'}
                             </div>
                             <div className="text-xs text-muted-foreground mb-2">
                               Data Structure: {JSON.stringify(msg.chartData.data[0])}
                             </div>
                             <div className="text-xs text-muted-foreground mb-2">
-                              Data Length: {msg.chartData.data.length} | 
+                              Data Length: {msg.chartData.data.length} |
                               First Row Keys: {Object.keys(msg.chartData.data[0] || {}).join(', ')}
                             </div>
                             <div className="text-xs text-muted-foreground mb-2">
-                              Chart Spec X Field: {msg.chartData.chartSpec?.x?.field || 'undefined'} | 
+                              Chart Spec X Field: {msg.chartData.chartSpec?.x?.field || 'undefined'} |
                               Chart Spec Y Field: {msg.chartData.chartSpec?.y?.field || 'undefined'}
                             </div>
-                                                          <Chart
-                                data={msg.chartData.data}
-                                type={(() => {
-                                  const chartType = msg.chartData.chartSpec?.type;
-                                  if (chartType === "heatmap" || chartType === "scatter") {
-                                    return "bar";
-                                  }
-                                  if (chartType === "bar" || chartType === "line" || chartType === "pie" || chartType === "area") {
-                                    return chartType;
-                                  }
+                            <Chart
+                              data={msg.chartData.data}
+                              type={(() => {
+                                const chartType = msg.chartData.chartSpec?.type;
+                                if (chartType === "heatmap" || chartType === "scatter") {
                                   return "bar";
-                                })()}
-                                xKey={(() => {
-                                  const xField = msg.chartData.chartSpec?.x?.field;
-                                  if (xField && xField in msg.chartData.data[0]) {
-                                    return xField;
-                                  }
-                                  // Fallback: use the first available key that's not the yKey
-                                  const availableKeys = Object.keys(msg.chartData.data[0] || {});
-                                  const yField = msg.chartData.chartSpec?.y?.field;
-                                  const fallbackKey = availableKeys.find(key => key !== yField) || availableKeys[0] || 'name';
-                                  console.log('X key fallback:', { original: xField, available: availableKeys, fallback: fallbackKey });
-                                  return fallbackKey;
-                                })()}
-                                yKey={(() => {
-                                  const yField = msg.chartData.chartSpec?.y?.field;
-                                  if (yField && yField in msg.chartData.data[0]) {
-                                    return yField;
-                                  }
-                                  // Fallback: use the second available key or first if only one exists
-                                  const availableKeys = Object.keys(msg.chartData.data[0] || {});
-                                  const fallbackKey = availableKeys.length > 1 ? availableKeys[1] : availableKeys[0] || 'value';
-                                  console.log('Y key fallback:', { original: yField, available: availableKeys, fallback: fallbackKey });
-                                  return fallbackKey;
-                                })()}
-                                height={300}
-                                showGrid={true}
-                                showLegend={true}
-                                showTooltip={true}
-                                className="border rounded-lg"
-                              />
+                                }
+                                if (chartType === "bar" || chartType === "line" || chartType === "pie" || chartType === "area") {
+                                  return chartType;
+                                }
+                                return "bar";
+                              })()}
+                              xKey={(() => {
+                                const xField = msg.chartData.chartSpec?.x?.field;
+                                if (xField && xField in msg.chartData.data[0]) {
+                                  return xField;
+                                }
+                                // Fallback: use the first available key that's not the yKey
+                                const availableKeys = Object.keys(msg.chartData.data[0] || {});
+                                const yField = msg.chartData.chartSpec?.y?.field;
+                                const fallbackKey = availableKeys.find(key => key !== yField) || availableKeys[0] || 'name';
+                                console.log('X key fallback:', { original: xField, available: availableKeys, fallback: fallbackKey });
+                                return fallbackKey;
+                              })()}
+                              yKey={(() => {
+                                const yField = msg.chartData.chartSpec?.y?.field;
+                                if (yField && yField in msg.chartData.data[0]) {
+                                  return yField;
+                                }
+                                // Fallback: use the second available key or first if only one exists
+                                const availableKeys = Object.keys(msg.chartData.data[0] || {});
+                                const fallbackKey = availableKeys.length > 1 ? availableKeys[1] : availableKeys[0] || 'value';
+                                console.log('Y key fallback:', { original: yField, available: availableKeys, fallback: fallbackKey });
+                                return fallbackKey;
+                              })()}
+                              height={300}
+                              showGrid={true}
+                              showLegend={true}
+                              showTooltip={true}
+                              className="border rounded-lg"
+                            />
                           </div>
                         ) : (
                           <div className="text-center text-muted-foreground py-8">
@@ -1939,7 +2312,7 @@ ${sampleRows.join('\n')}`;
               )}
 
 
-              
+
 
               {pendingReplyResult && pendingActionType === 'reply' && (
                 <div className="flex flex-col items-center gap-3 mt-4">
@@ -1952,7 +2325,7 @@ ${sampleRows.join('\n')}`;
                     <AvatarImage src="https://placehold.co/40x40.png" data-ai-hint="robot" />
                     <AvatarFallback>AI</AvatarFallback>
                   </Avatar>
-                  <div className="bg-muted rounded-2xl px-3 py-2">
+                  <div className="bg-muted rounded-2xl px-3 py-2 flex items-center gap-3">
                     <LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
                 </div>
@@ -1981,9 +2354,9 @@ ${sampleRows.join('\n')}`;
                   <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-300">
                     <Target className="h-4 w-4" />
                     <span className="font-medium">
-                      {selectionContext.selection_type === 'single' ? 'Cell Selected' : 
-                       selectionContext.selection_type === 'range' ? 'Range Selected' : 
-                       'Multiple Cells Selected'}
+                      {selectionContext.selection_type === 'single' ? 'Cell Selected' :
+                        selectionContext.selection_type === 'range' ? 'Range Selected' :
+                          'Multiple Cells Selected'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -2019,7 +2392,7 @@ ${sampleRows.join('\n')}`;
                 <div className="text-xs text-green-500 dark:text-green-300 mt-1 font-medium">
                   💡 I'll focus on your selected cells for any questions you ask
                 </div>
-                
+
                 {/* Similar Cells Dropdown */}
                 {showSimilarCells && similarCellsData.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-700 similar-cells-dropdown">
@@ -2041,7 +2414,7 @@ ${sampleRows.join('\n')}`;
                           </div>
                           <div className="flex flex-wrap gap-1">
                             {item.cells.slice(0, 8).map((cellId, cellIndex) => (
-                              <span 
+                              <span
                                 key={cellIndex}
                                 className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 cell-location-badge"
                                 title={`Click to highlight cell ${cellId}`}
@@ -2068,51 +2441,51 @@ ${sampleRows.join('\n')}`;
                 )}
               </div>
             )}
-            
+
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0"><FileUp className="h-5 w-5" /></Button>
-               <Tooltip>
-                 <TooltipTrigger asChild>
-                   <Textarea
-                     placeholder={
-                       isProcessingCSV
-                         ? "Processing CSV data..."
-                         : isDuckDBProcessing 
-                         ? "Processing data..." 
-                         : !isSchemaReady 
-                         ? "Waiting for schema..." 
-                         : selectionContext
-                         ? `Ask about selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'}...`
-                         : "Ask the AI to do something..."
-                     }
-                     value={message}
-                     onChange={e => setMessage(e.target.value)}
-                     onKeyDown={e => {
-                       if (e.key === 'Enter' && !e.shiftKey) {
-                         e.preventDefault();
-                         handleSendMessage();
-                       }
-                     }}
-                     disabled={isLoading || isDuckDBProcessing || !isSchemaReady || isProcessingCSV}
-                     className="no-drag resize-none min-h-[40px] max-h-[200px]"
-                     style={{ 
-                       backgroundColor: 'rgba(255, 255, 255, 0.3) !important',
-                       border: '1px solid rgba(255, 255, 255, 0.2) !important',
-                       backdropFilter: 'blur(10px) !important',
-                       WebkitBackdropFilter: 'blur(10px) !important'
-                     }}
-                     ref={textareaRef}
-                   />
-                 </TooltipTrigger>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Textarea
+                    placeholder={
+                      isProcessingCSV
+                        ? "Processing CSV data..."
+                        : isDuckDBProcessing
+                          ? "Processing data..."
+                          : !isSchemaReady
+                            ? "Waiting for schema..."
+                            : selectionContext
+                              ? `Ask about selected ${selectionContext.selection_type === 'single' ? 'cell' : 'cells'}...`
+                              : "Ask the AI to do something..."
+                    }
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    disabled={isLoading || isDuckDBProcessing || !isSchemaReady || isProcessingCSV}
+                    className="no-drag resize-none min-h-[40px] max-h-[200px]"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.3) !important',
+                      border: '1px solid rgba(255, 255, 255, 0.2) !important',
+                      backdropFilter: 'blur(10px) !important',
+                      WebkitBackdropFilter: 'blur(10px) !important'
+                    }}
+                    ref={textareaRef}
+                  />
+                </TooltipTrigger>
                 {(!isSchemaReady && !isDuckDBProcessing) && (
                   <TooltipContent>
                     <p>Upload CSV or add Data to get started</p>
                   </TooltipContent>
                 )}
               </Tooltip>
-              <Button 
-                onClick={handleSendMessage} 
-                disabled={isLoading || isDuckDBProcessing || !isSchemaReady || !message.trim() || isProcessingCSV} 
+              <Button
+                onClick={handleSendMessage}
+                disabled={isLoading || isDuckDBProcessing || !isSchemaReady || !message.trim() || isProcessingCSV}
                 className="no-drag"
                 size="icon"
                 variant="ghost"
@@ -2122,15 +2495,7 @@ ${sampleRows.join('\n')}`;
             </div>
             <div className="flex items-center justify-center text-xs text-muted-foreground mt-2 gap-2">
               <span>Powered by</span>
-              <Select value={selectedModel} onValueChange={setSelectedModel}>
-                <SelectTrigger className="h-6 text-xs w-auto border-0 bg-transparent p-1 focus:ring-0 focus-visible:ring-offset-0 focus-visible:ring-0 shadow-none no-drag">
-                  <SelectValue placeholder="Select model" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0str1ch 1.0">0str1ch 1.0</SelectItem>
-                  <SelectItem value="0str1ch mini">0str1ch mini</SelectItem>
-                </SelectContent>
-              </Select>
+              <span className="font-medium">0str1ch 1.0</span>
             </div>
           </div>
         </div>

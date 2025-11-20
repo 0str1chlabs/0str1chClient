@@ -81,6 +81,32 @@ export function Chart({
     );
   }
 
+  const yAxisDomain = React.useMemo<[number, number] | undefined>(() => {
+    if (type === 'pie') return undefined;
+    const numericValues = data
+      .map((row) => {
+        const value = Number(row?.[yKey]);
+        return Number.isFinite(value) ? value : null;
+      })
+      .filter((value): value is number => value !== null);
+
+    if (numericValues.length === 0) return undefined;
+
+    const minValue = Math.min(...numericValues);
+    const maxValue = Math.max(...numericValues);
+    if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) return undefined;
+
+    const range = maxValue - minValue;
+    const padding = range === 0 ? Math.max(Math.abs(maxValue) * 0.05, 1) : range * 0.15;
+    const lowerBound = minValue - padding;
+    const upperBound = maxValue + padding;
+
+    const safeLower = Number.isFinite(lowerBound) ? lowerBound : minValue;
+    const safeUpper = Number.isFinite(upperBound) ? upperBound : maxValue;
+
+    return [safeLower, safeUpper];
+  }, [data, type, yKey]);
+
   const renderChart = () => {
     switch (type) {
       case 'bar':
@@ -89,7 +115,7 @@ export function Chart({
             <BarChart data={data}>
               {showGrid && <CartesianGrid strokeDasharray="3 3" />}
               <XAxis dataKey={xKey} />
-              <YAxis />
+              <YAxis domain={yAxisDomain} allowDecimals />
               {showTooltip && <Tooltip />}
               {showLegend && <Legend />}
               <Bar dataKey={yKey} fill={colors[0]} />
@@ -103,7 +129,7 @@ export function Chart({
             <LineChart data={data}>
               {showGrid && <CartesianGrid strokeDasharray="3 3" />}
               <XAxis dataKey={xKey} />
-              <YAxis />
+              <YAxis domain={yAxisDomain} allowDecimals />
               {showTooltip && <Tooltip />}
               {showLegend && <Legend />}
               <Line type="monotone" dataKey={yKey} stroke={colors[0]} strokeWidth={2} />
@@ -141,7 +167,7 @@ export function Chart({
             <AreaChart data={data}>
               {showGrid && <CartesianGrid strokeDasharray="3 3" />}
               <XAxis dataKey={xKey} />
-              <YAxis />
+              <YAxis domain={yAxisDomain} allowDecimals />
               {showTooltip && <Tooltip />}
               {showLegend && <Legend />}
               <Area type="monotone" dataKey={yKey} stroke={colors[0]} fill={colors[0]} fillOpacity={0.3} />
@@ -193,6 +219,33 @@ export function MultiSeriesChart({
   ...props
 }: MultiSeriesChartProps) {
   const defaultColors = [chartConfig.colors.chart1, chartConfig.colors.chart2, chartConfig.colors.chart3, chartConfig.colors.chart4, chartConfig.colors.chart5]
+  const multiSeriesDomain = React.useMemo<[number, number] | undefined>(() => {
+    const numericValues: number[] = []
+    data.forEach((row) => {
+      series.forEach((s) => {
+        const value = Number(row?.[s.key])
+        if (Number.isFinite(value)) {
+          numericValues.push(value)
+        }
+      })
+    })
+
+    if (numericValues.length === 0) return undefined
+
+    const minValue = Math.min(...numericValues)
+    const maxValue = Math.max(...numericValues)
+    if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) return undefined
+
+    const range = maxValue - minValue
+    const padding = range === 0 ? Math.max(Math.abs(maxValue) * 0.05, 1) : range * 0.15
+    const lowerBound = minValue - padding
+    const upperBound = maxValue + padding
+
+    const safeLower = Number.isFinite(lowerBound) ? lowerBound : minValue
+    const safeUpper = Number.isFinite(upperBound) ? upperBound : maxValue
+
+    return [safeLower, safeUpper]
+  }, [data, series])
   
   const renderMultiSeriesChart = () => {
     switch (type) {
@@ -202,7 +255,7 @@ export function MultiSeriesChart({
             <BarChart data={data}>
               {showGrid && <CartesianGrid strokeDasharray="3 3" />}
               <XAxis dataKey={xKey} />
-              <YAxis />
+              <YAxis domain={multiSeriesDomain} allowDecimals />
               {showTooltip && <Tooltip />}
               {showLegend && <Legend />}
               {series.map((s, index) => (
@@ -223,7 +276,7 @@ export function MultiSeriesChart({
             <LineChart data={data}>
               {showGrid && <CartesianGrid strokeDasharray="3 3" />}
               <XAxis dataKey={xKey} />
-              <YAxis />
+              <YAxis domain={multiSeriesDomain} allowDecimals />
               {showTooltip && <Tooltip />}
               {showLegend && <Legend />}
               {series.map((s, index) => (
@@ -246,7 +299,7 @@ export function MultiSeriesChart({
             <AreaChart data={data}>
               {showGrid && <CartesianGrid strokeDasharray="3 3" />}
               <XAxis dataKey={xKey} />
-              <YAxis />
+              <YAxis domain={multiSeriesDomain} allowDecimals />
               {showTooltip && <Tooltip />}
               {showLegend && <Legend />}
               {series.map((s, index) => (

@@ -99,8 +99,8 @@ export const getResponsiveSize = (
       
     case 'spreadsheet':
       return {
-        width: Math.min(850, Math.max(600, width * 0.65)), // Restore reasonable width
-        height: Math.min(650, Math.max(400, height * 0.7 - 100)) // Subtract 100px to ensure bottom is always visible
+        width: Math.min(1066, Math.max(753, width * 0.815)), // Increased by another 12% (952*1.12=1066, 672*1.12=753, 0.728*1.12=0.815)
+        height: Math.min(815, Math.max(502, height * 0.878 - 125)) // Increased by another 12% (728*1.12=815, 448*1.12=502, 0.784*1.12=0.878, 112*1.12=125)
       };
       
     case 'ai-assistant':

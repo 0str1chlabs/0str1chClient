@@ -212,9 +212,13 @@ function convertValueForSchema(value: any, schema: ColumnSchema): any {
       // Remove formatting characters and convert to integer
       const cleanInt = str.replace(/[,$%]/g, '');
       const intVal = parseInt(cleanInt, 10);
+      // If not a valid integer, insert NULL to avoid type mismatch errors
+      if (isNaN(intVal)) {
+        return null;
+      }
       // Check if value is too large for DuckDB INT32 (max value: 2,147,483,647)
-      if (isNaN(intVal) || intVal > 2147483647 || intVal < -2147483648) {
-        return str; // Return as string if too large
+      if (intVal > 2147483647 || intVal < -2147483648) {
+        return null;
       }
       return intVal;
 

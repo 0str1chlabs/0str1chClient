@@ -13,6 +13,7 @@ interface SheetSelectorProps {
   sheets: SheetInfo[];
   onSelectSheet: (fileName: string) => void;
   onCreateBlankSheet?: () => void;
+  onUploadNewSheet?: () => void;
   onClose: () => void;
   isOpen: boolean;
 }
@@ -21,6 +22,7 @@ export const SheetSelector: React.FC<SheetSelectorProps> = ({
   sheets,
   onSelectSheet,
   onCreateBlankSheet,
+  onUploadNewSheet,
   onClose,
   isOpen
 }) => {
@@ -31,6 +33,8 @@ export const SheetSelector: React.FC<SheetSelectorProps> = ({
   const handleSelect = () => {
     if (selectedSheet === 'blank') {
       onCreateBlankSheet?.();
+    } else if (selectedSheet === 'upload') {
+      onUploadNewSheet?.();
     } else if (selectedSheet) {
       onSelectSheet(selectedSheet);
     }
@@ -114,6 +118,33 @@ export const SheetSelector: React.FC<SheetSelectorProps> = ({
               )}
             </div>
 
+            {/* Upload New Sheet Option */}
+            <div
+              className={`group relative flex items-center p-4 border-2 border-dashed rounded-lg cursor-pointer transition-all duration-200 ${
+                selectedSheet === 'upload'
+                  ? 'border-blue-500 bg-blue-50 shadow-md'
+                  : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+              }`}
+              onClick={() => setSelectedSheet('upload')}
+            >
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mr-4 group-hover:bg-blue-200 transition-colors">
+                <FileText className="h-6 w-6 text-blue-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-medium text-gray-900 text-base mb-1">
+                  Upload New Sheet
+                </h3>
+                <p className="text-sm text-gray-500">
+                  Upload a CSV file to create a new sheet
+                </p>
+              </div>
+              {selectedSheet === 'upload' && (
+                <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                  <div className="w-2 h-2 bg-white rounded-full"></div>
+                </div>
+              )}
+            </div>
+
             {/* Existing Sheets */}
             {sheets.map((sheet, index) => (
               <div
@@ -171,9 +202,11 @@ export const SheetSelector: React.FC<SheetSelectorProps> = ({
           <div className="text-sm text-gray-500">
             {selectedSheet === 'blank' 
               ? 'Ready to create a new blank sheet'
+              : selectedSheet === 'upload'
+                ? 'Ready to upload a CSV file'
               : selectedSheet 
                 ? `Selected: ${selectedSheet.replace('.csv.gz', '').replace('.csv', '')}`
-                : 'Select a sheet to continue'
+                : 'Select an option to continue'
             }
           </div>
           <div className="flex space-x-3">
@@ -189,10 +222,12 @@ export const SheetSelector: React.FC<SheetSelectorProps> = ({
               className={`px-6 py-2 text-white rounded-md focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
                 selectedSheet === 'blank'
                   ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                  : selectedSheet === 'upload'
+                  ? 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
                   : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
               }`}
             >
-              {selectedSheet === 'blank' ? 'Create Sheet' : 'Load Sheet'}
+              {selectedSheet === 'blank' ? 'Create Sheet' : selectedSheet === 'upload' ? 'Upload CSV' : 'Load Sheet'}
             </button>
           </div>
         </div>

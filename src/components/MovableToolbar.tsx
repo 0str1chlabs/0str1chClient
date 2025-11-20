@@ -44,8 +44,10 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
     const target = e.target as HTMLElement;
     const isDragHandle = target.closest('[data-toolbar-handle]');
     const isToolbarContainer = target.closest('.movable-toolbar');
+    const isButton = target.closest('button') || target.closest('[role="button"]');
     
-    if (isDragHandle || isToolbarContainer) {
+    // Only prevent default if it's actually a drag handle, not a button
+    if (isDragHandle && !isButton) {
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(true);
@@ -230,7 +232,7 @@ export const MovableToolbar = (props: MovableToolbarProps) => {
         )}
         
         {/* Main Toolbar */}
-        <div className="bg-transparent rounded-lg shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-transparent backdrop-blur-sm">
+        <div className="bg-transparent rounded-lg shadow-[0_4px_24px_0_rgba(0,0,0,0.12),0_1.5px_4px_0_rgba(0,0,0,0.10)] border border-transparent backdrop-blur-sm" style={{ overflow: 'visible' }}>
           <Toolbar {...props} />
         </div>
       </div>

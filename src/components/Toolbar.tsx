@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Bold, 
   Italic, 
@@ -106,8 +107,19 @@ export const Toolbar = ({
 }: ToolbarProps) => {
   const [showSearch, setShowSearch] = useState(false);
   const [showColorPalette, setShowColorPalette] = useState(false);
+  const [colorPalettePosition, setColorPalettePosition] = useState({ x: 0, y: 0 });
+  
+  // Debug color palette state
+  useEffect(() => {
+    console.log('🎨 Color palette state changed:', showColorPalette);
+    if (showColorPalette) {
+      console.log('🎨 Rendering color palette dropdown!', { showColorPalette, selectedCells });
+    }
+  }, [showColorPalette, selectedCells]);
   const [showTextFormat, setShowTextFormat] = useState(false);
   const [showTextColor, setShowTextColor] = useState(false);
+  const [textFormatPosition, setTextFormatPosition] = useState({ x: 0, y: 0 });
+  const [textColorPosition, setTextColorPosition] = useState({ x: 0, y: 0 });
   const colorPaletteRef = useRef<HTMLDivElement>(null);
   const textFormatRef = useRef<HTMLDivElement>(null);
   const textPaletteRef = useRef<HTMLDivElement>(null);
@@ -215,18 +227,12 @@ export const Toolbar = ({
         onFormat('underline-toggle', (!appliedFormats.underline).toString());
         break;
       case 'copy':
-        // Copy functionality
-        if (selectedCells.length > 0 && activeSheet) {
-          const cellData = selectedCells.map(cellId => ({
-            cellId,
-            value: activeSheet.cells[cellId]?.value || ''
-          }));
-          navigator.clipboard.writeText(JSON.stringify(cellData));
-        }
+        // Copy functionality - use the onFormat handler
+        onFormat('copy');
         break;
       case 'paste':
-        // Paste functionality would need more complex implementation
-        console.log('Paste functionality needs implementation');
+        // Paste functionality - use the onFormat handler
+        onFormat('paste');
         break;
       default:
         onFormat(action, value);
@@ -236,30 +242,50 @@ export const Toolbar = ({
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (colorPaletteRef.current && !colorPaletteRef.current.contains(event.target as Node)) {
-        setShowColorPalette(false);
+      const target = event.target as Node;
+      
+      // Check if clicking on color palette dropdown
+      if (showColorPalette) {
+        const colorPaletteElement = document.querySelector('[data-color-palette="true"]');
+        if (colorPaletteElement && !colorPaletteElement.contains(target)) {
+          setShowColorPalette(false);
+        }
       }
-      if (textFormatRef.current && !textFormatRef.current.contains(event.target as Node)) {
-        setShowTextFormat(false);
+      
+      // Check if clicking on text format dropdown
+      if (showTextFormat) {
+        const textFormatElement = document.querySelector('[data-text-format="true"]');
+        if (textFormatElement && !textFormatElement.contains(target)) {
+          setShowTextFormat(false);
+        }
       }
-      if (textPaletteRef.current && !textPaletteRef.current.contains(event.target as Node)) {
-        setShowTextColor(false);
+      
+      // Check if clicking on text color dropdown
+      if (showTextColor) {
+        const textColorElement = document.querySelector('[data-text-color="true"]');
+        if (textColorElement && !textColorElement.contains(target)) {
+          setShowTextColor(false);
+        }
       }
     };
 
     if (showColorPalette || showTextFormat || showTextColor) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
+      // Use a small delay to prevent immediate closing
+      const timeoutId = setTimeout(() => {
+        document.addEventListener('mousedown', handleClickOutside);
+      }, 100);
 
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+      return () => {
+        clearTimeout(timeoutId);
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
   }, [showColorPalette, showTextFormat, showTextColor]);
 
   return (
     <>
       {/* Compact Toolbar */}
-      <div className="toolbar flex flex-col items-center gap-1 p-2 rounded-lg bg-white/70 dark:bg-gray-900/60 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm text-[13px] md:text-[14px] overflow-visible" style={{ width: 76 }} data-toolbar="true">
+      <div className="toolbar flex flex-col items-center gap-1 p-2 rounded-lg bg-white/70 dark:bg-gray-900/60 border border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm text-[13px] md:text-[14px] overflow-visible" style={{ width: 76, overflow: 'visible' }} data-toolbar="true">
         {/* Add Sheet Button */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -268,6 +294,7 @@ export const Toolbar = ({
               size="sm"
               className="w-8 h-8 p-0 hover:bg-gray-100"
               onClick={(e) => {
+                console.log('➕ Add sheet button clicked!');
                 e.stopPropagation();
                 onAddSheet();
               }}
@@ -341,8 +368,34 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100 relative"
                 onClick={(e) => {
+                  console.log('📝 Text format button clicked!', { showTextFormat, selectedCells });
                   e.stopPropagation();
-                  setShowTextFormat(!showTextFormat);
+                  
+                  // Calculate position relative to the button
+                  const buttonRect = e.currentTarget.getBoundingClientRect();
+                  const dropdownWidth = 120; // Approximate dropdown width
+                  const dropdownHeight = 120; // Approximate dropdown height
+                  
+                  const OFFSET_X = 16; // consistent comfortable offset
+                  const OFFSET_Y = 16;
+                  let x = buttonRect.right + OFFSET_X; // to the right of the button
+                  let y = buttonRect.top - OFFSET_Y;  // slightly above the button
+                  
+                  // Check if dropdown would go off-screen to the right
+                  if (x + dropdownWidth > window.innerWidth) {
+                    x = buttonRect.left - dropdownWidth - OFFSET_X; // Show to the left instead
+                  }
+                  
+                  // Check if dropdown would go off-screen to the top
+                  if (y < 0) {
+                    y = buttonRect.bottom + OFFSET_Y; // Show below the button instead
+                  }
+                  
+                  const newPosition = { x, y };
+                  setTextFormatPosition(newPosition);
+                  const newState = !showTextFormat;
+                  console.log('📝 Setting text format to:', newState, 'at position:', newPosition);
+                  setShowTextFormat(newState);
                 }}
                 data-tour="toolbar-text-format"
               >
@@ -357,8 +410,17 @@ export const Toolbar = ({
           </Tooltip>
           
           {/* Text Formatting Dropdown */}
-          {showTextFormat && (
-            <div className="absolute left-12 top-0 bg-transparent backdrop-blur-sm rounded-lg shadow-lg border border-transparent p-2 z-50" data-text-format="true">
+          {showTextFormat && createPortal(
+            <div 
+              className="fixed bg-white dark:bg-gray-800 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-2 z-[9999] min-w-[120px]" 
+              data-text-format="true" 
+              style={{ 
+                position: 'fixed',
+                left: `${textFormatPosition.x}px`,
+                top: `${textFormatPosition.y}px`,
+                zIndex: 9999
+              }}
+            >
               <div className="flex flex-col gap-1">
                 <Button 
                   variant={appliedFormats.bold ? "default" : "ghost"}
@@ -400,7 +462,8 @@ export const Toolbar = ({
                   <span className="text-xs">Underline</span>
                 </Button>
               </div>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
 
@@ -416,7 +479,7 @@ export const Toolbar = ({
                   <SelectTrigger className="w-8 h-8 p-0 hover:bg-gray-100 border-0 bg-transparent">
                     <SelectValue className="text-xs" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" side="right" sideOffset={12} alignOffset={8}>
                     {fontSizes.map((size) => (
                       <SelectItem key={size} value={size}>
                         {size}
@@ -445,7 +508,7 @@ export const Toolbar = ({
                   <SelectTrigger className="w-8 h-8 p-0 hover:bg-gray-100 border-0 bg-transparent">
                     <SelectValue className="text-xs" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" side="right" sideOffset={12} alignOffset={8}>
                     {fonts.map((font) => (
                       <SelectItem key={font} value={font}>
                         {font}
@@ -473,8 +536,35 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100 relative"
                 onClick={(e) => {
+                  console.log('🎨 Color palette button clicked!', { showColorPalette, selectedCells });
                   e.stopPropagation();
-                  setShowColorPalette(!showColorPalette);
+                  
+                  // Calculate position relative to the button
+                  const buttonRect = e.currentTarget.getBoundingClientRect();
+                  const dropdownWidth = 200; // Approximate dropdown width
+                  const dropdownHeight = 150; // Approximate dropdown height
+                  
+                  const OFFSET_X = 16;
+                  const OFFSET_Y = 16;
+                  let x = buttonRect.right + OFFSET_X;
+                  let y = buttonRect.top - OFFSET_Y;
+                  
+                  // Check if dropdown would go off-screen to the right
+                  if (x + dropdownWidth > window.innerWidth) {
+                    x = buttonRect.left - dropdownWidth - OFFSET_X;
+                  }
+                  
+                  // Check if dropdown would go off-screen to the top
+                  if (y < 0) {
+                    y = buttonRect.bottom + OFFSET_Y;
+                  }
+                  
+                  const newPosition = { x, y };
+                  
+                  setColorPalettePosition(newPosition);
+                  const newState = !showColorPalette;
+                  console.log('🎨 Setting color palette to:', newState, 'at position:', newPosition);
+                  setShowColorPalette(newState);
                 }}
               >
                             <Palette size={16} className="text-foreground" />
@@ -488,8 +578,18 @@ export const Toolbar = ({
           </Tooltip>
           
           {/* Color Palette Dropdown */}
-          {showColorPalette && (
-            <div className="absolute left-12 top-0 bg-transparent backdrop-blur-sm rounded-lg shadow-lg border border-transparent p-2 z-50" data-color-palette="true">
+          {showColorPalette && createPortal(
+            <div 
+              className="fixed bg-white dark:bg-gray-800 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-2 z-[9999] min-w-[200px]" 
+              data-color-palette="true" 
+              style={{ 
+                position: 'fixed',
+                left: `${colorPalettePosition.x}px`,
+                top: `${colorPalettePosition.y}px`,
+                zIndex: 9999
+              }}
+            >
+              <div className="text-xs text-gray-600 mb-2">Color Palette</div>
               <div className="grid grid-cols-7 gap-1 w-48">
                 {highlightColors.map((color, index) => (
                   <button
@@ -497,6 +597,7 @@ export const Toolbar = ({
                     className="w-5 h-5 rounded border border-gray-300 hover:scale-110 transition-transform"
                     style={{ backgroundColor: color }}
                     onClick={(e) => {
+                      console.log('🎨 Color palette clicked:', color);
                       e.stopPropagation();
                       onFormat('fill-color', color);
                       setShowColorPalette(false);
@@ -517,7 +618,8 @@ export const Toolbar = ({
                   Clear Color
                 </button>
               </div>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
 
@@ -530,8 +632,32 @@ export const Toolbar = ({
                 size="sm" 
                 className="w-8 h-8 p-0 hover:bg-gray-100 relative"
                 onClick={(e) => {
+                  console.log('🎨 Text color button clicked!', { showTextColor, selectedCells });
                   e.stopPropagation();
-                  setShowTextColor(!showTextColor);
+                  
+                  // Calculate position relative to the button
+                  const buttonRect = e.currentTarget.getBoundingClientRect();
+                  const dropdownWidth = 200; // Approximate dropdown width
+                  const dropdownHeight = 150; // Approximate dropdown height
+                  
+                  let x = buttonRect.right + 8; // 8px to the right of the button
+                  let y = buttonRect.top - 10;  // Slightly above the button
+                  
+                  // Check if dropdown would go off-screen to the right
+                  if (x + dropdownWidth > window.innerWidth) {
+                    x = buttonRect.left - dropdownWidth - 8; // Show to the left instead
+                  }
+                  
+                  // Check if dropdown would go off-screen to the top
+                  if (y < 0) {
+                    y = buttonRect.bottom + 8; // Show below the button instead
+                  }
+                  
+                  const newPosition = { x, y };
+                  setTextColorPosition(newPosition);
+                  const newState = !showTextColor;
+                  console.log('🎨 Setting text color to:', newState, 'at position:', newPosition);
+                  setShowTextColor(newState);
                 }}
                 data-tour="toolbar-text-color"
               >
@@ -546,8 +672,17 @@ export const Toolbar = ({
           </Tooltip>
           
           {/* Text Color Dropdown */}
-          {showTextColor && (
-            <div className="absolute left-12 top-0 bg-transparent backdrop-blur-sm rounded-lg shadow-lg border border-transparent p-2 z-50" data-text-color="true">
+          {showTextColor && createPortal(
+            <div 
+              className="fixed bg-white dark:bg-gray-800 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-2 z-[9999] min-w-[200px]" 
+              data-text-color="true" 
+              style={{ 
+                position: 'fixed',
+                left: `${textColorPosition.x}px`,
+                top: `${textColorPosition.y}px`,
+                zIndex: 9999
+              }}
+            >
               <div className="grid grid-cols-7 gap-1 w-48">
                 {textColors.map((color, index) => (
                   <button
@@ -575,7 +710,8 @@ export const Toolbar = ({
                   Reset to Black
                 </button>
               </div>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
 

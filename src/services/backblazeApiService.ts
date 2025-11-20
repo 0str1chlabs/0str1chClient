@@ -127,6 +127,11 @@ class BackblazeApiService {
   // Upload file via backend with frontend compression (no CORS issues)
   async uploadFile(userEmail: string, fileName: string, data: unknown, metadata: Record<string, unknown> = {}): Promise<{ success: boolean; fileId?: string; message: string }> {
     try {
+      // Read auth token from localStorage (support both keys)
+      const token = localStorage.getItem('token') || localStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
       // Compress data on frontend for efficiency
       const compressedData = this.compressData(data);
       const originalSize = JSON.stringify(data).length;
@@ -156,7 +161,8 @@ class BackblazeApiService {
       const response = await fetch(`${BACKBLAZE_API_URL}/upload`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           userEmail,
@@ -190,12 +196,26 @@ class BackblazeApiService {
   // List files for a user via backend
   async listUserFiles(userEmail: string): Promise<{ success: boolean; files?: BackblazeFileInfo[]; message: string }> {
     try {
+      const token = localStorage.getItem('token') || localStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
       const response = await fetch(`${BACKBLAZE_API_URL}/files/${encodeURIComponent(userEmail)}`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         }
       });
+
+      if (response.status === 204) {
+        // No content means no files; treat as success with empty list
+        return {
+          success: true,
+          files: [],
+          message: 'No files found'
+        };
+      }
 
       if (!response.ok) {
         throw new Error(`Failed to list files: ${response.status} ${response.statusText}`);
@@ -220,12 +240,21 @@ class BackblazeApiService {
   // Download file via backend with automatic decompression
   async downloadFile(userEmail: string, fileName: string): Promise<{ success: boolean; data?: unknown; message: string }> {
     try {
+      const token = localStorage.getItem('token') || localStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
       const response = await fetch(`${BACKBLAZE_API_URL}/retrieve/${encodeURIComponent(userEmail)}/${encodeURIComponent(fileName)}`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         }
       });
+
+      if (response.status === 204) {
+        return { success: false, message: 'No content' };
+      }
 
       if (!response.ok) {
         throw new Error(`Download failed: ${response.status} ${response.statusText}`);
@@ -252,13 +281,47 @@ class BackblazeApiService {
     }
   }
 
+  // Download by fileId via backend
+  async downloadFileById(userEmail: string, fileId: string): Promise<{ success: boolean; data?: unknown; message: string }> {
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+      const response = await fetch(`${BACKBLAZE_API_URL}/retrieve-by-id/${encodeURIComponent(userEmail)}/${encodeURIComponent(fileId)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Download by id failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      if (result.success && result.data?.sheetData) {
+        return { success: true, data: result.data.sheetData, message: 'File downloaded successfully' };
+      }
+      throw new Error(result.message || 'Download by id failed');
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Download by id failed' };
+    }
+  }
+
   // Delete file via backend
   async deleteFile(userEmail: string, fileName: string, fileId: string): Promise<{ success: boolean; message: string }> {
     try {
+      const token = localStorage.getItem('token') || localStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
       const response = await fetch(`${BACKBLAZE_API_URL}/delete/${encodeURIComponent(userEmail)}/${encodeURIComponent(fileName)}`, {
         method: 'DELETE',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           fileId
@@ -287,12 +350,21 @@ class BackblazeApiService {
   // Check if user has any files via backend
   async checkUserFiles(userEmail: string): Promise<{ success: boolean; hasFiles: boolean; message: string }> {
     try {
+      const token = localStorage.getItem('token') || localStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
       const response = await fetch(`${BACKBLAZE_API_URL}/check/${encodeURIComponent(userEmail)}`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         }
       });
+
+      if (response.status === 204) {
+        return { success: true, hasFiles: false, message: 'No files' };
+      }
 
       if (!response.ok) {
         throw new Error(`Check failed: ${response.status} ${response.statusText}`);
@@ -316,15 +388,15 @@ class BackblazeApiService {
 
   // Store sheet data (main method for frontend)
   async storeSheetData(userEmail: string, fileName: string, sheetData: unknown, metadata: Record<string, unknown> = {}): Promise<{ success: boolean; message: string; data?: unknown }> {
-    const fullFileName = `user_${userEmail}/${fileName}`;
-    const result = await this.uploadFile(userEmail, fullFileName, sheetData, metadata);
+    // Frontend should pass plain fileName; backend will scope by user folder
+    const result = await this.uploadFile(userEmail, fileName, sheetData, metadata);
     
     if (result.success) {
       return {
         success: true,
         message: 'Sheet data stored successfully',
         data: {
-          fileName: fullFileName,
+          fileName,
           fileId: result.fileId,
           userEmail,
           uploadDate: new Date(),
